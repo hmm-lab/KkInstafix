@@ -125,8 +125,8 @@ def providers_msg(settings, chat_id):
     rows.append('/setprovider instagram ddinstagram')
     rows.append('/resetproviders')
     rows.append('/mehrab')
-    rows.append('/mo')
-    rows.append('/genius')
+    rows.append('/dumbass')
+    rows.append('/pendejo')
     return chr(10).join(rows)
 
 
