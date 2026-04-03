@@ -4,8 +4,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-TOKEN = os.environ.get("BOT_TOKEN", "8795787551:AAHDzGaiRtHHmeOyiMaolP6L8UdiAEvqDjE)
-
+TOKEN = os.environ.get("BOT_TOKEN")
 # Matches any instagram.com URL (with or without www, http or https)
 INSTAGRAM_RE = re.compile(
     r'(https?://(?:www\.)?instagram\.com\S*)',
