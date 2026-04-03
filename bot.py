@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import re
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
@@ -7,7 +8,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 TOKEN = os.environ.get("BOT_TOKEN")
 
 INSTAGRAM_RE = re.compile(
-    r'(https?://(?:www.)?instagram.comS*)',
+    r'(https?://(?:www\.)?instagram\.com\S*)',
     re.IGNORECASE
 )
 
@@ -39,21 +40,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     sender = message.from_user
     name = sender.full_name if sender else "Someone"
-    username = f" (@{sender.username})" if sender and sender.username else ""
+
+    if sender and sender.username:
+        username = " (@" + sender.username + ")"
+    else:
+        username = ""
+
+    newline = chr(10)
+    msg = "[Instagram] " + name + username + newline + fixed_text
 
     try:
         await message.delete()
         await context.bot.send_message(
             chat_id=message.chat_id,
-            msg = "[Instagram] " + name + username + ":
-" + fixed_text
+            text=msg,
             disable_web_page_preview=False,
         )
     except Exception:
         await message.reply_text(
-            text=f"[Instagram] Fixed link:
-{fixed_text}",
+            text=msg,
             disable_web_page_preview=False,
+        )
+
+def main():
+    print("kkInstagram bot starting...")
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()            disable_web_page_preview=False,
         )
 
 def main():
