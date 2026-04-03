@@ -45,8 +45,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message.delete()
         await context.bot.send_message(
             chat_id=message.chat_id,
-            text=f"[Instagram] {name}{username}:
-{fixed_text}",
+            msg = "[Instagram] " + name + username + ":
+" + fixed_text
             disable_web_page_preview=False,
         )
     except Exception:
