@@ -1,40 +1,69 @@
 import os
 import re
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 TOKEN = os.environ.get("BOT_TOKEN")
-# Matches any instagram.com URL (with or without www, http or https)
+
 INSTAGRAM_RE = re.compile(
-    r'(https?://(?:www\.)?instagram\.com\S*)',
+    r'(https?://(?:www.)?instagram.comS*)',
     re.IGNORECASE
 )
 
-# â”€â”€ Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+TRACKING_PARAMS = {
+    'igsh', 'igshid', 'utm_source', 'utm_medium', 'utm_campaign',
+    'utm_content', 'utm_term', 'utm_id', 'fbclid', 'ref', 'hl'
+}
+
+def fix_instagram_url(url):
+    parsed = urlparse(url)
+    new_netloc = parsed.netloc.replace('instagram.com', 'kkinstagram.com')
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    clean_params = {k: v for k, v in params.items() if k.lower() not in TRACKING_PARAMS}
+    clean_query = urlencode(clean_params, doseq=True)
+    return urlunparse((parsed.scheme, new_netloc, parsed.path, parsed.params, clean_query, ''))
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message or not message.text:
         return
 
     text = message.text
-
-    # Ignore if no Instagram link found
     if not INSTAGRAM_RE.search(text):
         return
 
-    # Replace instagram.com â†’ kkinstagram.com
-    fixed_text = INSTAGRAM_RE.sub(
-        lambda m: m.group(0).replace('instagram.com', 'kkinstagram.com', 1),
-        text
-    )
-
+    fixed_text = INSTAGRAM_RE.sub(lambda m: fix_instagram_url(m.group(0)), text)
     if fixed_text == text:
-        return  # Nothing changed
+        return
 
-    sender   = message.from_user
-    name     = sender.full_name if sender else "Someone"
+    sender = message.from_user
+    name = sender.full_name if sender else "Someone"
     username = f" (@{sender.username})" if sender and sender.username else ""
+
+    try:
+        await message.delete()
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text=f"[Instagram] {name}{username}:
+{fixed_text}",
+            disable_web_page_preview=False,
+        )
+    except Exception:
+        await message.reply_text(
+            text=f"[Instagram] Fixed link:
+{fixed_text}",
+            disable_web_page_preview=False,
+        )
+
+def main():
+    print("kkInstagram bot starting...")
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()    username = f" (@{sender.username})" if sender and sender.username else ""
 
     # Try to delete the original and repost with fixed link
     try:
