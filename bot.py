@@ -6,7 +6,7 @@ from telegram.ext import Application, MessageHandler, filters
 
 TOKEN = os.environ.get('BOT_TOKEN')
 SETTINGS_FILE = 'provider_settings.json'
-IMAGE_MEHRAB = '30364.jpg'
+IMAGE_dumbass = '30364.jpg'
 
 PROVIDERS = {
     'instagram': {'default': 'kkinstagram', 'domains': ['instagram.com'], 'options': {'kkinstagram': 'kkinstagram.com', 'ddinstagram': 'ddinstagram.com', 'eeinstagram': 'eeinstagram.com', 'instagramez': 'instagramez.com'}},
