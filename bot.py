@@ -144,7 +144,7 @@ async def handle(update, context):
             reset_all(s, cid)
             await msg.reply_text('Providers reset to defaults.')
             return
-               if cmd == '/mehrab':
+               if cmd == '/dumbass':
             with open('30364.jpg', 'rb') as img:
                 await context.bot.send_photo(chat_id=cid, photo=img)
             return
