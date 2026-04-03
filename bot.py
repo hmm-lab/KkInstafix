@@ -124,15 +124,15 @@ def providers_msg(settings, chat_id):
         rows.append('')
     rows.append('/setprovider instagram ddinstagram')
     rows.append('/resetproviders')
-    rows.append('/mehrab')
+    rows.append('/dumbass')
     return chr(10).join(rows)
 
 
-async def send_mehrab_photo(context, chat_id):
-    if not os.path.exists(IMAGE_MEHRAB):
+async def send_dumbass_photo(context, chat_id):
+    if not os.path.exists(IMAGE_dumbass):
         await context.bot.send_message(chat_id=chat_id, text='Missing 30364.jpg in the repo folder.')
         return
-    with open(IMAGE_MEHRAB, 'rb') as img:
+    with open(IMAGE_dumbass, 'rb') as img:
         await context.bot.send_photo(chat_id=chat_id, photo=img)
 
 
@@ -149,8 +149,8 @@ async def handle(update, context):
         parts = text.split()
         cmd = parts[0].split('@')[0].lower()
 
-        if cmd == '/mehrab':
-            await send_mehrab_photo(context, cid)
+        if cmd == '/dumbass':
+            await send_dumbass_photo(context, cid)
             return
 
         if cmd in ('/help', '/providers'):
