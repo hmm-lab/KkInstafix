@@ -149,7 +149,7 @@ async def handle(update, context):
         parts = text.split()
         cmd = parts[0].split('@')[0].lower()
 
-        if cmd == '/mehrab':
+        if cmd == '/dumbass':
             await send_mehrab_photo(context, cid)
             return
 
