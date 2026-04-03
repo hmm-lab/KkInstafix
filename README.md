@@ -22,7 +22,7 @@ The video now plays directly inside Telegram.
 
 ## How to set it up
 
-### Step 1 â€” Create the bot on Telegram
+### Step 1 - Create the bot on Telegram
 
 1. Open Telegram
 2. Search for **@BotFather** and open it
@@ -40,7 +40,7 @@ The video now plays directly inside Telegram.
 
 ---
 
-### Step 2 â€” Allow the bot to read messages
+### Step 2 - Allow the bot to read messages
 
 By default bots cannot see messages unless someone mentions them. Fix this:
 
@@ -53,7 +53,7 @@ By default bots cannot see messages unless someone mentions them. Fix this:
 
 ---
 
-### Step 3 â€” Put the files on GitHub
+### Step 3 - Put the files on GitHub
 
 GitHub is a free website that stores your code. Railway (in the next step) reads from it.
 
@@ -70,7 +70,7 @@ GitHub is a free website that stores your code. Railway (in the next step) reads
 
 ---
 
-### Step 4 â€” Run it for free on Railway
+### Step 4 - Run it for free on Railway
 
 Railway is a free hosting service. It will keep your bot running 24/7 in the cloud.
 
@@ -90,7 +90,7 @@ Railway is a free hosting service. It will keep your bot running 24/7 in the clo
 
 ---
 
-### Step 5 â€” Add the bot to your Telegram group
+### Step 5 - Add the bot to your Telegram group
 
 1. Open your Telegram group
 2. Tap the group name at the top to open its info page
