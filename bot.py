@@ -149,8 +149,8 @@ async def handle(update, context):
         parts = text.split()
         cmd = parts[0].split('@')[0].lower()
 
-        if cmd in ('/dumbass', '/mehrab', '/bdsk', '/pendejo':
-            await send_dumbass_photo(context, cid)
+                if cmd in ('/mehrab', '/dumbass', '/pendejo'):
+            await send_mehrab_photo(context, cid)
             return
 
         if cmd in ('/help', '/providers'):
