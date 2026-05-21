@@ -1,4 +1,4 @@
-import json
+import asyncio
 import logging
 import os
 import re
@@ -6,7 +6,7 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
-from contextlib import closing
+from collections import OrderedDict
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import LinkPreviewOptions
@@ -172,9 +172,10 @@ URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
-HEALTH_CACHE = {}
+HEALTH_CACHE: dict = {}
 HEALTH_TTL = 300
-SEEN_UPDATES = set()
+SEEN_UPDATES: OrderedDict = OrderedDict()
+MAX_SEEN_UPDATES = 2000
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -223,10 +224,6 @@ SAMPLE_URLS = {
     "deviantart": "https://www.deviantart.com/test/art/test-12345",
 }
 
-SPECIAL_CMDS = ("/mehrab", "/mo", "/genius")
-ABOUT_CMDS = ("/about", "/credits", "/me")
-STATUS_CMDS = ("/status", "/config")
-
 ABOUT_TEXT = (
     "💖 *About this bot*\n\n"
     "My name is Mehrab and I love you Motki 🥰\n\n"
@@ -244,212 +241,218 @@ WELCOME_TEXT = (
 
 # ── Database ───────────────────────────────────────────────────────────────────
 
-def db_connect():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+_conn: sqlite3.Connection = None
+
+
+def db_connect() -> sqlite3.Connection:
+    global _conn
+    if _conn is None:
+        _conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA journal_mode=WAL")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+    return _conn
 
 
 def init_db():
-    with closing(db_connect()) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS chat_settings (
-                chat_id INTEGER PRIMARY KEY,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                sender_mode TEXT NOT NULL DEFAULT 'first_name',
-                dedup_window INTEGER NOT NULL DEFAULT 60,
-                rate_limit INTEGER NOT NULL DEFAULT 5,
-                rate_window INTEGER NOT NULL DEFAULT 30,
-                ignore_forwards INTEGER NOT NULL DEFAULT 1,
-                provider_fallback INTEGER NOT NULL DEFAULT 1,
-                caption_style TEXT NOT NULL DEFAULT 'reply',
-                text_spam INTEGER NOT NULL DEFAULT 1
-            );
+    conn = db_connect()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS chat_settings (
+            chat_id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sender_mode TEXT NOT NULL DEFAULT 'first_name',
+            dedup_window INTEGER NOT NULL DEFAULT 60,
+            rate_limit INTEGER NOT NULL DEFAULT 5,
+            rate_window INTEGER NOT NULL DEFAULT 30,
+            ignore_forwards INTEGER NOT NULL DEFAULT 1,
+            provider_fallback INTEGER NOT NULL DEFAULT 1,
+            caption_style TEXT NOT NULL DEFAULT 'reply',
+            text_spam INTEGER NOT NULL DEFAULT 1
+        );
 
-            CREATE TABLE IF NOT EXISTS provider_settings (
-                chat_id INTEGER NOT NULL,
-                platform TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                PRIMARY KEY (chat_id, platform)
-            );
+        CREATE TABLE IF NOT EXISTS provider_settings (
+            chat_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            PRIMARY KEY (chat_id, platform)
+        );
 
-            CREATE TABLE IF NOT EXISTS blocked_users (
-                chat_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                PRIMARY KEY (chat_id, user_id)
-            );
+        CREATE TABLE IF NOT EXISTS blocked_users (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
+        );
 
-            CREATE TABLE IF NOT EXISTS recent_events (
-                kind TEXT NOT NULL,
-                chat_id INTEGER NOT NULL,
-                event_key TEXT NOT NULL,
-                ts INTEGER NOT NULL,
-                PRIMARY KEY (kind, chat_id, event_key)
-            );
+        CREATE TABLE IF NOT EXISTS recent_events (
+            kind TEXT NOT NULL,
+            chat_id INTEGER NOT NULL,
+            event_key TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            PRIMARY KEY (kind, chat_id, event_key)
+        );
 
-            CREATE TABLE IF NOT EXISTS rate_events (
-                chat_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                ts INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_rate_events_lookup
-            ON rate_events(chat_id, user_id, ts);
-            """
-        )
-        conn.commit()
+        CREATE TABLE IF NOT EXISTS rate_events (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            ts INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rate_events_lookup
+        ON rate_events(chat_id, user_id, ts);
+        """
+    )
 
 
 def ensure_chat_settings(chat_id):
-    with closing(db_connect()) as conn:
-        cols = ", ".join(DEFAULT_CHAT_SETTINGS.keys())
-        qs = ", ".join(["?"] * len(DEFAULT_CHAT_SETTINGS))
-        conn.execute(
-            f"INSERT OR IGNORE INTO chat_settings(chat_id, {cols}) VALUES (?, {qs})",
-            [chat_id, *DEFAULT_CHAT_SETTINGS.values()],
-        )
-        conn.commit()
+    conn = db_connect()
+    cols = ", ".join(DEFAULT_CHAT_SETTINGS.keys())
+    qs = ", ".join(["?"] * len(DEFAULT_CHAT_SETTINGS))
+    conn.execute(
+        f"INSERT OR IGNORE INTO chat_settings(chat_id, {cols}) VALUES (?, {qs})",
+        [chat_id, *DEFAULT_CHAT_SETTINGS.values()],
+    )
+    conn.commit()
 
 
 def get_chat_settings(chat_id):
     ensure_chat_settings(chat_id)
-    with closing(db_connect()) as conn:
-        row = conn.execute(
-            "SELECT * FROM chat_settings WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchone()
-        return dict(row) if row else DEFAULT_CHAT_SETTINGS.copy()
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT * FROM chat_settings WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    return dict(row) if row else DEFAULT_CHAT_SETTINGS.copy()
 
 
 def update_chat_setting(chat_id, key, value):
     ensure_chat_settings(chat_id)
-    with closing(db_connect()) as conn:
-        conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
-        conn.commit()
+    conn = db_connect()
+    conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
+    conn.commit()
 
 
 def get_choice(chat_id, platform):
     ensure_chat_settings(chat_id)
-    with closing(db_connect()) as conn:
-        row = conn.execute(
-            "SELECT provider FROM provider_settings WHERE chat_id = ? AND platform = ?",
-            (chat_id, platform),
-        ).fetchone()
-        stored = row["provider"] if row else None
-        if stored and stored in PROVIDERS[platform]["options"]:
-            return stored
-        return PROVIDERS[platform]["default"]
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT provider FROM provider_settings WHERE chat_id = ? AND platform = ?",
+        (chat_id, platform),
+    ).fetchone()
+    stored = row["provider"] if row else None
+    if stored and stored in PROVIDERS[platform]["options"]:
+        return stored
+    return PROVIDERS[platform]["default"]
 
 
 def set_choice(chat_id, platform, provider):
-    with closing(db_connect()) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
-            (chat_id, platform, provider),
-        )
-        conn.commit()
+    conn = db_connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
+        (chat_id, platform, provider),
+    )
+    conn.commit()
 
 
 def reset_providers(chat_id):
-    with closing(db_connect()) as conn:
-        conn.execute("DELETE FROM provider_settings WHERE chat_id = ?", (chat_id,))
-        conn.commit()
+    conn = db_connect()
+    conn.execute("DELETE FROM provider_settings WHERE chat_id = ?", (chat_id,))
+    conn.commit()
 
 
 def mute_user(chat_id, user_id):
-    with closing(db_connect()) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
-            (chat_id, user_id),
-        )
-        conn.commit()
+    conn = db_connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
+        (chat_id, user_id),
+    )
+    conn.commit()
 
 
 def unmute_user(chat_id, user_id):
-    with closing(db_connect()) as conn:
-        conn.execute(
-            "DELETE FROM blocked_users WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        conn.commit()
+    conn = db_connect()
+    conn.execute(
+        "DELETE FROM blocked_users WHERE chat_id = ? AND user_id = ?",
+        (chat_id, user_id),
+    )
+    conn.commit()
 
 
 def is_user_muted(chat_id, user_id):
-    with closing(db_connect()) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM blocked_users WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        ).fetchone()
-        return bool(row)
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT 1 FROM blocked_users WHERE chat_id = ? AND user_id = ?",
+        (chat_id, user_id),
+    ).fetchone()
+    return bool(row)
 
 
 def blocked_user_count(chat_id):
-    with closing(db_connect()) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS c FROM blocked_users WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchone()
-        return row["c"] if row else 0
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM blocked_users WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    return row["c"] if row else 0
 
 
 def cleanup_db(max_age=86400):
     now = int(time.time())
-    with closing(db_connect()) as conn:
-        conn.execute("DELETE FROM recent_events WHERE ts < ?", (now - max_age,))
-        conn.execute("DELETE FROM rate_events WHERE ts < ?", (now - max_age,))
-        conn.commit()
+    conn = db_connect()
+    conn.execute("DELETE FROM recent_events WHERE ts < ?", (now - max_age,))
+    conn.execute("DELETE FROM rate_events WHERE ts < ?", (now - max_age,))
+    conn.commit()
 
 
 def seen_recent(kind, chat_id, event_key, window):
     now = int(time.time())
-    with closing(db_connect()) as conn:
-        conn.execute(
-            "DELETE FROM recent_events WHERE kind = ? AND ts < ?",
-            (kind, now - window),
-        )
-        row = conn.execute(
-            "SELECT 1 FROM recent_events WHERE kind = ? AND chat_id = ? AND event_key = ?",
-            (kind, chat_id, event_key),
-        ).fetchone()
-        if row:
-            return True
-        conn.execute(
-            "INSERT OR REPLACE INTO recent_events(kind, chat_id, event_key, ts) VALUES(?, ?, ?, ?)",
-            (kind, chat_id, event_key, now),
-        )
-        conn.commit()
-        return False
+    conn = db_connect()
+    conn.execute(
+        "DELETE FROM recent_events WHERE kind = ? AND ts < ?",
+        (kind, now - window),
+    )
+    row = conn.execute(
+        "SELECT 1 FROM recent_events WHERE kind = ? AND chat_id = ? AND event_key = ?",
+        (kind, chat_id, event_key),
+    ).fetchone()
+    if row:
+        return True
+    conn.execute(
+        "INSERT OR REPLACE INTO recent_events(kind, chat_id, event_key, ts) VALUES(?, ?, ?, ?)",
+        (kind, chat_id, event_key, now),
+    )
+    conn.commit()
+    return False
 
 
 def check_rate(chat_id, user_id, limit_count, window):
     now = int(time.time())
-    with closing(db_connect()) as conn:
-        conn.execute(
-            "DELETE FROM rate_events WHERE chat_id = ? AND user_id = ? AND ts < ?",
-            (chat_id, user_id, now - window),
-        )
-        row = conn.execute(
-            "SELECT COUNT(*) AS c FROM rate_events WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        ).fetchone()
-        current = row["c"] if row else 0
-        if current >= limit_count:
-            return False
-        conn.execute(
-            "INSERT INTO rate_events(chat_id, user_id, ts) VALUES(?, ?, ?)",
-            (chat_id, user_id, now),
-        )
-        conn.commit()
-        return True
+    conn = db_connect()
+    conn.execute(
+        "DELETE FROM rate_events WHERE chat_id = ? AND user_id = ? AND ts < ?",
+        (chat_id, user_id, now - window),
+    )
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM rate_events WHERE chat_id = ? AND user_id = ?",
+        (chat_id, user_id),
+    ).fetchone()
+    current = row["c"] if row else 0
+    if current >= limit_count:
+        return False
+    conn.execute(
+        "INSERT INTO rate_events(chat_id, user_id, ts) VALUES(?, ?, ?)",
+        (chat_id, user_id, now),
+    )
+    conn.commit()
+    return True
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def is_duplicate_update(update_id):
     if update_id in SEEN_UPDATES:
         return True
-    SEEN_UPDATES.add(update_id)
-    if len(SEEN_UPDATES) > 2000:
-        SEEN_UPDATES.clear()
+    SEEN_UPDATES[update_id] = None
+    if len(SEEN_UPDATES) > MAX_SEEN_UPDATES:
+        SEEN_UPDATES.popitem(last=False)
     return False
 
 
@@ -492,37 +495,40 @@ def apply_provider(url, platform, provider_key):
     return strip_tracking(fixed)
 
 
-def provider_alive(url):
+def _check_url_sync(url: str) -> bool:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=4):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:
+        return False
+
+
+async def provider_alive(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     now = time.time()
     cached = HEALTH_CACHE.get(host)
     if cached and now - cached[1] < HEALTH_TTL:
         return cached[0]
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=4):
-            HEALTH_CACHE[host] = (True, now)
-            return True
-    except urllib.error.HTTPError:
-        HEALTH_CACHE[host] = (True, now)
-        return True
-    except Exception:
-        HEALTH_CACHE[host] = (False, now)
-        return False
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _check_url_sync, url)
+    HEALTH_CACHE[host] = (result, now)
+    return result
 
 
-def choose_provider_url(original_url, platform, preferred_key, allow_fallback=True):
+async def choose_provider_url(original_url, platform, preferred_key, allow_fallback=True):
     keys = list(PROVIDERS[platform]["options"].keys())
     ordered = [preferred_key] + [k for k in keys if k != preferred_key]
-    chosen_key = preferred_key
     chosen_url = apply_provider(original_url, platform, preferred_key)
     if not allow_fallback or len(ordered) == 1:
-        return chosen_url, chosen_key
+        return chosen_url, preferred_key
     for key in ordered:
         candidate = apply_provider(original_url, platform, key)
-        if provider_alive(candidate):
+        if await provider_alive(candidate):
             return candidate, key
-    return chosen_url, chosen_key
+    return chosen_url, preferred_key
 
 
 # Instagram paths that are actual posts/reels/stories - safe to convert
@@ -532,13 +538,12 @@ INSTAGRAM_CONTENT_RE = re.compile(
 )
 
 
-def fix_url(raw, chat_id, chat_settings):
+async def fix_url(raw, chat_id, chat_settings):
     url, tail = trim(raw)
     parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
         return raw, None, None
-    # Skip Instagram profile/explore/hashtag pages - providers don't support them
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None
     if platform == "youtube_shorts":
@@ -547,7 +552,7 @@ def fix_url(raw, chat_id, chat_settings):
             return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None
         return raw, None, None
     preferred = get_choice(chat_id, platform)
-    fixed, _ = choose_provider_url(
+    fixed, _ = await choose_provider_url(
         url,
         platform,
         preferred,
@@ -556,14 +561,14 @@ def fix_url(raw, chat_id, chat_settings):
     return fixed + tail, platform, url
 
 
-def process_text(text, chat_id, chat_settings):
+async def process_text(text, chat_id, chat_settings):
     urls = URL_RE.findall(text)
     new_text = text
     changed = False
     first_fixed_url = None
     dedup_window = int(chat_settings["dedup_window"])
     for raw in urls:
-        fixed, platform, original = fix_url(raw, chat_id, chat_settings)
+        fixed, platform, original = await fix_url(raw, chat_id, chat_settings)
         if fixed != raw:
             if original and seen_recent("fix", chat_id, original, dedup_window):
                 continue
@@ -723,8 +728,139 @@ async def send_about(context, msg):
     else:
         await msg.reply_text(ABOUT_TEXT, parse_mode="Markdown")
 
-# ── Command helpers ────────────────────────────────────────────────────────────
-async def handle_testall(msg, chat_id, platform, custom_url=None):
+# ── Command handlers ───────────────────────────────────────────────────────────
+
+async def _cmd_photo(msg, parts, context, chat_id):
+    await send_photo(context, chat_id)
+
+
+async def _cmd_about(msg, parts, context, chat_id):
+    await send_about(context, msg)
+
+
+async def _cmd_providers(msg, parts, context, chat_id):
+    await msg.reply_text(providers_text(chat_id))
+
+
+async def _cmd_status(msg, parts, context, chat_id):
+    await msg.reply_text(status_text(chat_id))
+
+
+async def _cmd_enable(msg, parts, context, chat_id):
+    update_chat_setting(chat_id, "enabled", 1)
+    await msg.reply_text("Bot enabled in this chat.")
+
+
+async def _cmd_disable(msg, parts, context, chat_id):
+    update_chat_setting(chat_id, "enabled", 0)
+    await msg.reply_text("Bot disabled in this chat.")
+
+
+async def _cmd_muteuser(msg, parts, context, chat_id):
+    target = target_user_id_from_command(msg, parts)
+    if not target:
+        await msg.reply_text("Reply to a user or pass a numeric user id.")
+        return
+    mute_user(chat_id, target)
+    await msg.reply_text(f"Muted user {target}.")
+
+
+async def _cmd_unmuteuser(msg, parts, context, chat_id):
+    target = target_user_id_from_command(msg, parts)
+    if not target:
+        await msg.reply_text("Reply to a user or pass a numeric user id.")
+        return
+    unmute_user(chat_id, target)
+    await msg.reply_text(f"Unmuted user {target}.")
+
+
+async def _cmd_resetproviders(msg, parts, context, chat_id):
+    reset_providers(chat_id)
+    await msg.reply_text("Providers reset to defaults.")
+
+
+async def _cmd_setprovider(msg, parts, context, chat_id):
+    if len(parts) != 3:
+        await msg.reply_text("Usage: /setprovider platform provider")
+        return
+    plat, prov = parts[1].lower(), parts[2].lower()
+    if plat not in PROVIDERS:
+        await msg.reply_text("Unknown platform. Try /providers")
+        return
+    if prov not in PROVIDERS[plat]["options"]:
+        await msg.reply_text("Unknown provider. Options: " + ", ".join(PROVIDERS[plat]["options"]))
+        return
+    set_choice(chat_id, plat, prov)
+    await msg.reply_text(f"Set {plat} to {prov}.")
+
+
+async def _cmd_setsendermode(msg, parts, context, chat_id):
+    if len(parts) != 2 or parts[1] not in ("first_name", "username", "full_name", "none"):
+        await msg.reply_text("Usage: /setsendermode first_name|username|full_name|none")
+        return
+    update_chat_setting(chat_id, "sender_mode", parts[1])
+    await msg.reply_text(f"sender_mode set to {parts[1]}.")
+
+
+async def _cmd_setdedup(msg, parts, context, chat_id):
+    if len(parts) != 2 or not parts[1].isdigit():
+        await msg.reply_text("Usage: /setdedup 60")
+        return
+    value = max(5, min(3600, int(parts[1])))
+    update_chat_setting(chat_id, "dedup_window", value)
+    await msg.reply_text(f"dedup_window set to {value}s.")
+
+
+async def _cmd_setratelimit(msg, parts, context, chat_id):
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await msg.reply_text("Usage: /setratelimit 5 30")
+        return
+    count = max(1, min(50, int(parts[1])))
+    window = max(5, min(3600, int(parts[2])))
+    update_chat_setting(chat_id, "rate_limit", count)
+    update_chat_setting(chat_id, "rate_window", window)
+    await msg.reply_text(f"rate_limit set to {count} per {window}s.")
+
+
+async def _cmd_ignoreforwards(msg, parts, context, chat_id):
+    if len(parts) != 2:
+        await msg.reply_text("Usage: /ignoreforwards on|off")
+        return
+    value = parse_on_off(parts[1])
+    if value is None:
+        await msg.reply_text("Usage: /ignoreforwards on|off")
+        return
+    update_chat_setting(chat_id, "ignore_forwards", value)
+    await msg.reply_text(f"ignore_forwards set to {bool(value)}.")
+
+
+async def _cmd_fallback(msg, parts, context, chat_id):
+    if len(parts) != 2:
+        await msg.reply_text("Usage: /fallback on|off")
+        return
+    value = parse_on_off(parts[1])
+    if value is None:
+        await msg.reply_text("Usage: /fallback on|off")
+        return
+    update_chat_setting(chat_id, "provider_fallback", value)
+    await msg.reply_text(f"provider_fallback set to {bool(value)}.")
+
+
+async def _cmd_textspam(msg, parts, context, chat_id):
+    if len(parts) != 2:
+        await msg.reply_text("Usage: /textspam on|off")
+        return
+    value = parse_on_off(parts[1])
+    if value is None:
+        await msg.reply_text("Usage: /textspam on|off")
+        return
+    update_chat_setting(chat_id, "text_spam", value)
+    await msg.reply_text(f"text_spam set to {bool(value)}.")
+
+
+async def _cmd_testall(msg, parts, context, chat_id):
+    platform = parts[1].lower() if len(parts) > 1 else "instagram"
+    custom_url = parts[2] if len(parts) > 2 else None
     if platform not in PROVIDERS:
         await msg.reply_text("Unknown platform. Available: " + ", ".join(sorted(PROVIDERS)))
         return
@@ -753,6 +889,38 @@ async def handle_testall(msg, chat_id, platform, custom_url=None):
             logger.exception("/testall failed for %s %s in chat %s", platform, key, chat_id)
             await msg.reply_text(f"[{key}] failed")
 
+
+# ── Command dispatch maps ──────────────────────────────────────────────────────
+
+PUBLIC_CMDS = {
+    "/mehrab": _cmd_photo,
+    "/mo": _cmd_photo,
+    "/genius": _cmd_photo,
+    "/about": _cmd_about,
+    "/credits": _cmd_about,
+    "/me": _cmd_about,
+    "/providers": _cmd_providers,
+    "/help": _cmd_providers,
+    "/status": _cmd_status,
+    "/config": _cmd_status,
+}
+
+ADMIN_CMDS = {
+    "/enable": _cmd_enable,
+    "/disable": _cmd_disable,
+    "/muteuser": _cmd_muteuser,
+    "/unmuteuser": _cmd_unmuteuser,
+    "/resetproviders": _cmd_resetproviders,
+    "/setprovider": _cmd_setprovider,
+    "/setsendermode": _cmd_setsendermode,
+    "/setdedup": _cmd_setdedup,
+    "/setratelimit": _cmd_setratelimit,
+    "/ignoreforwards": _cmd_ignoreforwards,
+    "/fallback": _cmd_fallback,
+    "/textspam": _cmd_textspam,
+    "/testall": _cmd_testall,
+}
+
 # ── Main text handler ──────────────────────────────────────────────────────────
 async def handle_message(update, context):
     msg = update.message
@@ -779,179 +947,15 @@ async def handle_message(update, context):
         parts = text.split()
         cmd = parts[0].split("@")[0].lower()
 
-        if cmd in SPECIAL_CMDS:
-            await send_photo(context, chat_id)
+        if cmd in PUBLIC_CMDS:
+            await PUBLIC_CMDS[cmd](msg, parts, context, chat_id)
             return
 
-        if cmd in ABOUT_CMDS:
-            await send_about(context, msg)
-            return
-
-        if cmd in ("/providers", "/help"):
-            await msg.reply_text(providers_text(chat_id))
-            return
-
-        if cmd in STATUS_CMDS:
-            await msg.reply_text(status_text(chat_id))
-            return
-
-        admin = await is_admin(context, chat_id, user_id, msg.chat.type)
-
-        if cmd == "/enable":
-            if not admin:
-                await msg.reply_text("Only admins can enable the bot.")
+        if cmd in ADMIN_CMDS:
+            if not await is_admin(context, chat_id, user_id, msg.chat.type):
+                await msg.reply_text("Only admins can use that command.")
                 return
-            update_chat_setting(chat_id, "enabled", 1)
-            await msg.reply_text("Bot enabled in this chat.")
-            return
-
-        if cmd == "/disable":
-            if not admin:
-                await msg.reply_text("Only admins can disable the bot.")
-                return
-            update_chat_setting(chat_id, "enabled", 0)
-            await msg.reply_text("Bot disabled in this chat.")
-            return
-
-        if cmd == "/muteuser":
-            if not admin:
-                await msg.reply_text("Only admins can mute users.")
-                return
-            target = target_user_id_from_command(msg, parts)
-            if not target:
-                await msg.reply_text("Reply to a user or pass a numeric user id.")
-                return
-            mute_user(chat_id, target)
-            await msg.reply_text(f"Muted user {target}.")
-            return
-
-        if cmd == "/unmuteuser":
-            if not admin:
-                await msg.reply_text("Only admins can unmute users.")
-                return
-            target = target_user_id_from_command(msg, parts)
-            if not target:
-                await msg.reply_text("Reply to a user or pass a numeric user id.")
-                return
-            unmute_user(chat_id, target)
-            await msg.reply_text(f"Unmuted user {target}.")
-            return
-
-        if cmd == "/resetproviders":
-            if not admin:
-                await msg.reply_text("Only admins can reset providers.")
-                return
-            reset_providers(chat_id)
-            await msg.reply_text("Providers reset to defaults.")
-            return
-
-        if cmd == "/setprovider":
-            if not admin:
-                await msg.reply_text("Only admins can change providers.")
-                return
-            if len(parts) != 3:
-                await msg.reply_text("Usage: /setprovider platform provider")
-                return
-            plat, prov = parts[1].lower(), parts[2].lower()
-            if plat not in PROVIDERS:
-                await msg.reply_text("Unknown platform. Try /providers")
-                return
-            if prov not in PROVIDERS[plat]["options"]:
-                await msg.reply_text("Unknown provider. Options: " + ", ".join(PROVIDERS[plat]["options"]))
-                return
-            set_choice(chat_id, plat, prov)
-            await msg.reply_text(f"Set {plat} to {prov}.")
-            return
-
-        if cmd == "/setsendermode":
-            if not admin:
-                await msg.reply_text("Only admins can change sender mode.")
-                return
-            if len(parts) != 2 or parts[1] not in ("first_name", "username", "full_name", "none"):
-                await msg.reply_text("Usage: /setsendermode first_name|username|full_name|none")
-                return
-            update_chat_setting(chat_id, "sender_mode", parts[1])
-            await msg.reply_text(f"sender_mode set to {parts[1]}.")
-            return
-
-        if cmd == "/setdedup":
-            if not admin:
-                await msg.reply_text("Only admins can change dedup window.")
-                return
-            if len(parts) != 2 or not parts[1].isdigit():
-                await msg.reply_text("Usage: /setdedup 60")
-                return
-            value = max(5, min(3600, int(parts[1])))
-            update_chat_setting(chat_id, "dedup_window", value)
-            await msg.reply_text(f"dedup_window set to {value}s.")
-            return
-
-        if cmd == "/setratelimit":
-            if not admin:
-                await msg.reply_text("Only admins can change rate limits.")
-                return
-            if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
-                await msg.reply_text("Usage: /setratelimit 5 30")
-                return
-            count = max(1, min(50, int(parts[1])))
-            window = max(5, min(3600, int(parts[2])))
-            update_chat_setting(chat_id, "rate_limit", count)
-            update_chat_setting(chat_id, "rate_window", window)
-            await msg.reply_text(f"rate_limit set to {count} per {window}s.")
-            return
-
-        if cmd == "/ignoreforwards":
-            if not admin:
-                await msg.reply_text("Only admins can change forward handling.")
-                return
-            if len(parts) != 2:
-                await msg.reply_text("Usage: /ignoreforwards on|off")
-                return
-            value = parse_on_off(parts[1])
-            if value is None:
-                await msg.reply_text("Usage: /ignoreforwards on|off")
-                return
-            update_chat_setting(chat_id, "ignore_forwards", value)
-            await msg.reply_text(f"ignore_forwards set to {bool(value)}.")
-            return
-
-        if cmd == "/fallback":
-            if not admin:
-                await msg.reply_text("Only admins can change fallback mode.")
-                return
-            if len(parts) != 2:
-                await msg.reply_text("Usage: /fallback on|off")
-                return
-            value = parse_on_off(parts[1])
-            if value is None:
-                await msg.reply_text("Usage: /fallback on|off")
-                return
-            update_chat_setting(chat_id, "provider_fallback", value)
-            await msg.reply_text(f"provider_fallback set to {bool(value)}.")
-            return
-
-        if cmd == "/textspam":
-            if not admin:
-                await msg.reply_text("Only admins can change text spam handling.")
-                return
-            if len(parts) != 2:
-                await msg.reply_text("Usage: /textspam on|off")
-                return
-            value = parse_on_off(parts[1])
-            if value is None:
-                await msg.reply_text("Usage: /textspam on|off")
-                return
-            update_chat_setting(chat_id, "text_spam", value)
-            await msg.reply_text(f"text_spam set to {bool(value)}.")
-            return
-
-        if cmd == "/testall":
-            if not admin:
-                await msg.reply_text("Only admins can run testall.")
-                return
-            platform = parts[1].lower() if len(parts) > 1 else "instagram"
-            custom_url = parts[2] if len(parts) > 2 else None
-            await handle_testall(msg, chat_id, platform, custom_url)
+            await ADMIN_CMDS[cmd](msg, parts, context, chat_id)
             return
 
         return
@@ -968,7 +972,7 @@ async def handle_message(update, context):
             await safe_delete(msg, "duplicate-text")
             return
 
-    new_text, changed, first_fixed_url = process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1016,7 +1020,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
         return
 
-    new_caption, changed, first_fixed_url = process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1075,7 +1079,7 @@ async def handle_new_members(update, context):
         if any(member.id == me.id for member in msg.new_chat_members):
             await msg.reply_text(WELCOME_TEXT)
     except Exception:
-        logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else '?')
+        logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else "?")
 
 # ── Boot ───────────────────────────────────────────────────────────────────────
 def validate_env():
@@ -1083,6 +1087,11 @@ def validate_env():
         raise SystemExit(
             "ERROR: BOT_TOKEN environment variable is not set. Add it in Railway variables."
         )
+
+
+async def periodic_cleanup(context):
+    cleanup_db()
+    logger.info("Periodic DB cleanup done.")
 
 
 async def on_startup(app):
@@ -1112,6 +1121,7 @@ def main():
     )
     app.add_handler(MessageHandler(filters.Sticker.ALL | filters.ANIMATION, handle_media))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
+    app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
     app.run_polling(drop_pending_updates=True)
 
 

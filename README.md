@@ -20,7 +20,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 ## Default providers
 
-- Instagram: `ee`
+- Instagram: `kkclip`
 - Twitter/X: `vx`
 - TikTok: `tnk`
 - Reddit: `vx`
