@@ -106,7 +106,10 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 1. Push the repo to GitHub.
 2. Create a new Railway project from the repo.
-3. Add environment variable `BOT_TOKEN`.
+3. Add environment variables:
+   - `BOT_TOKEN` — required.
+   - `WEBHOOK_URL` — recommended. Set to your Railway public URL (e.g. `https://your-app.railway.app`). Enables webhook mode, which is more reliable than polling. Leave unset to use polling instead.
+   - `PORT` — set automatically by Railway; do not override.
 4. Make sure the start command uses lowercase:
    - `python bot.py`
 5. Deploy.

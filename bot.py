@@ -18,9 +18,13 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.INFO,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+PORT = int(os.environ.get("PORT", 8443))
 IMAGE_FILE = "30364.jpg"
 DB_FILE = "bot_data.sqlite3"
 
@@ -176,6 +180,7 @@ HEALTH_CACHE: dict = {}
 HEALTH_TTL = 300
 SEEN_UPDATES: OrderedDict = OrderedDict()
 MAX_SEEN_UPDATES = 2000
+_known_chats: set = set()
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -254,6 +259,12 @@ def db_connect() -> sqlite3.Connection:
     return _conn
 
 
+def _warm_chat_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id FROM chat_settings").fetchall():
+        _known_chats.add(row["chat_id"])
+
+
 def init_db():
     conn = db_connect()
     conn.executescript(
@@ -301,9 +312,12 @@ def init_db():
         ON rate_events(chat_id, user_id, ts);
         """
     )
+    _warm_chat_cache()
 
 
 def ensure_chat_settings(chat_id):
+    if chat_id in _known_chats:
+        return
     conn = db_connect()
     cols = ", ".join(DEFAULT_CHAT_SETTINGS.keys())
     qs = ", ".join(["?"] * len(DEFAULT_CHAT_SETTINGS))
@@ -312,6 +326,7 @@ def ensure_chat_settings(chat_id):
         [chat_id, *DEFAULT_CHAT_SETTINGS.values()],
     )
     conn.commit()
+    _known_chats.add(chat_id)
 
 
 def get_chat_settings(chat_id):
@@ -519,15 +534,16 @@ async def provider_alive(url: str) -> bool:
 
 
 async def choose_provider_url(original_url, platform, preferred_key, allow_fallback=True):
-    keys = list(PROVIDERS[platform]["options"].keys())
-    ordered = [preferred_key] + [k for k in keys if k != preferred_key]
+    options = PROVIDERS[platform]["options"]
     chosen_url = apply_provider(original_url, platform, preferred_key)
-    if not allow_fallback or len(ordered) == 1:
+    if not allow_fallback or len(options) == 1:
         return chosen_url, preferred_key
-    for key in ordered:
-        candidate = apply_provider(original_url, platform, key)
-        if await provider_alive(candidate):
-            return candidate, key
+    ordered = [preferred_key] + [k for k in options if k != preferred_key]
+    urls = [apply_provider(original_url, platform, k) for k in ordered]
+    alive = await asyncio.gather(*[provider_alive(u) for u in urls])
+    for key, url, is_alive in zip(ordered, urls, alive):
+        if is_alive:
+            return url, key
     return chosen_url, preferred_key
 
 
@@ -988,7 +1004,9 @@ async def handle_message(update, context):
     logger.info("Fixed link in chat %s for user %s", chat_id, user_id)
     deleted = await safe_delete(msg, "link-rewrite")
     if deleted:
-        await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to)
+        sent = await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to)
+        if not sent:
+            await safe_send_text(context, chat_id, post_text, reply_to=reply_to)
     else:
         try:
             await msg.reply_text(post_text, link_preview_options=preview)
@@ -1097,8 +1115,10 @@ async def periodic_cleanup(context):
 async def on_startup(app):
     init_db()
     cleanup_db()
-    await app.bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Bot started. Webhook cleared and database ready.")
+    if not WEBHOOK_URL:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+    mode = "webhook" if WEBHOOK_URL else "polling"
+    logger.info("Bot started in %s mode. Database ready.", mode)
 
 
 async def handle_error(update, context):
@@ -1122,7 +1142,15 @@ def main():
     app.add_handler(MessageHandler(filters.Sticker.ALL | filters.ANIMATION, handle_media))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
     app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
-    app.run_polling(drop_pending_updates=True)
+    if WEBHOOK_URL:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+            drop_pending_updates=True,
+        )
+    else:
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
