@@ -36,7 +36,6 @@ PROVIDERS = {
         "options": {
             "kkclip": "kkclip.com",
             "kk": "kkinstagram.com",
-            "dd": "ddinstagram.com",
             "ez": "instagramez.com",
             "vx": "vxinstagram.com",
             "ee": "eeinstagram.com",
@@ -123,7 +122,6 @@ PROVIDERS = {
         "options": {
             "vx": "vxbilibili.com",
             "fx": "fxbilibili.seria.moe",
-            "ez": "bilibliez.com",
         },
     },
     "snapchat": {

@@ -69,7 +69,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 | Platform | Provider keys |
 |---|---|
-| instagram | `ee`, `vx`, `kk`, `dd`, `ez`, `fxig` |
+| instagram | `kkclip`, `kk`, `ee`, `vx`, `ez`, `fxig` |
 | twitter | `vx`, `fx`, `fixvx`, `fixupx`, `ez` |
 | tiktok | `tnk`, `vx`, `tik`, `tfx`, `ez` |
 | reddit | `vx`, `rx`, `rxy`, `ez` |
@@ -78,7 +78,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 | bluesky | `bskx`, `bsyy`, `xbsky`, `fx`, `vx`, `cbsky` |
 | pixiv | `ph` |
 | tumblr | `tp`, `txt` |
-| bilibili | `vx`, `fx`, `ez` |
+| bilibili | `vx`, `fx` |
 | snapchat | `ez` |
 | spotify | `fx`, `fix` |
 | twitch | `fx` |
