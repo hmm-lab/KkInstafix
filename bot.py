@@ -1,4 +1,5 @@
 import asyncio
+import html as _html
 import logging
 import os
 import re
@@ -580,6 +581,7 @@ async def process_text(text, chat_id, chat_settings):
     new_text = text
     changed = False
     first_fixed_url = None
+    first_platform = None
     dedup_window = int(chat_settings["dedup_window"])
     for raw in urls:
         fixed, platform, original = await fix_url(raw, chat_id, chat_settings)
@@ -590,15 +592,8 @@ async def process_text(text, chat_id, chat_settings):
             changed = True
             if not first_fixed_url:
                 first_fixed_url = fixed.split()[0]
-    return new_text, changed, first_fixed_url
-
-
-def _detected_platform(text):
-    for plat, info in PROVIDERS.items():
-        for domain in info["domains"]:
-            if domain in text:
-                return plat
-    return None
+                first_platform = platform
+    return new_text, changed, first_fixed_url, first_platform
 
 
 def sender_label(user, mode):
@@ -612,12 +607,14 @@ def sender_label(user, mode):
     return user.first_name or user.username or "User"
 
 
-def format_repost_text(user, text, mode, platform=None):
+def format_repost_text(user, mode, platform=None, url=None):
     label = sender_label(user, mode)
-    if not label:
-        return text
-    emoji = PLATFORM_EMOJI.get(platform, "") + " " if platform else ""
-    return f"{emoji}{label} shared: {text}"
+    emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
+    if label and url:
+        return f'{emoji} <a href="{url}">{_html.escape(label)}</a>'.strip()
+    if label:
+        return f"{emoji} {label}".strip() if emoji else label
+    return url or ""
 
 
 def providers_text(chat_id):
@@ -707,7 +704,7 @@ async def safe_delete(msg, reason):
         return False
 
 
-async def safe_send_text(context, chat_id, text, preview=None, reply_to=None):
+async def safe_send_text(context, chat_id, text, preview=None, reply_to=None, parse_mode="HTML"):
     try:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -715,6 +712,7 @@ async def safe_send_text(context, chat_id, text, preview=None, reply_to=None):
             link_preview_options=preview,
             reply_to_message_id=reply_to,
             disable_notification=True,
+            parse_mode=parse_mode,
         )
         return True
     except Exception:
@@ -986,12 +984,12 @@ async def handle_message(update, context):
             await safe_delete(msg, "duplicate-text")
             return
 
-    new_text, changed, first_fixed_url = await process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else None
-    post_text = format_repost_text(msg.from_user, new_text, chat_settings["sender_mode"], platform=_detected_platform(new_text))
+    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_fixed_url,
@@ -1007,7 +1005,7 @@ async def handle_message(update, context):
             await safe_send_text(context, chat_id, post_text, reply_to=reply_to)
     else:
         try:
-            await msg.reply_text(post_text, link_preview_options=preview)
+            await msg.reply_text(post_text, link_preview_options=preview, parse_mode="HTML")
             logger.info("Delete failed, replied instead in chat %s", chat_id)
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
@@ -1036,12 +1034,12 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
         return
 
-    new_caption, changed, first_fixed_url = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
-    clean_text = format_repost_text(msg.from_user, new_caption, chat_settings["sender_mode"], platform=_detected_platform(new_caption))
+    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_fixed_url,
@@ -1051,7 +1049,7 @@ async def handle_caption(update, context):
 
     logger.info("Fixed caption link in chat %s for user %s", chat_id, user_id)
     try:
-        await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to)
+        await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
     except Exception:
         logger.exception("Caption reply failed in chat %s", chat_id)
 
