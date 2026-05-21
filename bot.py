@@ -27,6 +27,7 @@ TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 8443))
 IMAGE_FILE = "30364.jpg"
+GENIUS_VIDEO = "genius.mp4"
 DB_FILE = "bot_data.sqlite3"
 
 # ── Providers ──────────────────────────────────────────────────────────────────
@@ -728,6 +729,14 @@ async def send_photo(context, chat_id):
         await context.bot.send_photo(chat_id=chat_id, photo=img)
 
 
+async def send_genius_video(context, chat_id):
+    if not os.path.exists(GENIUS_VIDEO):
+        await context.bot.send_message(chat_id=chat_id, text="Video not found.")
+        return
+    with open(GENIUS_VIDEO, "rb") as vid:
+        await context.bot.send_video(chat_id=chat_id, video=vid)
+
+
 async def send_about(context, msg):
     if os.path.exists(IMAGE_FILE):
         with open(IMAGE_FILE, "rb") as img:
@@ -744,6 +753,10 @@ async def send_about(context, msg):
 
 async def _cmd_photo(msg, parts, context, chat_id):
     await send_photo(context, chat_id)
+
+
+async def _cmd_genius(msg, parts, context, chat_id):
+    await send_genius_video(context, chat_id)
 
 
 async def _cmd_about(msg, parts, context, chat_id):
@@ -907,7 +920,7 @@ async def _cmd_testall(msg, parts, context, chat_id):
 PUBLIC_CMDS = {
     "/mehrab": _cmd_photo,
     "/mo": _cmd_photo,
-    "/genius": _cmd_photo,
+    "/genius": _cmd_genius,
     "/about": _cmd_about,
     "/credits": _cmd_about,
     "/me": _cmd_about,
