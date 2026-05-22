@@ -41,13 +41,22 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 ### Public
 
+- `/start` — welcome message and quick how-to.
 - `/providers` — show current providers and options.
 - `/status` or `/config` — show current chat settings.
+- `/stats` — show per-chat rewrite counts and top senders.
+- `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
 - `/about`, `/credits`, `/me` — about / credits message.
-- `/mehrab`, `/mo`, `/genius` — send the custom image.
+- `/mehrab`, `/mo` — send the custom image.
+- `/genius` — send the custom video.
+
+### Inline
+
+Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without adding the bot to that chat.
 
 ### Admin only
 
+- `/menu` — interactive inline-button provider config.
 - `/enable` — enable bot features in this chat.
 - `/disable` — disable bot features in this chat.
 - `/setprovider <platform> <provider>` — set provider for a platform.
@@ -64,6 +73,8 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 - `/textspam on|off` — enable or disable repeated text deletion.
 - `/testall <platform>` — test all providers for a platform.
 - `/testall <platform> <url>` — test all providers with a custom URL.
+- `/export` — download a JSON backup of this chat's settings, providers and mutes.
+- `/import` — send a JSON backup as a document with caption `/import` (or reply to one) to restore.
 
 ## Supported platforms and provider keys
 
@@ -97,10 +108,23 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 ## Files
 
 - `bot.py` — main bot code.
-- `30364.jpg` — image used by `/mehrab`, `/mo`, `/genius`, `/about`, `/credits`, `/me`.
+- `30364.jpg` — image used by `/mehrab`, `/mo`, `/about`, `/credits`, `/me`.
+- `genius.mp4` — video used by `/genius`.
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
+- `requirements-dev.txt` — dev dependencies (pytest).
+- `test_bot.py` — pure-function tests. Run with `pytest test_bot.py`.
 - `bot_data.sqlite3` — auto-created SQLite database.
+
+## Data persistence warning
+
+`bot_data.sqlite3` stores per-chat settings, provider choices, mutes, undo records and stats. On Railway's default filesystem this is **ephemeral** — if the container is rebuilt, the file is lost and all chats fall back to defaults.
+
+To protect against loss:
+1. Attach a Railway persistent volume mounted at the project root, or
+2. Use `/export` periodically and save the JSON backup, restoring with `/import` after a wipe.
+
+For a fully managed alternative, port the storage layer to Postgres.
 
 ## Deploy on Railway
 
