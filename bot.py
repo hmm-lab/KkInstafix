@@ -950,6 +950,40 @@ async def _cmd_providers(msg, parts, context, chat_id):
     await msg.reply_text(providers_text(chat_id))
 
 
+async def _cmd_help(msg, parts, context, chat_id):
+    text = (
+        "<b>KkInstafix — command reference</b>\n\n"
+        "<b>Public</b>\n"
+        "/start — welcome message\n"
+        "/providers — show active providers and options\n"
+        "/status — show current chat settings\n"
+        "/stats — link-fix counts and top senders\n"
+        "/undo — reply to a bot message to see the original link\n"
+        "/about — about / credits\n"
+        "/mehrab — send the custom image\n"
+        "/genius — send the custom video\n\n"
+        "<b>Inline</b>\n"
+        "Type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat to get a "
+        "fixed link without adding the bot to that chat.\n\n"
+        "<b>Admin only</b>\n"
+        "/menu — interactive provider picker\n"
+        "/enable · /disable — turn the bot on or off in this chat\n"
+        "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
+        "/resetproviders — restore all defaults\n"
+        "/muteuser · /unmuteuser — mute by reply or user ID\n"
+        "/setsendermode first_name|username|full_name|none\n"
+        "/setdedup &lt;seconds&gt; — dedup window\n"
+        "/setratelimit &lt;count&gt; &lt;seconds&gt; — rate-limit window\n"
+        "/ignoreforwards on|off\n"
+        "/fallback on|off — provider fallback\n"
+        "/textspam on|off — delete repeated plain text\n"
+        "/testall &lt;platform&gt; [url] — test all providers\n"
+        "/export — download a JSON backup\n"
+        "/import — reply to a JSON file with /import to restore"
+    )
+    await msg.reply_text(text, parse_mode="HTML")
+
+
 async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id))
 
@@ -963,7 +997,7 @@ async def _cmd_start(msg, parts, context, chat_id):
         "rewrite it so Telegram shows a proper preview.\n\n"
         "<b>In a group:</b> add me and I'll fix links automatically.\n"
         "<b>Inline:</b> type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat.\n\n"
-        "Commands: /providers /status /stats /about"
+        "Commands: /help /providers /status /stats /about"
     )
     await msg.reply_text(text, parse_mode="HTML")
 
@@ -1204,7 +1238,7 @@ PUBLIC_CMDS = {
     "/credits": _cmd_about,
     "/me": _cmd_about,
     "/providers": _cmd_providers,
-    "/help": _cmd_providers,
+    "/help": _cmd_help,
     "/status": _cmd_status,
     "/config": _cmd_status,
     "/stats": _cmd_stats,
