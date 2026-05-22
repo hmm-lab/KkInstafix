@@ -192,10 +192,13 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 HEALTH_CACHE: dict = {}
-HEALTH_TTL = 300
+HEALTH_TTL = 600
 SEEN_UPDATES: OrderedDict = OrderedDict()
 MAX_SEEN_UPDATES = 2000
 _known_chats: set = set()
+_settings_cache: dict = {}   # chat_id -> settings dict
+_muted_cache: dict = {}      # chat_id -> set of muted user_ids
+_recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -253,10 +256,11 @@ ABOUT_TEXT = (
 )
 
 WELCOME_TEXT = (
-    "Hi, I'm Mehrab's link fixer bot.\n\n"
-    "I automatically rewrite supported social links so Telegram previews work better.\n"
-    "Admins can use /status, /providers, /setprovider, /enable, /disable, /muteuser, and /testall.\n"
-    "Try /about for credits."
+    "👋 <b>Hi! I'm KkInstafix.</b>\n\n"
+    "I automatically rewrite Instagram, Twitter/X, TikTok, Reddit and other social media links "
+    "so Telegram shows proper previews.\n\n"
+    "<b>Just send or post a link and I'll fix it automatically.</b>\n\n"
+    "Admins: use /menu to configure providers, /help for all commands."
 )
 
 # ── Database ───────────────────────────────────────────────────────────────────
@@ -276,8 +280,16 @@ def db_connect() -> sqlite3.Connection:
 
 def _warm_chat_cache():
     conn = db_connect()
-    for row in conn.execute("SELECT chat_id FROM chat_settings").fetchall():
-        _known_chats.add(row["chat_id"])
+    for row in conn.execute("SELECT * FROM chat_settings").fetchall():
+        cid = row["chat_id"]
+        _known_chats.add(cid)
+        _settings_cache[cid] = dict(row)
+
+
+def _warm_muted_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id, user_id FROM blocked_users").fetchall():
+        _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
 def init_db():
@@ -347,6 +359,7 @@ def init_db():
         """
     )
     _warm_chat_cache()
+    _warm_muted_cache()
 
 
 def ensure_chat_settings(chat_id):
@@ -364,13 +377,14 @@ def ensure_chat_settings(chat_id):
 
 
 def get_chat_settings(chat_id):
+    if chat_id in _settings_cache:
+        return _settings_cache[chat_id].copy()
     ensure_chat_settings(chat_id)
     conn = db_connect()
-    row = conn.execute(
-        "SELECT * FROM chat_settings WHERE chat_id = ?",
-        (chat_id,),
-    ).fetchone()
-    return dict(row) if row else DEFAULT_CHAT_SETTINGS.copy()
+    row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)).fetchone()
+    s = dict(row) if row else DEFAULT_CHAT_SETTINGS.copy()
+    _settings_cache[chat_id] = s
+    return s.copy()
 
 
 def update_chat_setting(chat_id, key, value):
@@ -378,6 +392,18 @@ def update_chat_setting(chat_id, key, value):
     conn = db_connect()
     conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
     conn.commit()
+    if chat_id in _settings_cache:
+        _settings_cache[chat_id][key] = value
+
+
+def update_chat_settings_batch(chat_id, updates: dict):
+    ensure_chat_settings(chat_id)
+    conn = db_connect()
+    for key, value in updates.items():
+        conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
+    conn.commit()
+    if chat_id in _settings_cache:
+        _settings_cache[chat_id].update(updates)
 
 
 def get_choice(chat_id, platform):
@@ -408,6 +434,16 @@ def reset_providers(chat_id):
     conn.commit()
 
 
+def _muted_set(chat_id) -> set:
+    if chat_id not in _muted_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _muted_cache[chat_id] = {r["user_id"] for r in rows}
+    return _muted_cache[chat_id]
+
+
 def mute_user(chat_id, user_id):
     conn = db_connect()
     conn.execute(
@@ -415,6 +451,7 @@ def mute_user(chat_id, user_id):
         (chat_id, user_id),
     )
     conn.commit()
+    _muted_set(chat_id).add(user_id)
 
 
 def unmute_user(chat_id, user_id):
@@ -424,24 +461,15 @@ def unmute_user(chat_id, user_id):
         (chat_id, user_id),
     )
     conn.commit()
+    _muted_set(chat_id).discard(user_id)
 
 
 def is_user_muted(chat_id, user_id):
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT 1 FROM blocked_users WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id),
-    ).fetchone()
-    return bool(row)
+    return user_id in _muted_set(chat_id)
 
 
 def blocked_user_count(chat_id):
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM blocked_users WHERE chat_id = ?",
-        (chat_id,),
-    ).fetchone()
-    return row["c"] if row else 0
+    return len(_muted_set(chat_id))
 
 
 def cleanup_db(max_age=86400):
@@ -576,23 +604,16 @@ def import_chat_data(chat_id, data):
 
 
 def seen_recent(kind, chat_id, event_key, window):
-    now = int(time.time())
-    conn = db_connect()
-    conn.execute(
-        "DELETE FROM recent_events WHERE kind = ? AND ts < ?",
-        (kind, now - window),
-    )
-    row = conn.execute(
-        "SELECT 1 FROM recent_events WHERE kind = ? AND chat_id = ? AND event_key = ?",
-        (kind, chat_id, event_key),
-    ).fetchone()
-    if row:
+    now = time.time()
+    key = (kind, chat_id, event_key)
+    ts = _recent_mem.get(key)
+    if ts and now - ts < window:
         return True
-    conn.execute(
-        "INSERT OR REPLACE INTO recent_events(kind, chat_id, event_key, ts) VALUES(?, ?, ?, ?)",
-        (kind, chat_id, event_key, now),
-    )
-    conn.commit()
+    _recent_mem[key] = now
+    if len(_recent_mem) > 100_000:
+        cutoff = now - 7200
+        for k in [k for k, v in _recent_mem.items() if v < cutoff]:
+            del _recent_mem[k]
     return False
 
 
@@ -776,47 +797,46 @@ def format_repost_text(user, mode, platform=None, url=None):
 
 
 def providers_text(chat_id):
-    lines = ["Providers for this chat:", ""]
+    lines = ["<b>Providers for this chat</b>", ""]
     for plat in sorted(PROVIDERS):
         cur = get_choice(chat_id, plat)
-        opts = ", ".join(PROVIDERS[plat]["options"])
-        lines.append(f"{plat}: {cur}  (options: {opts})")
-        lines.append("")
+        emoji = PLATFORM_EMOJI.get(plat, "")
+        opts = []
+        for key in PROVIDERS[plat]["options"]:
+            opts.append(f"<b>{key}</b>" if key == cur else key)
+        lines.append(f"{emoji} {plat}: {', '.join(opts)}")
     lines += [
-        "Admin commands:",
-        "/setprovider instagram vx",
-        "/resetproviders",
-        "/enable  /disable",
-        "/muteuser (reply or user id)",
-        "/unmuteuser (reply or user id)",
-        "/setsendermode first_name|username|full_name|none",
-        "/setdedup 60",
-        "/setratelimit 5 30",
-        "/ignoreforwards on|off",
-        "/fallback on|off",
-        "/textspam on|off",
-        "/testall instagram",
         "",
-        "Public commands:",
-        "/providers  /status  /about  /credits  /me",
-        "/mehrab  /mo  /genius",
+        "Admins: /menu to change providers interactively, or:",
+        "<code>/setprovider &lt;platform&gt; &lt;key&gt;</code>",
+        "<code>/resetproviders</code> — restore defaults",
     ]
     return "\n".join(lines)
 
 
 def status_text(chat_id):
     s = get_chat_settings(chat_id)
+    on_off = lambda v: "✅ on" if v else "❌ off"
+    mode_labels = {
+        "first_name": "first name",
+        "username": "@username",
+        "full_name": "full name",
+        "none": "hidden",
+    }
+    mode = mode_labels.get(s["sender_mode"], s["sender_mode"])
+    muted = blocked_user_count(chat_id)
+    enabled_line = "✅ <b>Bot is ON</b>" if s["enabled"] else "❌ <b>Bot is OFF</b> — use /enable to turn on"
     return "\n".join([
-        "Chat status:",
-        f"enabled: {bool(s['enabled'])}",
-        f"sender_mode: {s['sender_mode']}",
-        f"dedup_window: {s['dedup_window']}s",
-        f"rate_limit: {s['rate_limit']} per {s['rate_window']}s",
-        f"ignore_forwards: {bool(s['ignore_forwards'])}",
-        f"provider_fallback: {bool(s['provider_fallback'])}",
-        f"caption_style: {s['caption_style']}",
-        f"text_spam: {bool(s['text_spam'])}",
-        f"muted_users: {blocked_user_count(chat_id)}",
+        f"<b>Chat status</b>",
+        "",
+        enabled_line,
+        f"Sender label: {mode}",
+        f"Dedup window: {s['dedup_window']}s",
+        f"Rate limit: {s['rate_limit']} links per {s['rate_window']}s per user",
+        f"Forwarded posts: {on_off(not s['ignore_forwards'])}",
+        f"Provider fallback: {on_off(s['provider_fallback'])}",
+        f"Text spam filter: {on_off(s['text_spam'])}",
+        f"Muted users: {muted}",
     ])
 
 
@@ -947,7 +967,7 @@ async def _cmd_about(msg, parts, context, chat_id):
 
 
 async def _cmd_providers(msg, parts, context, chat_id):
-    await msg.reply_text(providers_text(chat_id))
+    await msg.reply_text(providers_text(chat_id), parse_mode="HTML")
 
 
 async def _cmd_help(msg, parts, context, chat_id):
@@ -985,7 +1005,7 @@ async def _cmd_help(msg, parts, context, chat_id):
 
 
 async def _cmd_status(msg, parts, context, chat_id):
-    await msg.reply_text(status_text(chat_id))
+    await msg.reply_text(status_text(chat_id), parse_mode="HTML")
 
 
 async def _cmd_start(msg, parts, context, chat_id):
@@ -1032,7 +1052,10 @@ async def _cmd_undo(msg, parts, context, chat_id):
         return
     original, sender = lookup_rewrite(chat_id, msg.reply_to_message.message_id)
     if not original:
-        await msg.reply_text("I have no record of that message (only recent rewrites can be undone).")
+        await msg.reply_text(
+            "No record of that message — only rewrites from the last 7 days can be undone.\n"
+            "Make sure you're replying directly to one of my rewritten messages."
+        )
         return
     suffix = f" (from {_html.escape(sender)})" if sender else ""
     await msg.reply_text(
@@ -1090,7 +1113,7 @@ async def _cmd_enable(msg, parts, context, chat_id):
 
 async def _cmd_disable(msg, parts, context, chat_id):
     update_chat_setting(chat_id, "enabled", 0)
-    await msg.reply_text("Bot disabled in this chat.")
+    await msg.reply_text("Bot disabled in this chat. Use /enable to turn it back on.")
 
 
 async def _cmd_muteuser(msg, parts, context, chat_id):
@@ -1118,88 +1141,136 @@ async def _cmd_resetproviders(msg, parts, context, chat_id):
 
 async def _cmd_setprovider(msg, parts, context, chat_id):
     if len(parts) != 3:
-        await msg.reply_text("Usage: /setprovider platform provider")
+        await msg.reply_text(
+            "Usage: <code>/setprovider &lt;platform&gt; &lt;key&gt;</code>\n"
+            "Example: <code>/setprovider instagram vx</code>\n\n"
+            "Use /providers to see all platforms and available keys.",
+            parse_mode="HTML",
+        )
         return
     plat, prov = parts[1].lower(), parts[2].lower()
     if plat not in PROVIDERS:
-        await msg.reply_text("Unknown platform. Try /providers")
+        plats = ", ".join(sorted(PROVIDERS))
+        await msg.reply_text(
+            f"Unknown platform <b>{_html.escape(plat)}</b>.\n\nValid platforms: {plats}",
+            parse_mode="HTML",
+        )
         return
     if prov not in PROVIDERS[plat]["options"]:
-        await msg.reply_text("Unknown provider. Options: " + ", ".join(PROVIDERS[plat]["options"]))
+        opts = ", ".join(PROVIDERS[plat]["options"])
+        await msg.reply_text(
+            f"Unknown provider <b>{_html.escape(prov)}</b> for {plat}.\n\nAvailable: {opts}",
+            parse_mode="HTML",
+        )
         return
     set_choice(chat_id, plat, prov)
-    await msg.reply_text(f"Set {plat} to {prov}.")
+    emoji = PLATFORM_EMOJI.get(plat, "")
+    await msg.reply_text(f"{emoji} {plat} provider set to <b>{prov}</b>.", parse_mode="HTML")
 
 
 async def _cmd_setsendermode(msg, parts, context, chat_id):
-    if len(parts) != 2 or parts[1] not in ("first_name", "username", "full_name", "none"):
-        await msg.reply_text("Usage: /setsendermode first_name|username|full_name|none")
+    modes = {
+        "first_name": "first name (e.g. Mehrab)",
+        "username": "@username",
+        "full_name": "full name (e.g. Mehrab Khan)",
+        "none": "no label — just the link",
+    }
+    if len(parts) != 2 or parts[1] not in modes:
+        opts = "\n".join(f"  <code>{k}</code> — {v}" for k, v in modes.items())
+        await msg.reply_text(
+            f"Usage: <code>/setsendermode &lt;mode&gt;</code>\n\nModes:\n{opts}",
+            parse_mode="HTML",
+        )
         return
     update_chat_setting(chat_id, "sender_mode", parts[1])
-    await msg.reply_text(f"sender_mode set to {parts[1]}.")
+    await msg.reply_text(
+        f"Sender label set to: <b>{modes[parts[1]]}</b>", parse_mode="HTML"
+    )
 
 
 async def _cmd_setdedup(msg, parts, context, chat_id):
     if len(parts) != 2 or not parts[1].isdigit():
-        await msg.reply_text("Usage: /setdedup 60")
+        await msg.reply_text(
+            "Usage: <code>/setdedup &lt;seconds&gt;</code>\n"
+            "Example: <code>/setdedup 60</code> — same link won't appear twice within 60 seconds.",
+            parse_mode="HTML",
+        )
         return
     value = max(5, min(3600, int(parts[1])))
     update_chat_setting(chat_id, "dedup_window", value)
-    await msg.reply_text(f"dedup_window set to {value}s.")
+    minutes = value // 60
+    human = f"{minutes} minute{'s' if minutes != 1 else ''}" if minutes else f"{value} seconds"
+    await msg.reply_text(
+        f"Dedup window set to <b>{value}s</b> — same link won't appear twice within {human}.",
+        parse_mode="HTML",
+    )
 
 
 async def _cmd_setratelimit(msg, parts, context, chat_id):
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
-        await msg.reply_text("Usage: /setratelimit 5 30")
+        await msg.reply_text(
+            "Usage: <code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code>\n"
+            "Example: <code>/setratelimit 5 30</code> — max 5 links per user per 30 seconds.",
+            parse_mode="HTML",
+        )
         return
     count = max(1, min(50, int(parts[1])))
     window = max(5, min(3600, int(parts[2])))
-    update_chat_setting(chat_id, "rate_limit", count)
-    update_chat_setting(chat_id, "rate_window", window)
-    await msg.reply_text(f"rate_limit set to {count} per {window}s.")
+    update_chat_settings_batch(chat_id, {"rate_limit": count, "rate_window": window})
+    await msg.reply_text(
+        f"Rate limit set to <b>{count} links per {window}s</b> per user.",
+        parse_mode="HTML",
+    )
 
 
 async def _cmd_ignoreforwards(msg, parts, context, chat_id):
-    if len(parts) != 2:
-        await msg.reply_text("Usage: /ignoreforwards on|off")
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
+        cur = "on" if get_chat_settings(chat_id)["ignore_forwards"] else "off"
+        await msg.reply_text(f"Usage: /ignoreforwards on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /ignoreforwards on|off")
-        return
     update_chat_setting(chat_id, "ignore_forwards", value)
-    await msg.reply_text(f"ignore_forwards set to {bool(value)}.")
+    label = "Forwarded posts will be ignored." if value else "Forwarded posts will be processed."
+    await msg.reply_text(label)
 
 
 async def _cmd_fallback(msg, parts, context, chat_id):
-    if len(parts) != 2:
-        await msg.reply_text("Usage: /fallback on|off")
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
+        cur = "on" if get_chat_settings(chat_id)["provider_fallback"] else "off"
+        await msg.reply_text(f"Usage: /fallback on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /fallback on|off")
-        return
     update_chat_setting(chat_id, "provider_fallback", value)
-    await msg.reply_text(f"provider_fallback set to {bool(value)}.")
+    label = "Provider fallback enabled — will try alternates if primary is down." if value else "Provider fallback disabled."
+    await msg.reply_text(label)
 
 
 async def _cmd_textspam(msg, parts, context, chat_id):
-    if len(parts) != 2:
-        await msg.reply_text("Usage: /textspam on|off")
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
+        cur = "on" if get_chat_settings(chat_id)["text_spam"] else "off"
+        await msg.reply_text(f"Usage: /textspam on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /textspam on|off")
-        return
     update_chat_setting(chat_id, "text_spam", value)
-    await msg.reply_text(f"text_spam set to {bool(value)}.")
+    label = "Repeated plain text will be deleted." if value else "Repeated plain text filter disabled."
+    await msg.reply_text(label)
 
 
 async def _cmd_testall(msg, parts, context, chat_id):
-    platform = parts[1].lower() if len(parts) > 1 else "instagram"
+    if len(parts) < 2:
+        await msg.reply_text(
+            "Usage: <code>/testall &lt;platform&gt; [url]</code>\n"
+            "Platforms: " + ", ".join(sorted(PROVIDERS)),
+            parse_mode="HTML",
+        )
+        return
+    platform = parts[1].lower()
     custom_url = parts[2] if len(parts) > 2 else None
     if platform not in PROVIDERS:
-        await msg.reply_text("Unknown platform. Available: " + ", ".join(sorted(PROVIDERS)))
+        await msg.reply_text(
+            f"Unknown platform <b>{_html.escape(platform)}</b>.\n\nAvailable: " + ", ".join(sorted(PROVIDERS)),
+            parse_mode="HTML",
+        )
         return
     base_url = custom_url or SAMPLE_URLS.get(platform)
     if not base_url:
@@ -1352,12 +1423,26 @@ async def handle_message(update, context):
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
 
+    now = int(time.time())
+    conn = db_connect()
     if platform:
-        increment_stat(chat_id, platform, user_id)
+        conn.execute(
+            """
+            INSERT INTO chat_stats(chat_id, platform, sender_id, count, last_ts)
+            VALUES(?, ?, ?, 1, ?)
+            ON CONFLICT(chat_id, platform, sender_id) DO UPDATE SET
+                count = count + 1, last_ts = excluded.last_ts
+            """,
+            (chat_id, platform, user_id, now),
+        )
     if sent_msg and text:
         original = URL_RE.search(text)
         if original:
-            store_rewrite(chat_id, sent_msg.message_id, original.group(0), sender_name)
+            conn.execute(
+                "INSERT OR REPLACE INTO rewritten_messages(chat_id, bot_msg_id, original_url, sender_name, ts) VALUES(?,?,?,?,?)",
+                (chat_id, sent_msg.message_id, original.group(0), sender_name, now),
+            )
+    conn.commit()
 
 # ── Caption handler ────────────────────────────────────────────────────────────
 async def handle_caption(update, context):
@@ -1487,8 +1572,10 @@ async def handle_inline_query(update, context):
             InlineQueryResultArticle(
                 id=str(uuid.uuid4()),
                 title="No supported link found",
-                description="Paste an Instagram/Twitter/TikTok/etc. link to fix it.",
-                input_message_content=InputTextMessageContent(message_text=text),
+                description="Paste an Instagram, Twitter, TikTok, Reddit, or other social media link.",
+                input_message_content=InputTextMessageContent(
+                    message_text="Tip: type @KkInstaFixBot followed by a social media link to get a fixed version."
+                ),
             )
         )
     await query.answer(results, cache_time=10, is_personal=True)
@@ -1562,7 +1649,7 @@ async def handle_new_members(update, context):
     try:
         me = await context.bot.get_me()
         if any(member.id == me.id for member in msg.new_chat_members):
-            await msg.reply_text(WELCOME_TEXT)
+            await msg.reply_text(WELCOME_TEXT, parse_mode="HTML")
     except Exception:
         logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else "?")
 
