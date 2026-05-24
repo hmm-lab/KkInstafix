@@ -197,6 +197,9 @@ URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
+# Short-link domains that redirect to the real URL before we can fix them
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com"}
+_expand_cache: dict = {}  # short URL -> expanded URL
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
 SEEN_UPDATES: OrderedDict = OrderedDict()
@@ -705,6 +708,27 @@ def _check_url_sync(url: str) -> bool:
         return False
 
 
+def _expand_short_url_sync(url: str) -> str:
+    if url in _expand_cache:
+        return _expand_cache[url]
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = resp.url
+    except urllib.error.HTTPError as e:
+        result = getattr(e, "url", None) or url
+    except Exception:
+        result = url
+    if len(_expand_cache) < 2000:
+        _expand_cache[url] = result
+    return result
+
+
+async def expand_short_url(url: str) -> str:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _expand_short_url_sync, url)
+
+
 async def provider_alive(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     now = time.time()
@@ -741,6 +765,10 @@ INSTAGRAM_CONTENT_RE = re.compile(
 async def fix_url(raw, chat_id, chat_settings):
     url, tail = trim(raw)
     parsed = urlparse(url)
+    # Expand short-link redirects before platform detection
+    if parsed.netloc.lower().removeprefix("www.") in SHORT_LINK_DOMAINS:
+        url = await expand_short_url(url)
+        parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
         return raw, None, None, None
