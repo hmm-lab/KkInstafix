@@ -14,6 +14,9 @@ from collections import OrderedDict
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeDefault,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
@@ -208,8 +211,10 @@ SEEN_UPDATES: OrderedDict = OrderedDict()
 MAX_SEEN_UPDATES = 2000
 _known_chats: set = set()
 _settings_cache: dict = {}   # chat_id -> settings dict
+_providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
+_file_id_cache: dict = {}    # filename -> telegram file_id
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -295,6 +300,15 @@ def _warm_chat_cache():
         cid = row["chat_id"]
         _known_chats.add(cid)
         _settings_cache[cid] = dict(row)
+        _providers_cache[cid] = {p: cfg["default"] for p, cfg in PROVIDERS.items()}
+
+
+def _warm_providers_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id, platform, provider FROM provider_settings").fetchall():
+        cid, plat, prov = row["chat_id"], row["platform"], row["provider"]
+        if cid in _providers_cache and plat in PROVIDERS and prov in PROVIDERS[plat]["options"]:
+            _providers_cache[cid][plat] = prov
 
 
 def _warm_muted_cache():
@@ -370,6 +384,7 @@ def init_db():
         """
     )
     _warm_chat_cache()
+    _warm_providers_cache()
     _warm_muted_cache()
 
 
@@ -385,6 +400,8 @@ def ensure_chat_settings(chat_id):
     )
     conn.commit()
     _known_chats.add(chat_id)
+    if chat_id not in _providers_cache:
+        _providers_cache[chat_id] = {p: cfg["default"] for p, cfg in PROVIDERS.items()}
 
 
 def get_chat_settings(chat_id):
@@ -418,6 +435,10 @@ def update_chat_settings_batch(chat_id, updates: dict):
 
 
 def get_choice(chat_id, platform):
+    chat_p = _providers_cache.get(chat_id)
+    if chat_p is not None:
+        return chat_p.get(platform, PROVIDERS[platform]["default"])
+    # First access for this chat — ensure row exists then cache all platforms
     ensure_chat_settings(chat_id)
     conn = db_connect()
     row = conn.execute(
@@ -425,9 +446,9 @@ def get_choice(chat_id, platform):
         (chat_id, platform),
     ).fetchone()
     stored = row["provider"] if row else None
-    if stored and stored in PROVIDERS[platform]["options"]:
-        return stored
-    return PROVIDERS[platform]["default"]
+    result = stored if stored and stored in PROVIDERS[platform]["options"] else PROVIDERS[platform]["default"]
+    _providers_cache.setdefault(chat_id, {p: cfg["default"] for p, cfg in PROVIDERS.items()})[platform] = result
+    return result
 
 
 def set_choice(chat_id, platform, provider):
@@ -437,12 +458,14 @@ def set_choice(chat_id, platform, provider):
         (chat_id, platform, provider),
     )
     conn.commit()
+    _providers_cache.setdefault(chat_id, {})[platform] = provider
 
 
 def reset_providers(chat_id):
     conn = db_connect()
     conn.execute("DELETE FROM provider_settings WHERE chat_id = ?", (chat_id,))
     conn.commit()
+    _providers_cache.pop(chat_id, None)
 
 
 def _muted_set(chat_id) -> set:
@@ -587,6 +610,7 @@ def export_chat_data(chat_id):
 def import_chat_data(chat_id, data):
     if not isinstance(data, dict) or data.get("version") != 1:
         return False, "unsupported format"
+    source_chat = data.get("chat_id")
     settings = data.get("settings", {})
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
@@ -611,7 +635,14 @@ def import_chat_data(chat_id, data):
                 (chat_id, user_id),
             )
     conn.commit()
-    return True, f"imported {len(providers)} providers, {len(muted)} mutes"
+    # Invalidate in-memory caches so changes take effect immediately
+    _settings_cache.pop(chat_id, None)
+    _providers_cache.pop(chat_id, None)
+    _muted_cache.pop(chat_id, None)
+    msg = f"imported {len(providers)} providers, {len(muted)} mutes"
+    if source_chat and source_chat != chat_id:
+        msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
+    return True, msg
 
 
 def seen_recent(kind, chat_id, event_key, window):
@@ -715,7 +746,7 @@ def _expand_short_url_sync(url: str) -> str:
         return _expand_cache[url]
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=2) as resp:
             result = resp.url
     except urllib.error.HTTPError as e:
         result = getattr(e, "url", None) or url
@@ -804,6 +835,7 @@ async def process_text(text, chat_id, chat_settings):
     urls = URL_RE.findall(text)
     new_text = text
     changed = False
+    fixed_count = 0
     first_fixed_url = None
     first_preview_url = None
     first_platform = None
@@ -815,11 +847,12 @@ async def process_text(text, chat_id, chat_settings):
                 continue
             new_text = new_text.replace(raw, fixed)
             changed = True
+            fixed_count += 1
             if not first_fixed_url:
                 first_fixed_url = fixed.split()[0]
                 first_preview_url = preview
                 first_platform = platform
-    return new_text, changed, first_fixed_url, first_platform, first_preview_url
+    return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count
 
 
 def sender_label(user, mode):
@@ -983,30 +1016,49 @@ async def safe_send_text(context, chat_id, text, preview=None, reply_to=None, pa
 
 
 async def send_photo(context, chat_id):
+    cached = _file_id_cache.get(IMAGE_FILE)
+    if cached:
+        await context.bot.send_photo(chat_id=chat_id, photo=cached)
+        return
     if not os.path.exists(IMAGE_FILE):
         await context.bot.send_message(chat_id=chat_id, text="Image not found.")
         return
     with open(IMAGE_FILE, "rb") as img:
-        await context.bot.send_photo(chat_id=chat_id, photo=img)
+        sent = await context.bot.send_photo(chat_id=chat_id, photo=img)
+    if sent.photo:
+        _file_id_cache[IMAGE_FILE] = sent.photo[-1].file_id
 
 
 async def send_genius_video(context, chat_id):
+    cached = _file_id_cache.get(GENIUS_VIDEO)
+    if cached:
+        await context.bot.send_video(chat_id=chat_id, video=cached)
+        return
     if not os.path.exists(GENIUS_VIDEO):
         await context.bot.send_message(chat_id=chat_id, text="Video not found.")
         return
     with open(GENIUS_VIDEO, "rb") as vid:
-        await context.bot.send_video(chat_id=chat_id, video=vid)
+        sent = await context.bot.send_video(chat_id=chat_id, video=vid)
+    if sent.video:
+        _file_id_cache[GENIUS_VIDEO] = sent.video.file_id
 
 
 async def send_about(context, msg):
     if os.path.exists(IMAGE_FILE):
-        with open(IMAGE_FILE, "rb") as img:
-            await context.bot.send_photo(
+        cached = _file_id_cache.get(IMAGE_FILE + ":about")
+        photo_src = cached if cached else open(IMAGE_FILE, "rb")
+        try:
+            sent = await context.bot.send_photo(
                 chat_id=msg.chat_id,
-                photo=img,
+                photo=photo_src,
                 caption=ABOUT_TEXT,
                 parse_mode="Markdown",
             )
+            if not cached and sent.photo:
+                _file_id_cache[IMAGE_FILE + ":about"] = sent.photo[-1].file_id
+        finally:
+            if not cached:
+                photo_src.close()
     else:
         await msg.reply_text(ABOUT_TEXT, parse_mode="Markdown")
 
@@ -1049,6 +1101,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
         "/resetproviders — restore all defaults\n"
         "/muteuser · /unmuteuser — mute by reply or user ID\n"
+        "/listmuted — list all muted users\n"
         "/setsendermode first_name|username|full_name|none\n"
         "/setdedup &lt;seconds&gt; — dedup window\n"
         "/setratelimit &lt;count&gt; &lt;seconds&gt; — rate-limit window\n"
@@ -1067,16 +1120,27 @@ async def _cmd_status(msg, parts, context, chat_id):
 
 
 async def _cmd_start(msg, parts, context, chat_id):
-    text = (
-        "👋 <b>Welcome to Mehrab's link fixer bot.</b>\n\n"
-        "Send me a link from Instagram, Twitter/X, TikTok, Reddit, "
-        "Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, "
-        "Spotify, Twitch, iFunny, FurAffinity, or DeviantArt and I'll "
-        "rewrite it so Telegram shows a proper preview.\n\n"
-        "<b>In a group:</b> add me and I'll fix links automatically.\n"
-        "<b>Inline:</b> type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat.\n\n"
-        "Commands: /help /providers /status /stats /about"
-    )
+    if msg.chat.type == "private":
+        text = (
+            "👋 <b>Hi! I'm KkInstafix.</b>\n\n"
+            "I fix social media links so they embed properly in Telegram.\n\n"
+            "<b>In a group:</b> add me and I'll fix links automatically as they're posted.\n\n"
+            "<b>Inline mode:</b> type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat "
+            "to get a fixed link without adding me.\n\n"
+            "<b>Right here:</b> paste a link and I'll fix it.\n\n"
+            "/help — all commands"
+        )
+    else:
+        text = (
+            "👋 <b>Welcome to Mehrab's link fixer bot.</b>\n\n"
+            "Send me a link from Instagram, Twitter/X, TikTok, Reddit, "
+            "Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, "
+            "Spotify, Twitch, iFunny, FurAffinity, or DeviantArt and I'll "
+            "rewrite it so Telegram shows a proper preview.\n\n"
+            "<b>In a group:</b> add me and I'll fix links automatically.\n"
+            "<b>Inline:</b> type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat.\n\n"
+            "/help — all commands"
+        )
     await msg.reply_text(text, parse_mode="HTML")
 
 
@@ -1172,6 +1236,22 @@ async def _cmd_enable(msg, parts, context, chat_id):
 async def _cmd_disable(msg, parts, context, chat_id):
     update_chat_setting(chat_id, "enabled", 0)
     await msg.reply_text("Bot disabled in this chat. Use /enable to turn it back on.")
+
+
+async def _cmd_listmuted(msg, parts, context, chat_id):
+    muted = list(_muted_set(chat_id))
+    if not muted:
+        await msg.reply_text("No muted users in this chat.")
+        return
+    lines = [f"<b>Muted users ({len(muted)})</b>", ""]
+    for uid in muted:
+        try:
+            member = await context.bot.get_chat_member(chat_id, uid)
+            name = member.user.first_name or member.user.username or f"User {uid}"
+            lines.append(f"• {_html.escape(name)} — <code>{uid}</code>")
+        except Exception:
+            lines.append(f"• <code>{uid}</code>")
+    await msg.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def _cmd_muteuser(msg, parts, context, chat_id):
@@ -1380,6 +1460,7 @@ ADMIN_CMDS = {
     "/disable": _cmd_disable,
     "/muteuser": _cmd_muteuser,
     "/unmuteuser": _cmd_unmuteuser,
+    "/listmuted": _cmd_listmuted,
     "/resetproviders": _cmd_resetproviders,
     "/setprovider": _cmd_setprovider,
     "/setsendermode": _cmd_setsendermode,
@@ -1453,12 +1534,11 @@ async def handle_message(update, context):
             await safe_delete(msg, "duplicate-text")
             return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url = await process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else None
-    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     sender_name = sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
     preview = LinkPreviewOptions(
         is_disabled=False,
@@ -1467,16 +1547,25 @@ async def handle_message(update, context):
         show_above_text=False,
     ) if first_fixed_url else None
 
-    logger.info("Fixed link in chat %s for user %s", chat_id, user_id)
+    if fixed_count > 1:
+        # Multiple links: preserve the full message context with all URLs replaced
+        label = sender_label(msg.from_user, chat_settings["sender_mode"])
+        post_text = f"{label}:\n{new_text}" if label else new_text
+        post_parse_mode = None
+    else:
+        post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+        post_parse_mode = "HTML"
+
+    logger.info("Fixed %d link(s) in chat %s for user %s", fixed_count, chat_id, user_id)
     sent_msg = None
     deleted = await safe_delete(msg, "link-rewrite")
     if deleted:
-        sent_msg = await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to)
+        sent_msg = await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to, parse_mode=post_parse_mode)
         if not sent_msg:
-            sent_msg = await safe_send_text(context, chat_id, post_text, reply_to=reply_to)
+            sent_msg = await safe_send_text(context, chat_id, post_text, reply_to=reply_to, parse_mode=post_parse_mode)
     else:
         try:
-            sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode="HTML")
+            sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode)
             logger.info("Delete failed, replied instead in chat %s", chat_id)
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
@@ -1526,7 +1615,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
         return
 
-    new_caption, changed, first_fixed_url, platform, first_preview_url = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1724,11 +1813,48 @@ async def periodic_cleanup(context):
     logger.info("Periodic DB cleanup done.")
 
 
+_PUBLIC_COMMANDS = [
+    BotCommand("start", "Welcome message and quick how-to"),
+    BotCommand("help", "Full command reference"),
+    BotCommand("providers", "Show active providers and options"),
+    BotCommand("status", "Show current chat settings"),
+    BotCommand("stats", "Link-fix counts and top senders"),
+    BotCommand("undo", "See the original link (reply to bot message)"),
+    BotCommand("about", "About this bot"),
+]
+
+_ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
+    BotCommand("menu", "Interactive provider picker"),
+    BotCommand("enable", "Enable the bot in this chat"),
+    BotCommand("disable", "Disable the bot in this chat"),
+    BotCommand("setprovider", "Change provider: /setprovider <platform> <key>"),
+    BotCommand("resetproviders", "Reset all providers to defaults"),
+    BotCommand("muteuser", "Mute a user (reply or user ID)"),
+    BotCommand("unmuteuser", "Unmute a user (reply or user ID)"),
+    BotCommand("listmuted", "List all muted users"),
+    BotCommand("setsendermode", "Change sender label format"),
+    BotCommand("setdedup", "Change dedup window in seconds"),
+    BotCommand("setratelimit", "Change rate limit: /setratelimit <count> <seconds>"),
+    BotCommand("ignoreforwards", "Ignore forwarded posts: on/off"),
+    BotCommand("fallback", "Provider fallback: on/off"),
+    BotCommand("textspam", "Delete repeated text: on/off"),
+    BotCommand("testall", "Test all providers for a platform"),
+    BotCommand("export", "Download a JSON backup"),
+    BotCommand("import", "Restore from a JSON backup"),
+]
+
+
 async def on_startup(app):
     init_db()
     cleanup_db()
     if not WEBHOOK_URL:
         await app.bot.delete_webhook(drop_pending_updates=True)
+    try:
+        await app.bot.set_my_commands(_PUBLIC_COMMANDS, scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands(_ADMIN_COMMANDS, scope=BotCommandScopeAllChatAdministrators())
+        logger.info("Bot commands registered with Telegram.")
+    except Exception:
+        logger.warning("Failed to register bot commands — continuing anyway.", exc_info=True)
     mode = "webhook" if WEBHOOK_URL else "polling"
     logger.info("Bot started in %s mode. Database ready.", mode)
 
