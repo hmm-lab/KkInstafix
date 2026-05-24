@@ -70,6 +70,9 @@ PROVIDERS = {
             "ez": "twitterez.com",
             "xcancel": "xcancel.com",
         },
+        # noauth_embed: when one of these keys is chosen, use its value as the
+        # embed provider for Telegram's preview while keeping the link URL as-is.
+        "noauth_embed": {"xcancel": "vx"},
     },
     "tiktok": {
         "default": "tnk",
@@ -90,7 +93,9 @@ PROVIDERS = {
             "rx": "rxddit.com",
             "rxy": "rxyddit.com",
             "ez": "redditez.com",
+            "redlib": "redlib.org",
         },
+        "noauth_embed": {"redlib": "vx"},
     },
     "facebook": {
         "default": "ez",
@@ -738,22 +743,31 @@ async def fix_url(raw, chat_id, chat_settings):
     parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
-        return raw, None, None
+        return raw, None, None, None
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
-        return raw, None, None
+        return raw, None, None, None
     if platform == "youtube_shorts":
         m = SHORTS_RE.match(parsed.path)
         if m:
-            return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None
-        return raw, None, None
+            return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None, None
+        return raw, None, None, None
     preferred = get_choice(chat_id, platform)
-    fixed, _ = await choose_provider_url(
+    fixed, used_key = await choose_provider_url(
         url,
         platform,
         preferred,
         allow_fallback=bool(chat_settings["provider_fallback"]),
     )
-    return fixed + tail, platform, url
+    # If a no-account frontend is chosen, generate a separate embed URL for the
+    # Telegram preview so the preview still loads while the link goes to the
+    # no-account site.
+    noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
+    if used_key in noauth_embed:
+        embed_fixed, _ = await choose_provider_url(url, platform, noauth_embed[used_key], allow_fallback=False)
+        preview_url = embed_fixed
+    else:
+        preview_url = fixed
+    return fixed + tail, platform, url, preview_url
 
 
 async def process_text(text, chat_id, chat_settings):
@@ -761,10 +775,11 @@ async def process_text(text, chat_id, chat_settings):
     new_text = text
     changed = False
     first_fixed_url = None
+    first_preview_url = None
     first_platform = None
     dedup_window = int(chat_settings["dedup_window"])
     for raw in urls:
-        fixed, platform, original = await fix_url(raw, chat_id, chat_settings)
+        fixed, platform, original, preview = await fix_url(raw, chat_id, chat_settings)
         if fixed != raw:
             if original and seen_recent("fix", chat_id, original, dedup_window):
                 continue
@@ -772,8 +787,9 @@ async def process_text(text, chat_id, chat_settings):
             changed = True
             if not first_fixed_url:
                 first_fixed_url = fixed.split()[0]
+                first_preview_url = preview
                 first_platform = platform
-    return new_text, changed, first_fixed_url, first_platform
+    return new_text, changed, first_fixed_url, first_platform, first_preview_url
 
 
 def sender_label(user, mode):
@@ -799,15 +815,24 @@ def format_repost_text(user, mode, platform=None, url=None):
 
 def providers_text(chat_id):
     lines = ["<b>Providers for this chat</b>", ""]
+    has_noauth = False
     for plat in sorted(PROVIDERS):
         cur = get_choice(chat_id, plat)
         emoji = PLATFORM_EMOJI.get(plat, "")
+        noauth_keys = set(PROVIDERS[plat].get("noauth_embed", {}).keys())
         opts = []
         for key in PROVIDERS[plat]["options"]:
-            opts.append(f"<b>{key}</b>" if key == cur else key)
+            label = f"<b>{key}</b>" if key == cur else key
+            if key in noauth_keys:
+                label += " 🌐"
+                has_noauth = True
+            opts.append(label)
         lines.append(f"{emoji} {plat}: {', '.join(opts)}")
+    lines.append("")
+    if has_noauth:
+        lines.append("🌐 = no-account frontend (Telegram preview still loads via embed provider)")
+        lines.append("")
     lines += [
-        "",
         "Admins: /menu to change providers interactively, or:",
         "<code>/setprovider &lt;platform&gt; &lt;key&gt;</code>",
         "<code>/resetproviders</code> — restore defaults",
@@ -856,13 +881,15 @@ def _build_platform_keyboard():
 
 def _build_provider_keyboard(chat_id, platform):
     current = get_choice(chat_id, platform)
+    noauth_keys = set(PROVIDERS[platform].get("noauth_embed", {}).keys())
     rows = []
     options = list(PROVIDERS[platform]["options"])
     for i in range(0, len(options), 3):
         row = []
         for key in options[i:i + 3]:
             mark = "✓ " if key == current else ""
-            row.append(InlineKeyboardButton(f"{mark}{key}", callback_data=f"m:s:{platform}:{key}"))
+            suffix = " 🌐" if key in noauth_keys else ""
+            row.append(InlineKeyboardButton(f"{mark}{key}{suffix}", callback_data=f"m:s:{platform}:{key}"))
         rows.append(row)
     rows.append([InlineKeyboardButton("⬅ Back", callback_data="m:back")])
     return InlineKeyboardMarkup(rows)
@@ -1396,7 +1423,7 @@ async def handle_message(update, context):
             await safe_delete(msg, "duplicate-text")
             return
 
-    new_text, changed, first_fixed_url, platform = await process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1405,7 +1432,7 @@ async def handle_message(update, context):
     sender_name = sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
     preview = LinkPreviewOptions(
         is_disabled=False,
-        url=first_fixed_url,
+        url=first_preview_url,
         prefer_large_media=True,
         show_above_text=False,
     ) if first_fixed_url else None
@@ -1469,7 +1496,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
         return
 
-    new_caption, changed, first_fixed_url, platform = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1480,7 +1507,7 @@ async def handle_caption(update, context):
     clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
-        url=first_fixed_url,
+        url=first_preview_url,
         prefer_large_media=True,
         show_above_text=False,
     ) if first_fixed_url else None
@@ -1550,7 +1577,7 @@ async def handle_inline_query(update, context):
     results = []
     urls = URL_RE.findall(text)
     for raw in urls[:5]:
-        fixed, platform, original = await fix_url(raw, 0, chat_settings)
+        fixed, platform, original, preview = await fix_url(raw, 0, chat_settings)
         if fixed == raw or not platform:
             continue
         emoji = PLATFORM_EMOJI.get(platform, "🔗")
@@ -1562,7 +1589,7 @@ async def handle_inline_query(update, context):
                 input_message_content=InputTextMessageContent(
                     message_text=fixed,
                     link_preview_options=LinkPreviewOptions(
-                        is_disabled=False, url=fixed, prefer_large_media=True
+                        is_disabled=False, url=preview, prefer_large_media=True
                     ),
                 ),
             )
