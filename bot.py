@@ -83,7 +83,9 @@ PROVIDERS = {
             "tik": "tiktxk.com",
             "tfx": "tfxktok.com",
             "ez": "tiktokez.com",
+            "proxitok": "proxitok.pabloferreiro.es",
         },
+        "noauth_embed": {"proxitok": "tnk"},
     },
     "reddit": {
         "default": "vx",
