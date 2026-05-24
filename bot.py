@@ -68,6 +68,7 @@ PROVIDERS = {
             "fixvx": "fixvx.com",
             "fixupx": "fixupx.com",
             "ez": "twitterez.com",
+            "xcancel": "xcancel.com",
         },
     },
     "tiktok": {

@@ -81,7 +81,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 | Platform | Provider keys |
 |---|---|
 | instagram | `kkclip`, `kk`, `ee`, `vx`, `ez`, `fxig` |
-| twitter | `vx`, `fx`, `fixvx`, `fixupx`, `ez` |
+| twitter | `vx`, `fx`, `fixvx`, `fixupx`, `ez`, `xcancel` |
 | tiktok | `tnk`, `vx`, `tik`, `tfx`, `ez` |
 | reddit | `vx`, `rx`, `rxy`, `ez` |
 | facebook | `ez`, `fx`, `bed` |
