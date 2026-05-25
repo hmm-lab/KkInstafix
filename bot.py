@@ -48,6 +48,7 @@ PORT = int(os.environ.get("PORT", 8443))
 IMAGE_FILE = "30364.jpg"
 GENIUS_VIDEO = "genius.mp4"
 DB_FILE = "bot_data.sqlite3"
+_start_time = time.time()
 
 # ── Providers ──────────────────────────────────────────────────────────────────
 PROVIDERS = {
@@ -264,6 +265,9 @@ SAMPLE_URLS = {
     "bilibili": "https://www.bilibili.com/video/BV1xx411c7mD",
     "spotify": "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
     "twitch": "https://clips.twitch.tv/test",
+    "snapchat": "https://www.snapchat.com/spotlight/test",
+    "ifunny": "https://ifunny.co/video/test",
+    "furaffinity": "https://www.furaffinity.net/view/12345678/",
     "deviantart": "https://www.deviantart.com/test/art/test-12345",
 }
 
@@ -350,22 +354,6 @@ def init_db():
             user_id INTEGER NOT NULL,
             PRIMARY KEY (chat_id, user_id)
         );
-
-        CREATE TABLE IF NOT EXISTS recent_events (
-            kind TEXT NOT NULL,
-            chat_id INTEGER NOT NULL,
-            event_key TEXT NOT NULL,
-            ts INTEGER NOT NULL,
-            PRIMARY KEY (kind, chat_id, event_key)
-        );
-
-        CREATE TABLE IF NOT EXISTS rate_events (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            ts INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_rate_events_lookup
-        ON rate_events(chat_id, user_id, ts);
 
         CREATE TABLE IF NOT EXISTS chat_stats (
             chat_id INTEGER NOT NULL,
@@ -1112,6 +1100,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "Type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat to get a "
         "fixed link without adding the bot to that chat.\n\n"
         "<b>Admin only</b>\n"
+        "/ping — check if the bot is alive (uptime, stats)\n"
         "/menu — interactive provider picker\n"
         "/enable · /disable — turn the bot on or off in this chat\n"
         "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
@@ -1133,6 +1122,24 @@ async def _cmd_help(msg, parts, context, chat_id):
 
 async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id), parse_mode="HTML")
+
+
+async def _cmd_ping(msg, parts, context, chat_id):
+    uptime = int(time.time() - _start_time)
+    h, rem = divmod(uptime, 3600)
+    m, s = divmod(rem, 60)
+    parts_t = []
+    if h:
+        parts_t.append(f"{h}h")
+    if m:
+        parts_t.append(f"{m}m")
+    parts_t.append(f"{s}s")
+    await msg.reply_text(
+        f"🏓 Pong!\n"
+        f"Uptime: {' '.join(parts_t)}\n"
+        f"Chats: {len(_known_chats)}\n"
+        f"Cached users: {len(_user_names)}",
+    )
 
 
 async def _cmd_start(msg, parts, context, chat_id):
@@ -1491,6 +1498,7 @@ PUBLIC_CMDS = {
 }
 
 ADMIN_CMDS = {
+    "/ping": _cmd_ping,
     "/menu": _cmd_menu,
     "/enable": _cmd_enable,
     "/disable": _cmd_disable,
@@ -1749,6 +1757,47 @@ async def handle_media(update, context):
     if seen_recent("media", chat_id, fuid, int(chat_settings["dedup_window"])):
         await safe_delete(msg, "duplicate-media")
 
+# ── Channel post handler ──────────────────────────────────────────────────────
+async def handle_channel_post(update, context):
+    msg = update.channel_post
+    if not msg or not msg.text:
+        return
+    if is_duplicate_update(update.update_id):
+        return
+
+    chat_id = msg.chat_id
+    chat_settings = get_chat_settings(chat_id)
+    if not chat_settings["enabled"]:
+        return
+
+    new_text, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.text, chat_id, chat_settings)
+    if not changed:
+        return
+
+    preview = LinkPreviewOptions(
+        is_disabled=False,
+        url=first_preview_url,
+        prefer_large_media=True,
+        show_above_text=False,
+    ) if first_fixed_url else None
+
+    logger.info("Fixed link in channel %s", chat_id)
+    try:
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text=first_fixed_url,
+            link_preview_options=preview,
+            disable_notification=True,
+        )
+        if platform:
+            increment_stat(chat_id, platform, 0)
+        if sent:
+            original = URL_RE.search(msg.text)
+            if original:
+                store_rewrite(chat_id, sent.message_id, original.group(0), "")
+    except Exception:
+        logger.exception("Channel post reply failed in chat %s", chat_id)
+
 # ── Document import handler ────────────────────────────────────────────────────
 async def handle_import_document(update, context):
     msg = update.message
@@ -1906,6 +1955,7 @@ _PUBLIC_COMMANDS = [
 ]
 
 _ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
+    BotCommand("ping", "Check bot uptime and stats"),
     BotCommand("menu", "Interactive provider picker"),
     BotCommand("enable", "Enable the bot in this chat"),
     BotCommand("disable", "Disable the bot in this chat"),
@@ -1963,6 +2013,7 @@ def main():
     app.add_handler(MessageHandler(filters.Sticker.ALL | filters.ANIMATION, handle_media))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
     app.add_handler(MessageHandler(filters.Document.ALL & filters.CaptionRegex(r"^/import"), handle_import_document))
+    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & filters.TEXT, handle_channel_post))
     app.add_handler(InlineQueryHandler(handle_inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
