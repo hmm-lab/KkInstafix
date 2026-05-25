@@ -203,7 +203,7 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it"}
 _expand_cache: dict = {}  # short URL -> expanded URL
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
@@ -215,6 +215,9 @@ _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 _file_id_cache: dict = {}    # filename -> telegram file_id
+_admin_cache: dict = {}      # (chat_id, user_id) -> (is_admin, expiry_ts)
+_user_names: dict = {}       # user_id -> first_name (from messages)
+_ADMIN_CACHE_TTL = 300
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -506,14 +509,15 @@ def blocked_user_count(chat_id):
     return len(_muted_set(chat_id))
 
 
-def cleanup_db(max_age=86400):
+def cleanup_db():
     now = int(time.time())
     conn = db_connect()
-    conn.execute("DELETE FROM recent_events WHERE ts < ?", (now - max_age,))
-    conn.execute("DELETE FROM rate_events WHERE ts < ?", (now - max_age,))
-    # Undo records kept for 7 days
     conn.execute("DELETE FROM rewritten_messages WHERE ts < ?", (now - 7 * 86400,))
     conn.commit()
+    # Prune stale in-memory rate buckets
+    cutoff = now - 7200
+    for key in [k for k, ts_list in _rate_mem.items() if not ts_list or ts_list[-1] < cutoff]:
+        del _rate_mem[key]
 
 
 def increment_stat(chat_id, platform, sender_id):
@@ -659,25 +663,23 @@ def seen_recent(kind, chat_id, event_key, window):
     return False
 
 
+_rate_mem: dict = {}  # (chat_id, user_id) -> list of timestamps
+
+
 def check_rate(chat_id, user_id, limit_count, window):
-    now = int(time.time())
-    conn = db_connect()
-    conn.execute(
-        "DELETE FROM rate_events WHERE chat_id = ? AND user_id = ? AND ts < ?",
-        (chat_id, user_id, now - window),
-    )
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM rate_events WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id),
-    ).fetchone()
-    current = row["c"] if row else 0
-    if current >= limit_count:
+    now = time.time()
+    key = (chat_id, user_id)
+    timestamps = _rate_mem.get(key)
+    if timestamps is None:
+        timestamps = []
+        _rate_mem[key] = timestamps
+    # Evict expired entries
+    cutoff = now - window
+    while timestamps and timestamps[0] < cutoff:
+        timestamps.pop(0)
+    if len(timestamps) >= limit_count:
         return False
-    conn.execute(
-        "INSERT INTO rate_events(chat_id, user_id, ts) VALUES(?, ?, ?)",
-        (chat_id, user_id, now),
-    )
-    conn.commit()
+    timestamps.append(now)
     return True
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -982,12 +984,19 @@ def is_forwarded(msg):
 async def is_admin(context, chat_id, user_id, chat_type):
     if chat_type == "private":
         return True
+    now = time.time()
+    key = (chat_id, user_id)
+    cached = _admin_cache.get(key)
+    if cached and cached[1] > now:
+        return cached[0]
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
-        return member.status in ("administrator", "creator")
+        result = member.status in ("administrator", "creator")
     except Exception:
         logger.exception("Failed admin check in chat %s for user %s", chat_id, user_id)
-        return False
+        result = False
+    _admin_cache[key] = (result, now + _ADMIN_CACHE_TTL)
+    return result
 
 
 async def safe_delete(msg, reason):
@@ -1159,11 +1168,15 @@ async def _cmd_stats(msg, parts, context, chat_id):
     if by_sender:
         lines.append("<b>Top senders:</b>")
         for row in by_sender:
-            try:
-                member = await context.bot.get_chat_member(chat_id, row["sender_id"])
-                name = member.user.first_name or member.user.username or f"User {row['sender_id']}"
-            except Exception:
-                name = f"User {row['sender_id']}"
+            sid = row["sender_id"]
+            name = _user_names.get(sid)
+            if not name:
+                try:
+                    member = await context.bot.get_chat_member(chat_id, sid)
+                    name = member.user.first_name or member.user.username or f"User {sid}"
+                    _user_names[sid] = name
+                except Exception:
+                    name = f"User {sid}"
             lines.append(f"  {_html.escape(name)}: {row['c']}")
     await msg.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -1414,26 +1427,32 @@ async def _cmd_testall(msg, parts, context, chat_id):
     if not base_url:
         await msg.reply_text("No sample URL. Pass one: /testall instagram https://...")
         return
-    await msg.reply_text(
-        f"Testing {len(PROVIDERS[platform]['options'])} providers for {platform}...\n{base_url}"
+    options = PROVIDERS[platform]["options"]
+    emoji = PLATFORM_EMOJI.get(platform, "?")
+    parsed = urlparse(base_url)
+    status_msg = await msg.reply_text(
+        f"Testing {len(options)} providers for {platform}..."
     )
-    for key, host in PROVIDERS[platform]["options"].items():
-        parsed = urlparse(base_url)
+
+    async def _test_one(key, host):
         fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, ""))
         preview = LinkPreviewOptions(
-            is_disabled=False,
-            url=fixed,
-            prefer_large_media=True,
-            show_above_text=False,
+            is_disabled=False, url=fixed,
+            prefer_large_media=True, show_above_text=False,
         )
         try:
             await msg.reply_text(
-                f"{PLATFORM_EMOJI.get(platform, '?')} [{key}] {fixed}",
-                link_preview_options=preview,
+                f"{emoji} [{key}] {fixed}", link_preview_options=preview,
             )
         except Exception:
             logger.exception("/testall failed for %s %s in chat %s", platform, key, chat_id)
             await msg.reply_text(f"[{key}] failed")
+
+    await asyncio.gather(*[_test_one(k, h) for k, h in options.items()])
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
 
 
 # ── Command dispatch maps ──────────────────────────────────────────────────────
@@ -1486,6 +1505,8 @@ async def handle_message(update, context):
 
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
+    if msg.from_user and msg.from_user.first_name:
+        _user_names[user_id] = msg.from_user.first_name
     chat_settings = get_chat_settings(chat_id)
     text = msg.text.strip()
 
@@ -1636,6 +1657,50 @@ async def handle_caption(update, context):
         await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
     except Exception:
         logger.exception("Caption reply failed in chat %s", chat_id)
+
+# ── Edit handler ──────────────────────────────────────────────────────────────
+async def handle_edit(update, context):
+    msg = update.edited_message
+    if not msg or not msg.text:
+        return
+    if msg.from_user and msg.from_user.is_bot:
+        return
+
+    chat_id = msg.chat_id
+    user_id = msg.from_user.id if msg.from_user else 0
+    chat_settings = get_chat_settings(chat_id)
+
+    if not chat_settings["enabled"]:
+        return
+    if is_user_muted(chat_id, user_id):
+        return
+    if not URL_RE.search(msg.text):
+        return
+
+    new_text, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.text, chat_id, chat_settings)
+    if not changed:
+        return
+
+    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+    preview = LinkPreviewOptions(
+        is_disabled=False,
+        url=first_preview_url,
+        prefer_large_media=True,
+        show_above_text=False,
+    ) if first_fixed_url else None
+
+    logger.info("Fixed edited link in chat %s for user %s", chat_id, user_id)
+    try:
+        sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode="HTML")
+        if platform:
+            increment_stat(chat_id, platform, user_id)
+        if sent_msg:
+            original = URL_RE.search(msg.text)
+            if original:
+                store_rewrite(chat_id, sent_msg.message_id, original.group(0),
+                              sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
+    except Exception:
+        logger.exception("Edit handler reply failed in chat %s", chat_id)
 
 # ── Media spam handler ─────────────────────────────────────────────────────────
 async def handle_media(update, context):
@@ -1871,6 +1936,7 @@ def main():
     app = Application.builder().token(TOKEN).post_init(on_startup).build()
     app.add_error_handler(handle_error)
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.TEXT, handle_edit))
     app.add_handler(
         MessageHandler(
             (filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.CaptionRegex(r"https?://"),
