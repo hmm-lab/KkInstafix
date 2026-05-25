@@ -925,7 +925,7 @@ async def _cmd_taggay(msg, parts, context, chat_id):
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
     tag_user(chat_id, target)
-    await msg.reply_text(f"User {target} is now tagged as gay 🏳️‍🌈")
+    await msg.reply_text(f"Congratulations, your a admin! 🏳️‍🌈")
 
 
 async def _cmd_untaggay(msg, parts, context, chat_id):
