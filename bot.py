@@ -858,22 +858,25 @@ async def fix_url(raw, chat_id, chat_settings):
             return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None, None
         return raw, None, None, None
     preferred = get_choice(chat_id, platform)
-    fixed, used_key = await choose_provider_url(
+    noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
+    # If a no-account frontend is chosen, skip health-checking the frontend
+    # itself (it's just a browser link) and only health-check the embed provider
+    # used for Telegram's preview.
+    if preferred in noauth_embed:
+        fixed = apply_provider(url, platform, preferred)
+        embed_key = noauth_embed[preferred]
+        embed_fixed, _ = await choose_provider_url(
+            url, platform, embed_key,
+            allow_fallback=bool(chat_settings["provider_fallback"]),
+        )
+        return fixed + tail, platform, url, embed_fixed
+    fixed, _ = await choose_provider_url(
         url,
         platform,
         preferred,
         allow_fallback=bool(chat_settings["provider_fallback"]),
     )
-    # If a no-account frontend is chosen, generate a separate embed URL for the
-    # Telegram preview so the preview still loads while the link goes to the
-    # no-account site.
-    noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
-    if used_key in noauth_embed:
-        embed_fixed, _ = await choose_provider_url(url, platform, noauth_embed[used_key], allow_fallback=False)
-        preview_url = embed_fixed
-    else:
-        preview_url = fixed
-    return fixed + tail, platform, url, preview_url
+    return fixed + tail, platform, url, fixed
 
 
 async def process_text(text, chat_id, chat_settings):
