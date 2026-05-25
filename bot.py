@@ -1211,31 +1211,35 @@ async def _cmd_start(msg, parts, context, chat_id):
 
 
 async def _cmd_stats(msg, parts, context, chat_id):
-    total, by_platform, by_sender = get_stats(chat_id)
-    if total == 0:
-        await msg.reply_text("No links fixed in this chat yet.")
-        return
-    lines = [f"📊 <b>Stats for this chat</b>", "", f"Total: <b>{total}</b> links fixed", ""]
-    if by_platform:
-        lines.append("<b>Top platforms:</b>")
-        for row in by_platform:
-            emoji = PLATFORM_EMOJI.get(row["platform"], "")
-            lines.append(f"  {emoji} {row['platform']}: {row['c']}")
-        lines.append("")
-    if by_sender:
-        lines.append("<b>Top senders:</b>")
-        for row in by_sender:
-            sid = row["sender_id"]
-            name = _user_names.get(sid)
-            if not name:
-                try:
-                    member = await context.bot.get_chat_member(chat_id, sid)
-                    name = member.user.first_name or member.user.username or f"User {sid}"
-                    _user_names[sid] = name
-                except Exception:
-                    name = f"User {sid}"
-            lines.append(f"  {_html.escape(name)}: {row['c']}")
-    await msg.reply_text("\n".join(lines), parse_mode="HTML")
+    try:
+        total, by_platform, by_sender = get_stats(chat_id)
+        if total == 0:
+            await msg.reply_text("No links fixed in this chat yet.")
+            return
+        lines = [f"📊 <b>Stats for this chat</b>", "", f"Total: <b>{total}</b> links fixed", ""]
+        if by_platform:
+            lines.append("<b>Top platforms:</b>")
+            for row in by_platform:
+                emoji = PLATFORM_EMOJI.get(row["platform"], "")
+                lines.append(f"  {emoji} {row['platform']}: {row['c']}")
+            lines.append("")
+        if by_sender:
+            lines.append("<b>Top senders:</b>")
+            for row in by_sender:
+                sid = row["sender_id"]
+                name = _user_names.get(sid)
+                if not name:
+                    try:
+                        member = await context.bot.get_chat_member(chat_id, sid)
+                        name = member.user.first_name or member.user.username or f"User {sid}"
+                        _user_names[sid] = name
+                    except Exception:
+                        name = f"User {sid}"
+                lines.append(f"  {_html.escape(name)}: {row['c']}")
+        await msg.reply_text("\n".join(lines), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("_cmd_stats failed in chat %s", chat_id)
+        await msg.reply_text(f"⚠️ Stats error: {_html.escape(str(e))}", parse_mode="HTML")
 
 
 async def _cmd_undo(msg, parts, context, chat_id):
@@ -1645,26 +1649,12 @@ async def handle_message(update, context):
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
 
-    now = int(time.time())
-    conn = db_connect()
     if platform:
-        conn.execute(
-            """
-            INSERT INTO chat_stats(chat_id, platform, sender_id, count, last_ts)
-            VALUES(?, ?, ?, 1, ?)
-            ON CONFLICT(chat_id, platform, sender_id) DO UPDATE SET
-                count = count + 1, last_ts = excluded.last_ts
-            """,
-            (chat_id, platform, user_id, now),
-        )
+        increment_stat(chat_id, platform, user_id)
     if sent_msg and text:
         original = URL_RE.search(text)
         if original:
-            conn.execute(
-                "INSERT OR REPLACE INTO rewritten_messages(chat_id, bot_msg_id, original_url, sender_name, ts) VALUES(?,?,?,?,?)",
-                (chat_id, sent_msg.message_id, original.group(0), sender_name, now),
-            )
-    conn.commit()
+            store_rewrite(chat_id, sent_msg.message_id, original.group(0), sender_name)
 
 # ── Caption handler ────────────────────────────────────────────────────────────
 async def handle_caption(update, context):
