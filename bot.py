@@ -127,6 +127,7 @@ PROVIDERS = {
         "options": {
             "bskx": "bskx.app",
             "bsyy": "bsyy.app",
+            "bskye": "bskye.app",
             "xbsky": "xbsky.app",
             "fx": "fxbsky.app",
             "vx": "vxbsky.app",
@@ -136,7 +137,7 @@ PROVIDERS = {
     "pixiv": {
         "default": "ph",
         "domains": ["pixiv.net"],
-        "options": {"ph": "phixiv.net"},
+        "options": {"ph": "phixiv.net", "pp": "ppxiv.net"},
     },
     "tumblr": {
         "default": "tp",
@@ -205,7 +206,7 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "ddinstagram.com"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it"}
 _expand_cache: dict = {}  # short URL -> expanded URL
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
