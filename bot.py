@@ -215,6 +215,7 @@ _known_chats: set = set()
 _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
+_tagged_cache: dict = {}     # chat_id -> set of tagged user_ids
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 _file_id_cache: dict = {}    # filename -> telegram file_id
 _admin_cache: dict = {}      # (chat_id, user_id) -> (is_admin, expiry_ts)
@@ -325,6 +326,12 @@ def _warm_muted_cache():
         _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
+def _warm_tagged_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id, user_id FROM tagged_users").fetchall():
+        _tagged_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
+
+
 def init_db():
     conn = db_connect()
     conn.executescript(
@@ -355,6 +362,12 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS tagged_users (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
+        );
+
         CREATE TABLE IF NOT EXISTS chat_stats (
             chat_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
@@ -378,6 +391,7 @@ def init_db():
     _warm_chat_cache()
     _warm_providers_cache()
     _warm_muted_cache()
+    _warm_tagged_cache()
 
 
 def ensure_chat_settings(chat_id):
@@ -496,6 +510,40 @@ def is_user_muted(chat_id, user_id):
 
 def blocked_user_count(chat_id):
     return len(_muted_set(chat_id))
+
+
+def _tagged_set(chat_id) -> set:
+    if chat_id not in _tagged_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT user_id FROM tagged_users WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _tagged_cache[chat_id] = {r["user_id"] for r in rows}
+    return _tagged_cache[chat_id]
+
+
+def tag_user(chat_id, user_id):
+    conn = db_connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO tagged_users(chat_id, user_id) VALUES(?, ?)",
+        (chat_id, user_id),
+    )
+    conn.commit()
+    _tagged_set(chat_id).add(user_id)
+
+
+def untag_user(chat_id, user_id):
+    conn = db_connect()
+    conn.execute(
+        "DELETE FROM tagged_users WHERE chat_id = ? AND user_id = ?",
+        (chat_id, user_id),
+    )
+    conn.commit()
+    _tagged_set(chat_id).discard(user_id)
+
+
+def is_user_tagged(chat_id, user_id):
+    return user_id in _tagged_set(chat_id)
 
 
 def cleanup_db():
@@ -863,13 +911,14 @@ def sender_label(user, mode):
     return user.first_name or user.username or "User"
 
 
-def format_repost_text(user, mode, platform=None, url=None):
+def format_repost_text(user, mode, platform=None, url=None, extra=""):
     label = sender_label(user, mode)
     emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
     if label and url:
-        return f'{emoji} <a href="{url}">{_html.escape(label)}</a>'.strip()
+        return f'{emoji} <a href="{url}">{_html.escape(label)}{extra}</a>'.strip()
     if label:
-        return f"{emoji} {label}".strip() if emoji else label
+        display = label + extra
+        return f"{emoji} {display}".strip() if emoji else display
     return url or ""
 
 
@@ -1479,6 +1528,40 @@ async def _cmd_testall(msg, parts, context, chat_id):
         pass
 
 
+async def _cmd_taggay(msg, parts, context, chat_id):
+    target = target_user_id_from_command(msg, parts)
+    if not target:
+        await msg.reply_text("Reply to a user or pass a numeric user id.")
+        return
+    tag_user(chat_id, target)
+    await msg.reply_text("Congratulations, your a admin! 🏳️‍🌈")
+
+
+async def _cmd_untaggay(msg, parts, context, chat_id):
+    target = target_user_id_from_command(msg, parts)
+    if not target:
+        await msg.reply_text("Reply to a user or pass a numeric user id.")
+        return
+    untag_user(chat_id, target)
+    await msg.reply_text(f"Removed gay tag from user {target}.")
+
+
+async def _cmd_listgay(msg, parts, context, chat_id):
+    tagged = list(_tagged_set(chat_id))
+    if not tagged:
+        await msg.reply_text("No tagged users in this chat.")
+        return
+    lines = [f"<b>Tagged users ({len(tagged)})</b>", ""]
+    for uid in tagged:
+        try:
+            member = await context.bot.get_chat_member(chat_id, uid)
+            name = member.user.first_name or member.user.username or f"User {uid}"
+            lines.append(f"• {_html.escape(name)} (gay) — <code>{uid}</code>")
+        except Exception:
+            lines.append(f"• <code>{uid}</code> (gay)")
+    await msg.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 # ── Command dispatch maps ──────────────────────────────────────────────────────
 
 PUBLIC_CMDS = {
@@ -1516,6 +1599,9 @@ ADMIN_CMDS = {
     "/testall": _cmd_testall,
     "/export": _cmd_export,
     "/import": _cmd_import,
+    "/taggay": _cmd_taggay,
+    "/untaggay": _cmd_untaggay,
+    "/listgay": _cmd_listgay,
 }
 
 # ── Main text handler ──────────────────────────────────────────────────────────
@@ -1593,13 +1679,16 @@ async def handle_message(update, context):
         show_above_text=False,
     ) if first_fixed_url else None
 
+    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
     if fixed_count > 1:
         # Multiple links: preserve the full message context with all URLs replaced
         label = sender_label(msg.from_user, chat_settings["sender_mode"])
+        if label and extra_tag:
+            label = label + extra_tag
         post_text = f"{label}:\n{new_text}" if label else new_text
         post_parse_mode = None
     else:
-        post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+        post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
         post_parse_mode = "HTML"
 
     logger.info("Fixed %d link(s) in chat %s for user %s", fixed_count, chat_id, user_id)
@@ -1669,7 +1758,8 @@ async def handle_caption(update, context):
         increment_stat(chat_id, platform, user_id)
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
-    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
+    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
@@ -1706,7 +1796,8 @@ async def handle_edit(update, context):
     if not changed:
         return
 
-    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
+    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
