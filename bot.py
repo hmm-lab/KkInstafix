@@ -227,13 +227,10 @@ DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
     "sender_mode": "first_name",
     "dedup_window": 60,
-    "rate_limit": 5,
-    "rate_window": 30,
-    "ignore_forwards": 1,
-    "provider_fallback": 1,
-    "caption_style": "reply",
-    "text_spam": 1,
 }
+
+RATE_LIMIT = 5       # links per user per window
+RATE_WINDOW = 30     # seconds
 
 PLATFORM_EMOJI = {
     "instagram": "📷",
@@ -868,14 +865,14 @@ async def fix_url(raw, chat_id, chat_settings):
         embed_key = noauth_embed[preferred]
         embed_fixed, _ = await choose_provider_url(
             url, platform, embed_key,
-            allow_fallback=bool(chat_settings["provider_fallback"]),
+            allow_fallback=True,
         )
         return fixed + tail, platform, url, embed_fixed
     fixed, _ = await choose_provider_url(
         url,
         platform,
         preferred,
-        allow_fallback=bool(chat_settings["provider_fallback"]),
+        allow_fallback=True,
     )
     return fixed + tail, platform, url, fixed
 
@@ -966,15 +963,11 @@ def status_text(chat_id):
     muted = blocked_user_count(chat_id)
     enabled_line = "✅ <b>Bot is ON</b>" if s["enabled"] else "❌ <b>Bot is OFF</b> — use /enable to turn on"
     return "\n".join([
-        f"<b>Chat status</b>",
+        "<b>Chat status</b>",
         "",
         enabled_line,
         f"Sender label: {mode}",
         f"Dedup window: {s['dedup_window']}s",
-        f"Rate limit: {s['rate_limit']} links per {s['rate_window']}s per user",
-        f"Forwarded posts: {on_off(not s['ignore_forwards'])}",
-        f"Provider fallback: {on_off(s['provider_fallback'])}",
-        f"Text spam filter: {on_off(s['text_spam'])}",
         f"Muted users: {muted}",
     ])
 
@@ -1160,12 +1153,9 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/resetproviders — restore all defaults\n"
         "/muteuser · /unmuteuser — mute by reply or user ID\n"
         "/listmuted — list all muted users\n"
+        "/taggay · /untaggay · /listgay — manage gay tags\n"
         "/setsendermode first_name|username|full_name|none\n"
         "/setdedup &lt;seconds&gt; — dedup window\n"
-        "/setratelimit &lt;count&gt; &lt;seconds&gt; — rate-limit window\n"
-        "/ignoreforwards on|off\n"
-        "/fallback on|off — provider fallback\n"
-        "/textspam on|off — delete repeated plain text\n"
         "/testall &lt;platform&gt; [url] — test all providers\n"
         "/export — download a JSON backup\n"
         "/import — reply to a JSON file with /import to restore"
@@ -1434,56 +1424,6 @@ async def _cmd_setdedup(msg, parts, context, chat_id):
     )
 
 
-async def _cmd_setratelimit(msg, parts, context, chat_id):
-    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
-        await msg.reply_text(
-            "Usage: <code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code>\n"
-            "Example: <code>/setratelimit 5 30</code> — max 5 links per user per 30 seconds.",
-            parse_mode="HTML",
-        )
-        return
-    count = max(1, min(50, int(parts[1])))
-    window = max(5, min(3600, int(parts[2])))
-    update_chat_settings_batch(chat_id, {"rate_limit": count, "rate_window": window})
-    await msg.reply_text(
-        f"Rate limit set to <b>{count} links per {window}s</b> per user.",
-        parse_mode="HTML",
-    )
-
-
-async def _cmd_ignoreforwards(msg, parts, context, chat_id):
-    if len(parts) != 2 or parse_on_off(parts[1]) is None:
-        cur = "on" if get_chat_settings(chat_id)["ignore_forwards"] else "off"
-        await msg.reply_text(f"Usage: /ignoreforwards on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
-        return
-    value = parse_on_off(parts[1])
-    update_chat_setting(chat_id, "ignore_forwards", value)
-    label = "Forwarded posts will be ignored." if value else "Forwarded posts will be processed."
-    await msg.reply_text(label)
-
-
-async def _cmd_fallback(msg, parts, context, chat_id):
-    if len(parts) != 2 or parse_on_off(parts[1]) is None:
-        cur = "on" if get_chat_settings(chat_id)["provider_fallback"] else "off"
-        await msg.reply_text(f"Usage: /fallback on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
-        return
-    value = parse_on_off(parts[1])
-    update_chat_setting(chat_id, "provider_fallback", value)
-    label = "Provider fallback enabled — will try alternates if primary is down." if value else "Provider fallback disabled."
-    await msg.reply_text(label)
-
-
-async def _cmd_textspam(msg, parts, context, chat_id):
-    if len(parts) != 2 or parse_on_off(parts[1]) is None:
-        cur = "on" if get_chat_settings(chat_id)["text_spam"] else "off"
-        await msg.reply_text(f"Usage: /textspam on|off  (currently <b>{cur}</b>)", parse_mode="HTML")
-        return
-    value = parse_on_off(parts[1])
-    update_chat_setting(chat_id, "text_spam", value)
-    label = "Repeated plain text will be deleted." if value else "Repeated plain text filter disabled."
-    await msg.reply_text(label)
-
-
 async def _cmd_testall(msg, parts, context, chat_id):
     if len(parts) < 2:
         await msg.reply_text(
@@ -1596,10 +1536,6 @@ ADMIN_CMDS = {
     "/setprovider": _cmd_setprovider,
     "/setsendermode": _cmd_setsendermode,
     "/setdedup": _cmd_setdedup,
-    "/setratelimit": _cmd_setratelimit,
-    "/ignoreforwards": _cmd_ignoreforwards,
-    "/fallback": _cmd_fallback,
-    "/textspam": _cmd_textspam,
     "/testall": _cmd_testall,
     "/export": _cmd_export,
     "/import": _cmd_import,
@@ -1629,7 +1565,7 @@ async def handle_message(update, context):
         await safe_delete(msg, "muted-user")
         return
 
-    if chat_settings["ignore_forwards"] and is_forwarded(msg):
+    if is_forwarded(msg):
         return
 
     if text.startswith("/"):
@@ -1652,9 +1588,9 @@ async def handle_message(update, context):
     if not chat_settings["enabled"]:
         return
 
-    if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
+    if not check_rate(chat_id, user_id, RATE_LIMIT, RATE_WINDOW):
         logger.info("Rate limited user %s in chat %s", user_id, chat_id)
-        if not seen_recent("ratewarn", chat_id, str(user_id), int(chat_settings["rate_window"])):
+        if not seen_recent("ratewarn", chat_id, str(user_id), RATE_WINDOW):
             label = sender_label(msg.from_user, "first_name") or "you"
             try:
                 await msg.reply_text(
@@ -1665,7 +1601,7 @@ async def handle_message(update, context):
                 pass
         return
 
-    if chat_settings["text_spam"] and len(text) >= 4 and not URL_RE.search(text):
+    if len(text) >= 4 and not URL_RE.search(text):
         if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
             await safe_delete(msg, "duplicate-text")
             return
@@ -1749,9 +1685,9 @@ async def handle_caption(update, context):
     if is_user_muted(chat_id, user_id):
         await safe_delete(msg, "muted-user-caption")
         return
-    if chat_settings["ignore_forwards"] and is_forwarded(msg):
+    if is_forwarded(msg):
         return
-    if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
+    if not check_rate(chat_id, user_id, RATE_LIMIT, RATE_WINDOW):
         return
 
     new_caption, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.caption, chat_id, chat_settings)
@@ -2061,10 +1997,6 @@ _ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
     BotCommand("listmuted", "List all muted users"),
     BotCommand("setsendermode", "Change sender label format"),
     BotCommand("setdedup", "Change dedup window in seconds"),
-    BotCommand("setratelimit", "Change rate limit: /setratelimit <count> <seconds>"),
-    BotCommand("ignoreforwards", "Ignore forwarded posts: on/off"),
-    BotCommand("fallback", "Provider fallback: on/off"),
-    BotCommand("textspam", "Delete repeated text: on/off"),
     BotCommand("testall", "Test all providers for a platform"),
     BotCommand("export", "Download a JSON backup"),
     BotCommand("import", "Restore from a JSON backup"),
