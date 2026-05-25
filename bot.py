@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 PORT = int(os.environ.get("PORT", 8443))
 IMAGE_FILE = "30364.jpg"
 GENIUS_VIDEO = "genius.mp4"
@@ -203,7 +204,7 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "ddinstagram.com"}
 _expand_cache: dict = {}  # short URL -> expanded URL
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
@@ -514,10 +515,16 @@ def cleanup_db():
     conn = db_connect()
     conn.execute("DELETE FROM rewritten_messages WHERE ts < ?", (now - 7 * 86400,))
     conn.commit()
-    # Prune stale in-memory rate buckets
+    # Prune stale in-memory caches
     cutoff = now - 7200
     for key in [k for k, ts_list in _rate_mem.items() if not ts_list or ts_list[-1] < cutoff]:
         del _rate_mem[key]
+    for key in [k for k, (_, exp) in _admin_cache.items() if exp < now]:
+        del _admin_cache[key]
+    if len(_user_names) > 50_000:
+        to_keep = dict(list(_user_names.items())[-10_000:])
+        _user_names.clear()
+        _user_names.update(to_keep)
 
 
 def increment_stat(chat_id, platform, sender_id):
@@ -792,7 +799,7 @@ async def choose_provider_url(original_url, platform, preferred_key, allow_fallb
 
 # Instagram paths that are actual posts/reels/stories - safe to convert
 INSTAGRAM_CONTENT_RE = re.compile(
-    r"^/(p|reel|tv|stories|s)/",
+    r"^/(p|reel|tv|stories|s|share)/",
     re.IGNORECASE,
 )
 
@@ -1286,8 +1293,18 @@ async def _cmd_unmuteuser(msg, parts, context, chat_id):
 
 
 async def _cmd_resetproviders(msg, parts, context, chat_id):
+    custom = []
+    for plat in sorted(PROVIDERS):
+        cur = get_choice(chat_id, plat)
+        default = PROVIDERS[plat]["default"]
+        if cur != default:
+            custom.append(f"  {plat}: {cur} → {default}")
+    if not custom:
+        await msg.reply_text("All providers are already at defaults.")
+        return
     reset_providers(chat_id)
-    await msg.reply_text("Providers reset to defaults.")
+    lines = ["Providers reset to defaults.", ""] + custom
+    await msg.reply_text("\n".join(lines))
 
 
 async def _cmd_setprovider(msg, parts, context, chat_id):
@@ -1950,12 +1967,15 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
     if WEBHOOK_URL:
-        app.run_webhook(
+        wh_kwargs = dict(
             listen="0.0.0.0",
             port=PORT,
             webhook_url=WEBHOOK_URL,
             drop_pending_updates=True,
         )
+        if WEBHOOK_SECRET:
+            wh_kwargs["secret_token"] = WEBHOOK_SECRET
+        app.run_webhook(**wh_kwargs)
     else:
         app.run_polling(drop_pending_updates=True)
 

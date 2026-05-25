@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bot  # noqa: E402
 
 
+# ── strip_tracking ────────────────────────────────────────────────────────────
+
 @pytest.mark.parametrize(
     "url,expected_has_param",
     [
@@ -32,10 +34,14 @@ def test_strip_tracking_preserves_path():
     assert "/p/abc" in bot.strip_tracking("https://instagram.com/p/abc?igshid=1")
 
 
+# ── trim ──────────────────────────────────────────────────────────────────────
+
 def test_trim_strips_trailing_punctuation():
     assert bot.trim("https://x.com/a).") == ("https://x.com/a", ").")
     assert bot.trim("https://x.com/a") == ("https://x.com/a", "")
 
+
+# ── get_platform ──────────────────────────────────────────────────────────────
 
 def test_get_platform_known():
     assert bot.get_platform("instagram.com", "/p/abc") == "instagram"
@@ -45,14 +51,25 @@ def test_get_platform_known():
     assert bot.get_platform("youtube.com", "/shorts/abc") == "youtube_shorts"
 
 
+def test_get_platform_subdomains():
+    assert bot.get_platform("m.facebook.com", "/watch") == "facebook"
+    assert bot.get_platform("old.reddit.com", "/r/test") == "reddit"
+    assert bot.get_platform("clips.twitch.tv", "/test") == "twitch"
+
+
 def test_get_platform_skips_fixer_hosts():
     assert bot.get_platform("kkclip.com", "/p/abc") is None
     assert bot.get_platform("vxtwitter.com", "/x/status/1") is None
+    assert bot.get_platform("xcancel.com", "/user/status/1") is None
+    assert bot.get_platform("redlib.org", "/r/test") is None
+    assert bot.get_platform("proxitok.pabloferreiro.es", "/@u/video/1") is None
 
 
 def test_get_platform_unknown():
     assert bot.get_platform("example.com", "/abc") is None
 
+
+# ── apply_provider ────────────────────────────────────────────────────────────
 
 def test_apply_provider_replaces_host():
     out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "kkclip")
@@ -61,22 +78,39 @@ def test_apply_provider_replaces_host():
     assert "/p/abc" in out
 
 
+def test_apply_provider_strips_tracking():
+    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "kkclip")
+    assert "igshid" not in out
+    assert "utm_source" not in out
+
+
+# ── INSTAGRAM_CONTENT_RE ──────────────────────────────────────────────────────
+
 def test_instagram_content_re():
     assert bot.INSTAGRAM_CONTENT_RE.match("/p/abc")
     assert bot.INSTAGRAM_CONTENT_RE.match("/reel/abc")
     assert bot.INSTAGRAM_CONTENT_RE.match("/stories/highlights/abc")
+    assert bot.INSTAGRAM_CONTENT_RE.match("/share/abc123")
     assert not bot.INSTAGRAM_CONTENT_RE.match("/profile/username")
     assert not bot.INSTAGRAM_CONTENT_RE.match("/explore/tags/cats")
 
+
+# ── parse_on_off ──────────────────────────────────────────────────────────────
 
 def test_parse_on_off():
     assert bot.parse_on_off("on") == 1
     assert bot.parse_on_off("yes") == 1
     assert bot.parse_on_off("1") == 1
+    assert bot.parse_on_off("true") == 1
     assert bot.parse_on_off("off") == 0
     assert bot.parse_on_off("0") == 0
+    assert bot.parse_on_off("false") == 0
+    assert bot.parse_on_off("no") == 0
     assert bot.parse_on_off("maybe") is None
+    assert bot.parse_on_off("") is None
 
+
+# ── sender_label / format_repost_text ─────────────────────────────────────────
 
 class FakeUser:
     def __init__(self, first_name=None, last_name=None, username=None):
@@ -122,22 +156,159 @@ def test_format_repost_text_none_mode():
     assert out == "https://kkclip.com/p/x"
 
 
+def test_format_repost_text_no_url():
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "first_name", platform="twitter", url=None)
+    assert "🐦" in out
+    assert "Mehrab" in out
+
+
+# ── is_duplicate_update ───────────────────────────────────────────────────────
+
 def test_is_duplicate_update_evicts_oldest():
     bot.SEEN_UPDATES.clear()
     bot.MAX_SEEN_UPDATES = 5
     for i in range(10):
         bot.is_duplicate_update(i)
     assert len(bot.SEEN_UPDATES) == 5
-    # Oldest should have been evicted
     assert 0 not in bot.SEEN_UPDATES
-    # Newer should be present
     assert 9 in bot.SEEN_UPDATES
-    # Re-seeing the same id returns True
     assert bot.is_duplicate_update(9) is True
 
+
+# ── seen_recent (in-memory) ──────────────────────────────────────────────────
+
+def test_seen_recent_window():
+    bot._recent_mem.clear()
+    assert bot.seen_recent("test", 1, "key1", 60) is False
+    assert bot.seen_recent("test", 1, "key1", 60) is True
+    assert bot.seen_recent("test", 1, "key2", 60) is False
+
+
+def test_seen_recent_different_kinds():
+    bot._recent_mem.clear()
+    assert bot.seen_recent("fix", 1, "url", 60) is False
+    assert bot.seen_recent("text", 1, "url", 60) is False
+
+
+# ── check_rate (in-memory) ───────────────────────────────────────────────────
+
+def test_check_rate_allows_up_to_limit():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        assert bot.check_rate(1, 1, 5, 60) is True
+    assert bot.check_rate(1, 1, 5, 60) is False
+
+
+def test_check_rate_different_users():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        bot.check_rate(1, 1, 5, 60)
+    assert bot.check_rate(1, 1, 5, 60) is False
+    assert bot.check_rate(1, 2, 5, 60) is True
+
+
+def test_check_rate_different_chats():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        bot.check_rate(1, 1, 5, 60)
+    assert bot.check_rate(1, 1, 5, 60) is False
+    assert bot.check_rate(2, 1, 5, 60) is True
+
+
+# ── PROVIDERS config ──────────────────────────────────────────────────────────
 
 def test_providers_all_have_default_and_options():
     for name, cfg in bot.PROVIDERS.items():
         assert cfg["default"] in cfg["options"], f"{name} default {cfg['default']} not in options"
         assert cfg["domains"], f"{name} has no domains"
         assert cfg["options"], f"{name} has no options"
+
+
+def test_noauth_embed_keys_are_valid():
+    for name, cfg in bot.PROVIDERS.items():
+        noauth = cfg.get("noauth_embed", {})
+        for noauth_key, embed_key in noauth.items():
+            assert noauth_key in cfg["options"], f"{name} noauth key {noauth_key} not in options"
+            assert embed_key in cfg["options"], f"{name} embed key {embed_key} not in options"
+            assert embed_key not in noauth, f"{name} embed key {embed_key} is itself noauth"
+
+
+def test_fixer_hosts_contains_all_provider_hosts():
+    for cfg in bot.PROVIDERS.values():
+        for host in cfg["options"].values():
+            assert host in bot.FIXER_HOSTS
+
+
+def test_platform_emoji_covers_all_platforms():
+    for name in bot.PROVIDERS:
+        assert name in bot.PLATFORM_EMOJI, f"{name} missing from PLATFORM_EMOJI"
+
+
+# ── SHORT_LINK_DOMAINS ───────────────────────────────────────────────────────
+
+def test_short_link_domains_are_lowercase():
+    for d in bot.SHORT_LINK_DOMAINS:
+        assert d == d.lower()
+
+
+def test_short_link_domains_not_in_fixer_hosts():
+    for d in bot.SHORT_LINK_DOMAINS:
+        assert d not in bot.FIXER_HOSTS, f"short link domain {d} in FIXER_HOSTS would be skipped"
+
+
+# ── providers_text / status_text ─────────────────────────────────────────────
+
+def test_providers_text_contains_html():
+    bot.init_db()
+    text = bot.providers_text(99999)
+    assert "<b>" in text
+    for plat in bot.PROVIDERS:
+        assert plat in text
+
+
+def test_status_text_contains_html():
+    bot.init_db()
+    text = bot.status_text(99999)
+    assert "<b>" in text
+    assert "Bot is ON" in text or "Bot is OFF" in text
+
+
+# ── export / import ──────────────────────────────────────────────────────────
+
+def test_export_import_roundtrip():
+    bot.init_db()
+    cid = -100_999_888
+    bot.update_chat_setting(cid, "dedup_window", 120)
+    bot.set_choice(cid, "twitter", "fx")
+    bot.mute_user(cid, 42)
+    data = bot.export_chat_data(cid)
+    assert data["version"] == 1
+    assert data["settings"]["dedup_window"] == 120
+    assert data["providers"]["twitter"] == "fx"
+    assert 42 in data["muted_users"]
+    # Import into a different chat
+    cid2 = -100_999_777
+    ok, msg = bot.import_chat_data(cid2, data)
+    assert ok is True
+    assert "imported" in msg
+    assert str(cid) in msg  # mismatch warning
+    assert bot.get_chat_settings(cid2)["dedup_window"] == 120
+    assert bot.get_choice(cid2, "twitter") == "fx"
+    assert bot.is_user_muted(cid2, 42)
+
+
+def test_import_rejects_bad_format():
+    bot.init_db()
+    ok, msg = bot.import_chat_data(1, {"bad": True})
+    assert ok is False
+    assert "unsupported" in msg
+
+
+# ── DEFAULT_CHAT_SETTINGS ────────────────────────────────────────────────────
+
+def test_default_settings_keys_match_db():
+    bot.init_db()
+    s = bot.get_chat_settings(-100_111_222)
+    for key in bot.DEFAULT_CHAT_SETTINGS:
+        assert key in s, f"default key {key} not in returned settings"
