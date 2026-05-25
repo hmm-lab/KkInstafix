@@ -236,7 +236,7 @@ PLATFORM_EMOJI = {
     "instagram": "📷",
     "twitter": "🐦",
     "tiktok": "🎵",
-    "reddit": "🤖",
+    "reddit": "👽",
     "facebook": "📘",
     "threads": "🧵",
     "bluesky": "🔵",
@@ -932,12 +932,12 @@ def providers_text(chat_id):
         noauth_keys = set(PROVIDERS[plat].get("noauth_embed", {}).keys())
         opts = []
         for key in PROVIDERS[plat]["options"]:
-            label = f"<b>{key}</b>" if key == cur else key
+            label = f"✓ <b>{key}</b>" if key == cur else key
             if key in noauth_keys:
                 label += " 🌐"
                 has_noauth = True
             opts.append(label)
-        lines.append(f"{emoji} {plat}: {', '.join(opts)}")
+        lines.append(f"{emoji} <b>{plat}</b>: {', '.join(opts)}")
     lines.append("")
     if has_noauth:
         lines.append("🌐 = no-account frontend (Telegram preview still loads via embed provider)")
@@ -961,25 +961,26 @@ def status_text(chat_id):
     }
     mode = mode_labels.get(s["sender_mode"], s["sender_mode"])
     muted = blocked_user_count(chat_id)
-    enabled_line = "✅ <b>Bot is ON</b>" if s["enabled"] else "❌ <b>Bot is OFF</b> — use /enable to turn on"
+    enabled_line = "✅ <b>Bot is ON</b>" if s["enabled"] else "❌ <b>Bot is OFF</b> — /enable to turn on"
     return "\n".join([
         "<b>Chat status</b>",
         "",
         enabled_line,
-        f"Sender label: {mode}",
-        f"Dedup window: {s['dedup_window']}s",
-        f"Muted users: {muted}",
+        f"Sender label: <code>{mode}</code>",
+        f"Dedup window: <code>{s['dedup_window']}s</code>",
+        f"Muted users: <code>{muted}</code>",
     ])
 
 
-def _build_platform_keyboard():
+def _build_platform_keyboard(chat_id):
     rows = []
     platforms = sorted(PROVIDERS)
     for i in range(0, len(platforms), 2):
         row = []
         for plat in platforms[i:i + 2]:
             emoji = PLATFORM_EMOJI.get(plat, "")
-            row.append(InlineKeyboardButton(f"{emoji} {plat}", callback_data=f"m:p:{plat}"))
+            cur = get_choice(chat_id, plat)
+            row.append(InlineKeyboardButton(f"{emoji} {plat} · {cur}", callback_data=f"m:p:{plat}"))
         rows.append(row)
     rows.append([InlineKeyboardButton("✖ Close", callback_data="m:close")])
     return InlineKeyboardMarkup(rows)
@@ -993,7 +994,7 @@ def _build_provider_keyboard(chat_id, platform):
     for i in range(0, len(options), 3):
         row = []
         for key in options[i:i + 3]:
-            mark = "✓ " if key == current else ""
+            mark = "✅ " if key == current else ""
             suffix = " 🌐" if key in noauth_keys else ""
             row.append(InlineKeyboardButton(f"{mark}{key}{suffix}", callback_data=f"m:s:{platform}:{key}"))
         rows.append(row)
@@ -1132,33 +1133,28 @@ async def _cmd_providers(msg, parts, context, chat_id):
 
 async def _cmd_help(msg, parts, context, chat_id):
     text = (
-        "<b>KkInstafix — command reference</b>\n\n"
-        "<b>Public</b>\n"
-        "/start — welcome message\n"
-        "/providers — show active providers and options\n"
-        "/status — show current chat settings\n"
+        "<b>KkInstafix commands</b>\n\n"
+        "<b>📖 Public</b>\n"
+        "/providers — active providers for this chat\n"
+        "/status — current chat settings\n"
         "/stats — link-fix counts and top senders\n"
-        "/undo — reply to a bot message to see the original link\n"
-        "/about — about / credits\n"
-        "/mehrab — send the custom image\n"
-        "/genius — send the custom video\n\n"
-        "<b>Inline</b>\n"
-        "Type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat to get a "
-        "fixed link without adding the bot to that chat.\n\n"
-        "<b>Admin only</b>\n"
-        "/ping — check if the bot is alive (uptime, stats)\n"
+        "/undo — reply to a bot message to reveal the original link\n"
+        "/about — credits\n"
+        "/mehrab · /genius — custom image / video\n\n"
+        "<b>💬 Inline</b>\n"
+        "<code>@KkInstaFixBot &lt;link&gt;</code> — fix a link in any chat without adding the bot\n\n"
+        "<b>🔧 Admin only</b>\n"
         "/menu — interactive provider picker\n"
-        "/enable · /disable — turn the bot on or off in this chat\n"
-        "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
+        "/enable · /disable — turn the bot on or off\n"
+        "<code>/setprovider &lt;platform&gt; &lt;key&gt;</code> — change a provider\n"
         "/resetproviders — restore all defaults\n"
-        "/muteuser · /unmuteuser — mute by reply or user ID\n"
-        "/listmuted — list all muted users\n"
-        "/taggay · /untaggay · /listgay — manage gay tags\n"
-        "/setsendermode first_name|username|full_name|none\n"
-        "/setdedup &lt;seconds&gt; — dedup window\n"
-        "/testall &lt;platform&gt; [url] — test all providers\n"
-        "/export — download a JSON backup\n"
-        "/import — reply to a JSON file with /import to restore"
+        "/muteuser · /unmuteuser · /listmuted — mute management\n"
+        "/taggay · /untaggay · /listgay — tag management\n"
+        "<code>/setsendermode first_name|username|full_name|none</code>\n"
+        "<code>/setdedup &lt;seconds&gt;</code> — dedup window\n"
+        "<code>/testall &lt;platform&gt; [url]</code> — test all providers\n"
+        "/export · /import — backup and restore settings\n"
+        "/ping — uptime and cache info"
     )
     await msg.reply_text(text, parse_mode="HTML")
 
@@ -1216,15 +1212,15 @@ async def _cmd_stats(msg, parts, context, chat_id):
         if total == 0:
             await msg.reply_text("No links fixed in this chat yet.")
             return
-        lines = [f"📊 <b>Stats for this chat</b>", "", f"Total: <b>{total}</b> links fixed", ""]
+        lines = [f"📊 <b>Stats for this chat</b>", "", f"<b>{total}</b> links fixed total", ""]
         if by_platform:
-            lines.append("<b>Top platforms:</b>")
+            lines.append("<b>By platform</b>")
             for row in by_platform:
                 emoji = PLATFORM_EMOJI.get(row["platform"], "")
-                lines.append(f"  {emoji} {row['platform']}: {row['c']}")
+                lines.append(f"  {emoji} {row['platform']} · {row['c']}")
             lines.append("")
         if by_sender:
-            lines.append("<b>Top senders:</b>")
+            lines.append("<b>Top senders</b>")
             for row in by_sender:
                 sid = row["sender_id"]
                 name = _user_names.get(sid)
@@ -1235,7 +1231,7 @@ async def _cmd_stats(msg, parts, context, chat_id):
                         _user_names[sid] = name
                     except Exception:
                         name = f"User {sid}"
-                lines.append(f"  {_html.escape(name)}: {row['c']}")
+                lines.append(f"  {_html.escape(name)} · {row['c']}")
         await msg.reply_text("\n".join(lines), parse_mode="HTML")
     except Exception as e:
         logger.exception("_cmd_stats failed in chat %s", chat_id)
@@ -1296,9 +1292,9 @@ async def _cmd_import(msg, parts, context, chat_id):
 
 async def _cmd_menu(msg, parts, context, chat_id):
     await msg.reply_text(
-        "🛠 <b>Provider menu</b>\nTap a platform to change its provider.",
+        "🛠 <b>Provider menu</b>\nTap a platform to change its provider. Current provider shown next to each name.",
         parse_mode="HTML",
-        reply_markup=_build_platform_keyboard(),
+        reply_markup=_build_platform_keyboard(chat_id),
     )
 
 
@@ -1901,9 +1897,9 @@ async def handle_callback(update, context):
             return
         if data == "m:back":
             await cq.edit_message_text(
-                "🛠 <b>Provider menu</b>\nTap a platform to change its provider.",
+                "🛠 <b>Provider menu</b>\nTap a platform to change its provider. Current provider shown next to each name.",
                 parse_mode="HTML",
-                reply_markup=_build_platform_keyboard(),
+                reply_markup=_build_platform_keyboard(chat_id),
             )
             await cq.answer()
             return
@@ -1913,9 +1909,10 @@ async def handle_callback(update, context):
                 await cq.answer("Unknown platform.")
                 return
             current = get_choice(chat_id, platform)
+            host = PROVIDERS[platform]["options"].get(current, "")
             emoji = PLATFORM_EMOJI.get(platform, "")
             await cq.edit_message_text(
-                f"{emoji} <b>{platform}</b>\nCurrent provider: <code>{current}</code>",
+                f"{emoji} <b>{platform}</b>\nActive: <code>{current}</code> ({host})",
                 parse_mode="HTML",
                 reply_markup=_build_provider_keyboard(chat_id, platform),
             )
@@ -1927,13 +1924,14 @@ async def handle_callback(update, context):
                 await cq.answer("Invalid choice.")
                 return
             set_choice(chat_id, platform, key)
+            host = PROVIDERS[platform]["options"].get(key, "")
             emoji = PLATFORM_EMOJI.get(platform, "")
             await cq.edit_message_text(
-                f"{emoji} <b>{platform}</b> → <code>{key}</code> ✓",
+                f"{emoji} <b>{platform}</b>\nActive: <code>{key}</code> ({host})",
                 parse_mode="HTML",
                 reply_markup=_build_provider_keyboard(chat_id, platform),
             )
-            await cq.answer(f"Set {platform} to {key}")
+            await cq.answer(f"✅ {platform} → {key}")
             return
     except Exception:
         logger.exception("Callback handling failed")
