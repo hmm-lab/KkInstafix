@@ -885,6 +885,7 @@ async def process_text(text, chat_id, chat_settings):
     first_fixed_url = None
     first_preview_url = None
     first_platform = None
+    fixed_platforms = []
     dedup_window = int(chat_settings["dedup_window"])
     for raw in urls:
         fixed, platform, original, preview = await fix_url(raw, chat_id, chat_settings)
@@ -894,11 +895,13 @@ async def process_text(text, chat_id, chat_settings):
             new_text = new_text.replace(raw, fixed)
             changed = True
             fixed_count += 1
+            if platform:
+                fixed_platforms.append(platform)
             if not first_fixed_url:
                 first_fixed_url = fixed.split()[0]
                 first_preview_url = preview
                 first_platform = platform
-    return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count
+    return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count, fixed_platforms
 
 
 def sender_label(user, mode):
@@ -1606,7 +1609,7 @@ async def handle_message(update, context):
             await safe_delete(msg, "duplicate-text")
             return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count = await process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1645,8 +1648,8 @@ async def handle_message(update, context):
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
 
-    if platform:
-        increment_stat(chat_id, platform, user_id)
+    for plat in fixed_platforms:
+        increment_stat(chat_id, plat, user_id)
     if sent_msg and text:
         original = URL_RE.search(text)
         if original:
@@ -1676,12 +1679,12 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, RATE_LIMIT, RATE_WINDOW):
         return
 
-    new_caption, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
-    if platform:
-        increment_stat(chat_id, platform, user_id)
+    for plat in fixed_platforms:
+        increment_stat(chat_id, plat, user_id)
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
     extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
@@ -1706,6 +1709,8 @@ async def handle_edit(update, context):
         return
     if msg.from_user and msg.from_user.is_bot:
         return
+    if is_duplicate_update(update.update_id):
+        return
 
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
@@ -1718,7 +1723,7 @@ async def handle_edit(update, context):
     if not URL_RE.search(msg.text):
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1734,8 +1739,8 @@ async def handle_edit(update, context):
     logger.info("Fixed edited link in chat %s for user %s", chat_id, user_id)
     try:
         sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode="HTML")
-        if platform:
-            increment_stat(chat_id, platform, user_id)
+        for plat in fixed_platforms:
+            increment_stat(chat_id, plat, user_id)
         if sent_msg:
             original = URL_RE.search(msg.text)
             if original:
@@ -1787,7 +1792,7 @@ async def handle_channel_post(update, context):
     if not chat_settings["enabled"]:
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _ = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -1802,12 +1807,12 @@ async def handle_channel_post(update, context):
     try:
         sent = await context.bot.send_message(
             chat_id=chat_id,
-            text=first_fixed_url,
+            text=new_text,
             link_preview_options=preview,
             disable_notification=True,
         )
-        if platform:
-            increment_stat(chat_id, platform, 0)
+        for plat in fixed_platforms:
+            increment_stat(chat_id, plat, 0)
         if sent:
             original = URL_RE.search(msg.text)
             if original:
