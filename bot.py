@@ -1932,40 +1932,46 @@ async def _cycle_provider(cq, data, chat_id):
     try:
         _, platform, idx_s = data.split(":")
         idx = int(idx_s)
-    except ValueError:
-        await cq.answer()
-        return
-    if platform not in PROVIDERS:
-        await cq.answer("Unknown platform.")
-        return
-    options = list(PROVIDERS[platform]["options"])
-    idx %= len(options)
-    key = options[idx]
-    original_url, sender_name = lookup_rewrite(chat_id, cq.message.message_id)
-    if not original_url:
-        await cq.answer("Can't switch — the original link has expired.", show_alert=True)
-        return
-    link_url, preview_url = build_fixed_for_key(original_url, platform, key)
-    emoji = PLATFORM_EMOJI.get(platform, "")
-    if sender_name:
-        text = f'{emoji} <a href="{link_url}">{_html.escape(sender_name)}</a>'.strip()
-    else:
-        text = f"{emoji} {link_url}".strip()
-    preview = LinkPreviewOptions(
-        is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
-    )
-    next_idx = (idx + 1) % len(options)
-    try:
-        await cq.edit_message_text(
-            text,
-            parse_mode="HTML",
-            link_preview_options=preview,
-            reply_markup=_cycle_keyboard(platform, next_idx),
+        if platform not in PROVIDERS:
+            await cq.answer("Unknown platform.", show_alert=True)
+            return
+        options = list(PROVIDERS[platform]["options"])
+        idx %= len(options)
+        key = options[idx]
+        original_url, sender_name = lookup_rewrite(chat_id, cq.message.message_id)
+        if not original_url:
+            await cq.answer("Can't switch — the original link has expired.", show_alert=True)
+            return
+        link_url, preview_url = build_fixed_for_key(original_url, platform, key)
+        emoji = PLATFORM_EMOJI.get(platform, "")
+        if sender_name:
+            text = f'{emoji} <a href="{link_url}">{_html.escape(sender_name)}</a>'.strip()
+        else:
+            text = f"{emoji} {link_url}".strip()
+        preview = LinkPreviewOptions(
+            is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
         )
+        next_idx = (idx + 1) % len(options)
+        try:
+            await cq.edit_message_text(
+                text,
+                parse_mode="HTML",
+                link_preview_options=preview,
+                reply_markup=_cycle_keyboard(platform, next_idx),
+            )
+        except Exception as e:
+            err = str(e).lower()
+            if "not modified" in err or "message is not modified" in err:
+                pass  # identical content — harmless
+            else:
+                logger.warning("Cycle edit failed for %s/%s: %s", platform, key, e)
+        await cq.answer(f"Provider: {key}")
     except Exception:
-        # Telegram rejects an edit that produces identical content — harmless.
-        logger.debug("Cycle edit no-op or failed for %s", platform)
-    await cq.answer(f"Provider: {key}")
+        logger.exception("_cycle_provider failed in chat %s", chat_id)
+        try:
+            await cq.answer("Something went wrong.", show_alert=True)
+        except Exception:
+            pass
 
 
 # ── Callback query handler (inline menu) ───────────────────────────────────────
