@@ -1938,16 +1938,46 @@ async def _cycle_provider(cq, data, chat_id):
         options = list(PROVIDERS[platform]["options"])
         idx %= len(options)
         key = options[idx]
-        original_url, sender_name = lookup_rewrite(chat_id, cq.message.message_id)
-        if not original_url:
-            await cq.answer("Can't switch — the original link has expired.", show_alert=True)
+
+        # Extract current URL directly from message entities — no DB needed.
+        # parse_entities() handles Telegram's UTF-16 offsets correctly.
+        msg = cq.message
+        current_url = None
+        display_text = None
+        entity_texts = msg.parse_entities(types=["text_link", "url"])
+        for entity, etext in entity_texts.items():
+            if entity.type == "text_link":
+                current_url = entity.url
+                display_text = etext
+                break
+        if not current_url:
+            for entity, etext in entity_texts.items():
+                if entity.type == "url":
+                    current_url = etext
+                    break
+        if not current_url:
+            m = URL_RE.search(msg.text or "")
+            current_url = m.group(0) if m else None
+        if not current_url:
+            await cq.answer("Can't read the current link.", show_alert=True)
             return
-        link_url, preview_url = build_fixed_for_key(original_url, platform, key)
-        emoji = PLATFORM_EMOJI.get(platform, "")
-        if sender_name:
-            text = f'{emoji} <a href="{link_url}">{_html.escape(sender_name)}</a>'.strip()
+
+        # Swap host to the new provider, preserving path/query exactly.
+        parsed = urlparse(current_url)
+        new_host = PROVIDERS[platform]["options"][key]
+        new_url = urlunparse((parsed.scheme, new_host, parsed.path, parsed.params, parsed.query, ""))
+        noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
+        if key in noauth_embed:
+            embed_host = PROVIDERS[platform]["options"][noauth_embed[key]]
+            preview_url = urlunparse((parsed.scheme, embed_host, parsed.path, parsed.params, parsed.query, ""))
         else:
-            text = f"{emoji} {link_url}".strip()
+            preview_url = new_url
+
+        emoji = PLATFORM_EMOJI.get(platform, "")
+        if display_text:
+            text = f'{emoji} <a href="{new_url}">{_html.escape(display_text)}</a>'.strip()
+        else:
+            text = f"{emoji} {new_url}".strip()
         preview = LinkPreviewOptions(
             is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
         )
