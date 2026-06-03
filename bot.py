@@ -1938,13 +1938,19 @@ async def _cycle_provider(cq, data, chat_id):
         options = list(PROVIDERS[platform]["options"])
         idx %= len(options)
         key = options[idx]
+        logger.info("Cycle: chat=%s platform=%s -> key=%s (idx=%s)", chat_id, platform, key, idx)
 
         # Extract current URL directly from message entities — no DB needed.
         # parse_entities() handles Telegram's UTF-16 offsets correctly.
         msg = cq.message
+        if not hasattr(msg, "parse_entities"):
+            await cq.answer("Message no longer accessible.", show_alert=True)
+            return
+
         current_url = None
         display_text = None
         entity_texts = msg.parse_entities(types=["text_link", "url"])
+        logger.info("Cycle: entities found = %s", list(entity_texts.keys()))
         for entity, etext in entity_texts.items():
             if entity.type == "text_link":
                 current_url = entity.url
@@ -1958,6 +1964,7 @@ async def _cycle_provider(cq, data, chat_id):
         if not current_url:
             m = URL_RE.search(msg.text or "")
             current_url = m.group(0) if m else None
+        logger.info("Cycle: current_url=%s display_text=%s", current_url, display_text)
         if not current_url:
             await cq.answer("Can't read the current link.", show_alert=True)
             return
@@ -1978,6 +1985,7 @@ async def _cycle_provider(cq, data, chat_id):
             text = f'{emoji} <a href="{new_url}">{_html.escape(display_text)}</a>'.strip()
         else:
             text = f"{emoji} {new_url}".strip()
+        logger.info("Cycle: editing to text=%r preview=%s", text, preview_url)
         preview = LinkPreviewOptions(
             is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
         )
@@ -1989,12 +1997,15 @@ async def _cycle_provider(cq, data, chat_id):
                 link_preview_options=preview,
                 reply_markup=_cycle_keyboard(platform, next_idx),
             )
+            logger.info("Cycle: edit succeeded for %s/%s in chat %s", platform, key, chat_id)
         except Exception as e:
             err = str(e).lower()
             if "not modified" in err or "message is not modified" in err:
                 pass  # identical content — harmless
             else:
                 logger.warning("Cycle edit failed for %s/%s: %s", platform, key, e)
+                await cq.answer(f"Edit failed: {e}", show_alert=True)
+                return
         await cq.answer(f"Provider: {key}")
     except Exception:
         logger.exception("_cycle_provider failed in chat %s", chat_id)
@@ -2010,9 +2021,17 @@ async def handle_callback(update, context):
     if not cq or not cq.data:
         return
     data = cq.data
-    chat_id = cq.message.chat_id
-    user_id = cq.from_user.id
-    chat_type = cq.message.chat.type
+    try:
+        chat_id = cq.message.chat_id
+        user_id = cq.from_user.id if cq.from_user else 0
+        chat_type = cq.message.chat.type
+    except Exception as exc:
+        logger.exception("handle_callback: failed to read message context for data=%s", data)
+        try:
+            await cq.answer(f"Context error: {exc}", show_alert=True)
+        except Exception:
+            pass
+        return
 
     # "Try another provider" — available to everyone, it only re-targets the
     # embed of the bot's own message and is non-destructive.
