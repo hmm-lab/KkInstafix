@@ -2152,6 +2152,7 @@ _PUBLIC_COMMANDS = [
     BotCommand("stats", "Link-fix counts and top senders"),
     BotCommand("undo", "See the original link (reply to bot message)"),
     BotCommand("about", "About this bot"),
+    BotCommand("testcb", "Test that button callbacks work"),
 ]
 
 _ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
