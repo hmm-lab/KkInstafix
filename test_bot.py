@@ -240,6 +240,38 @@ def test_fixer_hosts_contains_all_provider_hosts():
             assert host in bot.FIXER_HOSTS
 
 
+# ── build_fixed_for_key (provider-cycle button) ───────────────────────────────
+
+def test_build_fixed_for_key_plain_provider():
+    link, preview = bot.build_fixed_for_key(
+        "https://twitter.com/x/status/1?utm_source=ig", "twitter", "fx"
+    )
+    assert link == preview                  # plain provider: link == preview
+    assert "fxtwitter.com" in link
+    assert "utm_source" not in link         # tracking stripped
+
+
+def test_build_fixed_for_key_noauth_splits_link_and_preview():
+    link, preview = bot.build_fixed_for_key(
+        "https://twitter.com/x/status/1", "twitter", "xcancel"
+    )
+    assert "xcancel.com" in link            # clickable link → no-account frontend
+    assert "vxtwitter.com" in preview       # preview → embed pair
+    assert link != preview
+
+
+def test_build_fixed_for_key_strips_trailing_tail():
+    link, _ = bot.build_fixed_for_key("https://reddit.com/r/x/comments/1/y).", "reddit", "vx")
+    assert link.endswith("/y")              # trailing ")." trimmed off
+    assert "vxreddit.com" in link
+
+
+def test_cycle_keyboard_encodes_platform_and_index():
+    kb = bot._cycle_keyboard("tiktok", 3)
+    btn = kb.inline_keyboard[0][0]
+    assert btn.callback_data == "e:tiktok:3"
+
+
 def test_platform_emoji_covers_all_platforms():
     for name in bot.PROVIDERS:
         assert name in bot.PLATFORM_EMOJI, f"{name} missing from PLATFORM_EMOJI"

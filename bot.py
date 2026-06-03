@@ -194,6 +194,11 @@ PROVIDERS = {
             "fx": "fxdeviantart.com",
         },
     },
+    "dribbble": {
+        "default": "tv",
+        "domains": ["dribbble.com"],
+        "options": {"tv": "dribbbletv.com"},
+    },
 }
 
 TRACKING = [
@@ -249,6 +254,7 @@ PLATFORM_EMOJI = {
     "ifunny": "😂",
     "furaffinity": "🐾",
     "deviantart": "🖌",
+    "dribbble": "🏀",
 }
 
 SAMPLE_URLS = {
@@ -268,6 +274,7 @@ SAMPLE_URLS = {
     "ifunny": "https://ifunny.co/video/test",
     "furaffinity": "https://www.furaffinity.net/view/12345678/",
     "deviantart": "https://www.deviantart.com/test/art/test-12345",
+    "dribbble": "https://dribbble.com/shots/12345678-Example-Shot",
 }
 
 ABOUT_TEXT = (
@@ -877,6 +884,23 @@ async def fix_url(raw, chat_id, chat_settings):
     return fixed + tail, platform, url, fixed
 
 
+def build_fixed_for_key(original_url, platform, key):
+    """Force a specific provider for an original URL, no health check.
+
+    Returns (link_url, preview_url). For no-account frontends the clickable
+    link points at the chosen frontend while the preview uses its embed pair.
+    Used by the per-message "try another provider" button.
+    """
+    url, _tail = trim(original_url)
+    link = apply_provider(url, platform, key)
+    noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
+    if key in noauth_embed:
+        preview = apply_provider(url, platform, noauth_embed[key])
+    else:
+        preview = link
+    return link, preview
+
+
 async def process_text(text, chat_id, chat_settings):
     urls = URL_RE.findall(text)
     new_text = text
@@ -989,6 +1013,16 @@ def _build_platform_keyboard(chat_id):
     return InlineKeyboardMarkup(rows)
 
 
+def _cycle_keyboard(platform, next_idx):
+    """One-button keyboard that swaps a repost to the next provider.
+
+    next_idx is the index in PROVIDERS[platform]["options"] to switch to on tap.
+    """
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔁 Embed not working?", callback_data=f"e:{platform}:{next_idx}")]]
+    )
+
+
 def _build_provider_keyboard(chat_id, platform):
     current = get_choice(chat_id, platform)
     noauth_keys = set(PROVIDERS[platform].get("noauth_embed", {}).keys())
@@ -1054,7 +1088,7 @@ async def safe_delete(msg, reason):
         return False
 
 
-async def safe_send_text(context, chat_id, text, preview=None, reply_to=None, parse_mode="HTML"):
+async def safe_send_text(context, chat_id, text, preview=None, reply_to=None, parse_mode="HTML", reply_markup=None):
     try:
         return await context.bot.send_message(
             chat_id=chat_id,
@@ -1063,6 +1097,7 @@ async def safe_send_text(context, chat_id, text, preview=None, reply_to=None, pa
             reply_to_message_id=reply_to,
             disable_notification=True,
             parse_mode=parse_mode,
+            reply_markup=reply_markup,
         )
     except Exception:
         logger.exception("send_message failed in chat %s", chat_id)
@@ -1146,6 +1181,8 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/mehrab · /genius — custom image / video\n\n"
         "<b>💬 Inline</b>\n"
         "<code>@KkInstaFixBot &lt;link&gt;</code> — fix a link in any chat without adding the bot\n\n"
+        "<b>🔁 Per-message</b>\n"
+        "Tap <b>Embed not working?</b> under any fixed link to cycle to a different provider.\n\n"
         "<b>🔧 Admin only</b>\n"
         "/menu — interactive provider picker\n"
         "/enable · /disable — turn the bot on or off\n"
@@ -1200,8 +1237,10 @@ async def _cmd_start(msg, parts, context, chat_id):
             "👋 <b>Welcome to Mehrab's link fixer bot.</b>\n\n"
             "Send me a link from Instagram, Twitter/X, TikTok, Reddit, "
             "Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, "
-            "Spotify, Twitch, iFunny, FurAffinity, or DeviantArt and I'll "
+            "Spotify, Twitch, iFunny, FurAffinity, DeviantArt, or Dribbble and I'll "
             "rewrite it so Telegram shows a proper preview.\n\n"
+            "If a preview looks wrong, tap <b>🔁 Embed not working?</b> under my "
+            "message to try a different provider.\n\n"
             "<b>In a group:</b> add me and I'll fix links automatically.\n"
             "<b>Inline:</b> type <code>@KkInstaFixBot &lt;link&gt;</code> in any chat.\n\n"
             "/help — all commands"
@@ -1634,16 +1673,24 @@ async def handle_message(update, context):
         post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
         post_parse_mode = "HTML"
 
+    # "Try another provider" button — single-link reposts where the platform
+    # has more than one option to cycle through.
+    markup = None
+    if fixed_count == 1 and platform and len(PROVIDERS[platform]["options"]) > 1:
+        options = list(PROVIDERS[platform]["options"])
+        chosen_idx = options.index(get_choice(chat_id, platform))
+        markup = _cycle_keyboard(platform, (chosen_idx + 1) % len(options))
+
     logger.info("Fixed %d link(s) in chat %s for user %s", fixed_count, chat_id, user_id)
     sent_msg = None
     deleted = await safe_delete(msg, "link-rewrite")
     if deleted:
-        sent_msg = await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to, parse_mode=post_parse_mode)
+        sent_msg = await safe_send_text(context, chat_id, post_text, preview=preview, reply_to=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
         if not sent_msg:
-            sent_msg = await safe_send_text(context, chat_id, post_text, reply_to=reply_to, parse_mode=post_parse_mode)
+            sent_msg = await safe_send_text(context, chat_id, post_text, reply_to=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
     else:
         try:
-            sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode)
+            sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode, reply_markup=markup)
             logger.info("Delete failed, replied instead in chat %s", chat_id)
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
@@ -1881,6 +1928,46 @@ async def handle_inline_query(update, context):
     await query.answer(results, cache_time=10, is_personal=True)
 
 
+async def _cycle_provider(cq, data, chat_id):
+    try:
+        _, platform, idx_s = data.split(":")
+        idx = int(idx_s)
+    except ValueError:
+        await cq.answer()
+        return
+    if platform not in PROVIDERS:
+        await cq.answer("Unknown platform.")
+        return
+    options = list(PROVIDERS[platform]["options"])
+    idx %= len(options)
+    key = options[idx]
+    original_url, sender_name = lookup_rewrite(chat_id, cq.message.message_id)
+    if not original_url:
+        await cq.answer("Can't switch — the original link has expired.", show_alert=True)
+        return
+    link_url, preview_url = build_fixed_for_key(original_url, platform, key)
+    emoji = PLATFORM_EMOJI.get(platform, "")
+    if sender_name:
+        text = f'{emoji} <a href="{link_url}">{_html.escape(sender_name)}</a>'.strip()
+    else:
+        text = f"{emoji} {link_url}".strip()
+    preview = LinkPreviewOptions(
+        is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
+    )
+    next_idx = (idx + 1) % len(options)
+    try:
+        await cq.edit_message_text(
+            text,
+            parse_mode="HTML",
+            link_preview_options=preview,
+            reply_markup=_cycle_keyboard(platform, next_idx),
+        )
+    except Exception:
+        # Telegram rejects an edit that produces identical content — harmless.
+        logger.debug("Cycle edit no-op or failed for %s", platform)
+    await cq.answer(f"Provider: {key}")
+
+
 # ── Callback query handler (inline menu) ───────────────────────────────────────
 async def handle_callback(update, context):
     cq = update.callback_query
@@ -1890,6 +1977,12 @@ async def handle_callback(update, context):
     chat_id = cq.message.chat_id
     user_id = cq.from_user.id
     chat_type = cq.message.chat.type
+
+    # "Try another provider" — available to everyone, it only re-targets the
+    # embed of the bot's own message and is non-destructive.
+    if data.startswith("e:"):
+        await _cycle_provider(cq, data, chat_id)
+        return
 
     if not await is_admin(context, chat_id, user_id, chat_type):
         await cq.answer("Admins only.", show_alert=True)

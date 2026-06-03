@@ -2,7 +2,7 @@
 
 Telegram bot that rewrites social media links so Telegram previews work better.
 
-It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, and DeviantArt.
+It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
 ## Features
 
@@ -13,6 +13,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 - Supports captioned media posts with links.
 - Short-link expansion: `vm.tiktok.com`, `redd.it`, etc. are followed to the real URL first.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
+- Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
 - Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
 - Per-user rate limiting.
 - Inline mode: use `@KkInstaFixBot <link>` in any chat without adding the bot.
@@ -45,6 +46,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 - iFunny: `ez`
 - FurAffinity: `xfa`
 - DeviantArt: `fix`
+- Dribbble: `tv`
 
 ## Commands
 
@@ -95,8 +97,8 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 | reddit | `vx`, `rx`, `rxy`, `ez`, `redlib` 🌐 |
 | facebook | `ez`, `fx`, `bed` |
 | threads | `fix`, `vx` |
-| bluesky | `bskx`, `bsyy`, `xbsky`, `fx`, `vx`, `cbsky` |
-| pixiv | `ph` |
+| bluesky | `bskx`, `bsyy`, `bskye`, `xbsky`, `fx`, `vx`, `cbsky` |
+| pixiv | `ph`, `pp` |
 | tumblr | `tp`, `txt` |
 | bilibili | `vx`, `fx` |
 | snapchat | `ez` |
@@ -105,6 +107,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 | ifunny | `ez` |
 | furaffinity | `xfa`, `fxr` |
 | deviantart | `fix`, `fx` |
+| dribbble | `tv` |
 
 🌐 = **no-account frontend**. When selected, the Telegram preview still loads from the best embed provider, but the clickable link goes to a privacy-friendly frontend where users can view posts without logging in (e.g. xcancel for Twitter, redlib for Reddit, ProxiTok for TikTok).
 
