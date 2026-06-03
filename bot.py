@@ -1203,6 +1203,15 @@ async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id), parse_mode="HTML")
 
 
+async def _cmd_testcb(msg, parts, context, chat_id):
+    await msg.reply_text(
+        "🧪 Press the button to verify callback handling:",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("Tap me", callback_data="test")
+        ]]),
+    )
+
+
 async def _cmd_ping(msg, parts, context, chat_id):
     uptime = int(time.time() - _start_time)
     h, rem = divmod(uptime, 3600)
@@ -1552,6 +1561,7 @@ async def _cmd_listgay(msg, parts, context, chat_id):
 
 PUBLIC_CMDS = {
     "/start": _cmd_start,
+    "/testcb": _cmd_testcb,
     "/mehrab": _cmd_photo,
     "/mo": _cmd_photo,
     "/genius": _cmd_genius,
@@ -1929,28 +1939,45 @@ async def handle_inline_query(update, context):
 
 
 async def _cycle_provider(cq, data, chat_id):
+    # Answer immediately so the loading spinner clears regardless of what happens next.
+    # (Telegram only allows one answer per callback query.)
+    answered = False
+    async def _answer(text="", alert=False):
+        nonlocal answered
+        if answered:
+            return
+        answered = True
+        try:
+            await cq.answer(text, show_alert=alert)
+        except Exception as e:
+            logger.warning("Cycle: cq.answer failed: %s", e)
+
     try:
         _, platform, idx_s = data.split(":")
         idx = int(idx_s)
-        if platform not in PROVIDERS:
-            await cq.answer("Unknown platform.", show_alert=True)
-            return
-        options = list(PROVIDERS[platform]["options"])
-        idx %= len(options)
-        key = options[idx]
-        logger.info("Cycle: chat=%s platform=%s -> key=%s (idx=%s)", chat_id, platform, key, idx)
+    except Exception as e:
+        await _answer(f"Bad callback data: {e}", alert=True)
+        return
 
-        # Extract current URL directly from message entities — no DB needed.
-        # parse_entities() handles Telegram's UTF-16 offsets correctly.
-        msg = cq.message
-        if not hasattr(msg, "parse_entities"):
-            await cq.answer("Message no longer accessible.", show_alert=True)
-            return
+    if platform not in PROVIDERS:
+        await _answer(f"Unknown platform: {platform}", alert=True)
+        return
 
-        current_url = None
-        display_text = None
+    options = list(PROVIDERS[platform]["options"])
+    idx %= len(options)
+    key = options[idx]
+    logger.info("Cycle: chat=%s platform=%s -> key=%s (idx=%s)", chat_id, platform, key, idx)
+
+    msg = cq.message
+    if not hasattr(msg, "parse_entities"):
+        await _answer("Message no longer accessible.", alert=True)
+        return
+
+    # Extract current URL directly from message entities — no DB needed.
+    current_url = None
+    display_text = None
+    try:
         entity_texts = msg.parse_entities(types=["text_link", "url"])
-        logger.info("Cycle: entities found = %s", list(entity_texts.keys()))
         for entity, etext in entity_texts.items():
             if entity.type == "text_link":
                 current_url = entity.url
@@ -1964,12 +1991,18 @@ async def _cycle_provider(cq, data, chat_id):
         if not current_url:
             m = URL_RE.search(msg.text or "")
             current_url = m.group(0) if m else None
-        logger.info("Cycle: current_url=%s display_text=%s", current_url, display_text)
-        if not current_url:
-            await cq.answer("Can't read the current link.", show_alert=True)
-            return
+    except Exception as e:
+        logger.exception("Cycle: entity extraction failed")
+        await _answer(f"Entity error: {e}", alert=True)
+        return
 
-        # Swap host to the new provider, preserving path/query exactly.
+    logger.info("Cycle: url=%s display=%s", current_url, display_text)
+    if not current_url:
+        await _answer(f"No URL found in message (text={msg.text!r:.80})", alert=True)
+        return
+
+    # Swap host to the new provider, preserving path/query exactly.
+    try:
         parsed = urlparse(current_url)
         new_host = PROVIDERS[platform]["options"][key]
         new_url = urlunparse((parsed.scheme, new_host, parsed.path, parsed.params, parsed.query, ""))
@@ -1985,34 +2018,25 @@ async def _cycle_provider(cq, data, chat_id):
             text = f'{emoji} <a href="{new_url}">{_html.escape(display_text)}</a>'.strip()
         else:
             text = f"{emoji} {new_url}".strip()
-        logger.info("Cycle: editing to text=%r preview=%s", text, preview_url)
         preview = LinkPreviewOptions(
             is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
         )
         next_idx = (idx + 1) % len(options)
-        try:
-            await cq.edit_message_text(
-                text,
-                parse_mode="HTML",
-                link_preview_options=preview,
-                reply_markup=_cycle_keyboard(platform, next_idx),
-            )
-            logger.info("Cycle: edit succeeded for %s/%s in chat %s", platform, key, chat_id)
-        except Exception as e:
-            err = str(e).lower()
-            if "not modified" in err or "message is not modified" in err:
-                pass  # identical content — harmless
-            else:
-                logger.warning("Cycle edit failed for %s/%s: %s", platform, key, e)
-                await cq.answer(f"Edit failed: {e}", show_alert=True)
-                return
-        await cq.answer(f"Provider: {key}")
-    except Exception:
-        logger.exception("_cycle_provider failed in chat %s", chat_id)
-        try:
-            await cq.answer("Something went wrong.", show_alert=True)
-        except Exception:
-            pass
+        await cq.edit_message_text(
+            text,
+            parse_mode="HTML",
+            link_preview_options=preview,
+            reply_markup=_cycle_keyboard(platform, next_idx),
+        )
+        logger.info("Cycle: edit OK %s/%s chat=%s", platform, key, chat_id)
+        await _answer(f"Provider: {key}")
+    except Exception as e:
+        err = str(e).lower()
+        if "not modified" in err or "message is not modified" in err:
+            await _answer(f"Already on: {key}")
+        else:
+            logger.warning("Cycle edit failed for %s/%s: %s", platform, key, e)
+            await _answer(f"Edit failed: {e}", alert=True)
 
 
 # ── Callback query handler (inline menu) ───────────────────────────────────────
@@ -2035,6 +2059,10 @@ async def handle_callback(update, context):
 
     # "Try another provider" — available to everyone, it only re-targets the
     # embed of the bot's own message and is non-destructive.
+    if data == "test":
+        await cq.answer("✅ Callback works!", show_alert=True)
+        return
+
     if data.startswith("e:"):
         await _cycle_provider(cq, data, chat_id)
         return
@@ -2185,18 +2213,20 @@ def main():
     app.add_handler(InlineQueryHandler(handle_inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
+    _allowed = ["message", "edited_message", "callback_query", "inline_query", "channel_post"]
     if WEBHOOK_URL:
         wh_kwargs = dict(
             listen="0.0.0.0",
             port=PORT,
             webhook_url=WEBHOOK_URL,
             drop_pending_updates=True,
+            allowed_updates=_allowed,
         )
         if WEBHOOK_SECRET:
             wh_kwargs["secret_token"] = WEBHOOK_SECRET
         app.run_webhook(**wh_kwargs)
     else:
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling(drop_pending_updates=True, allowed_updates=_allowed)
 
 
 if __name__ == "__main__":
