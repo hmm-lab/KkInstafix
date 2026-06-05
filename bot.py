@@ -891,8 +891,13 @@ INSTAGRAM_CONTENT_RE = re.compile(
 async def fix_url(raw, chat_id, chat_settings):
     url, tail = trim(raw)
     parsed = urlparse(url)
-    # Expand short-link redirects before platform detection
-    if parsed.netloc.lower().removeprefix("www.") in SHORT_LINK_DOMAINS:
+    host = parsed.netloc.lower().removeprefix("www.")
+    # Expand short-link and share-link redirects before platform detection.
+    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, and Reddit's newer
+    # /r/<sub>/s/<id> share URLs which also redirect to the real post.
+    if host in SHORT_LINK_DOMAINS or (
+        host == "reddit.com" and re.match(r"^/r/[^/]+/s/", parsed.path, re.IGNORECASE)
+    ):
         url = await expand_short_url(url)
         parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
