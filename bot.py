@@ -791,6 +791,49 @@ def _check_url_sync(url: str) -> bool:
         return False
 
 
+_RESTRICTION_PHRASES = [
+    "people under 13 can't see this",
+    "set limits on who can see",
+    "this account is private",
+    "this content isn't available",
+    "content not available",
+    "restricted to",
+]
+
+
+def _is_restricted_sync(url: str) -> bool:
+    """Fetch up to 3 KB of the URL and look for known restriction phrases."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            chunk = resp.read(3072).decode("utf-8", errors="ignore").lower()
+        return any(phrase in chunk for phrase in _RESTRICTION_PHRASES)
+    except Exception:
+        return False
+
+
+async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str, original_text: str, parse_mode):
+    """Background task: if the fixed URL shows restricted content, edit the message."""
+    loop = asyncio.get_running_loop()
+    restricted = await loop.run_in_executor(None, _is_restricted_sync, check_url)
+    if not restricted:
+        return
+    warning = "⚠️ <i>This content is restricted — the account has limited who can see it.</i>"
+    new_text = f"{original_text}\n\n{warning}" if original_text else warning
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=new_text,
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
 def _expand_short_url_sync(url: str) -> str:
     if url in _expand_cache:
         return _expand_cache[url]
@@ -1711,6 +1754,13 @@ async def handle_message(update, context):
         original = URL_RE.search(text)
         if original:
             store_rewrite(chat_id, sent_msg.message_id, original.group(0), sender_name)
+
+    # Background restriction check: if the embed provider returns a restriction
+    # page, edit the message to explain why the preview looks broken.
+    if sent_msg and first_preview_url and fixed_count == 1:
+        asyncio.create_task(
+            _warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, post_text, post_parse_mode)
+        )
 
 # ── Caption handler ────────────────────────────────────────────────────────────
 async def handle_caption(update, context):
