@@ -802,7 +802,7 @@ _RESTRICTION_PHRASES = [
 
 
 def _is_restricted_sync(url: str) -> bool:
-    """Fetch up to 3 KB of the URL and look for known restriction phrases."""
+    """Return True if the URL is inaccessible: 4xx HTTP error or known restriction phrases."""
     try:
         req = urllib.request.Request(
             url,
@@ -811,17 +811,20 @@ def _is_restricted_sync(url: str) -> bool:
         with urllib.request.urlopen(req, timeout=6) as resp:
             chunk = resp.read(3072).decode("utf-8", errors="ignore").lower()
         return any(phrase in chunk for phrase in _RESTRICTION_PHRASES)
+    except urllib.error.HTTPError as e:
+        # 4xx = content inaccessible (private, age-gated, blocked by provider)
+        return 400 <= e.code < 500
     except Exception:
         return False
 
 
 async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str, original_text: str, parse_mode):
-    """Background task: if the fixed URL shows restricted content, edit the message."""
+    """Background task: if the fixed URL is inaccessible, edit the message to explain."""
     loop = asyncio.get_running_loop()
     restricted = await loop.run_in_executor(None, _is_restricted_sync, check_url)
     if not restricted:
         return
-    warning = "⚠️ <i>This content is restricted — the account has limited who can see it.</i>"
+    warning = "⚠️ <i>This content isn't accessible — the account may be private, age-restricted, or have limited who can view it.</i>"
     new_text = f"{original_text}\n\n{warning}" if original_text else warning
     try:
         await context.bot.edit_message_text(
