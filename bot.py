@@ -180,7 +180,7 @@ HEALTH_TTL = 300
 SEEN_UPDATES: OrderedDict = OrderedDict()
 MAX_SEEN_UPDATES = 2000
 _known_chats: set = set()
-_tagged_cache: dict = {}     # chat_id -> set of tagged user_ids
+
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -265,11 +265,6 @@ def _warm_chat_cache():
         _known_chats.add(row["chat_id"])
 
 
-def _warm_tagged_cache():
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, user_id FROM tagged_users").fetchall():
-        _tagged_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
-
 
 def init_db():
     conn = db_connect()
@@ -301,11 +296,6 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         );
 
-        CREATE TABLE IF NOT EXISTS tagged_users (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, user_id)
-        );
 
         CREATE TABLE IF NOT EXISTS recent_events (
             kind TEXT NOT NULL,
@@ -325,7 +315,6 @@ def init_db():
         """
     )
     _warm_chat_cache()
-    _warm_tagged_cache()
 
 
 def ensure_chat_settings(chat_id):
@@ -430,39 +419,6 @@ def get_muted_user_ids(chat_id):
     ).fetchall()
     return [r["user_id"] for r in rows]
 
-
-def _tagged_set(chat_id) -> set:
-    if chat_id not in _tagged_cache:
-        conn = db_connect()
-        rows = conn.execute(
-            "SELECT user_id FROM tagged_users WHERE chat_id = ?", (chat_id,)
-        ).fetchall()
-        _tagged_cache[chat_id] = {r["user_id"] for r in rows}
-    return _tagged_cache[chat_id]
-
-
-def tag_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "INSERT OR IGNORE INTO tagged_users(chat_id, user_id) VALUES(?, ?)",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _tagged_set(chat_id).add(user_id)
-
-
-def untag_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "DELETE FROM tagged_users WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _tagged_set(chat_id).discard(user_id)
-
-
-def is_user_tagged(chat_id, user_id):
-    return user_id in _tagged_set(chat_id)
 
 
 def cleanup_db(max_age=86400):
@@ -663,14 +619,13 @@ def sender_label(user, mode):
     return user.first_name or user.username or "User"
 
 
-def format_repost_text(user, mode, platform=None, url=None, extra=""):
+def format_repost_text(user, mode, platform=None, url=None):
     label = sender_label(user, mode)
     emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
     if label and url:
-        return f'{emoji} <a href="{url}">{_html.escape(label)}{extra}</a>'.strip()
+        return f'{emoji} <a href="{url}">{_html.escape(label)}</a>'.strip()
     if label:
-        display = label + extra
-        return f"{emoji} {display}".strip() if emoji else display
+        return f"{emoji} {label}".strip() if emoji else label
     return url or ""
 
 
@@ -987,42 +942,6 @@ async def _cmd_textspam(msg, parts, context, chat_id):
     await msg.reply_text(f"Text spam filter: {state}.")
 
 
-async def _cmd_taggay(msg, parts, context, chat_id):
-    target = target_user_id_from_command(msg, parts)
-    if not target:
-        await msg.reply_text("Reply to a user or pass a numeric user id.")
-        return
-    if is_user_tagged(chat_id, target):
-        await msg.reply_text(f"User {target} is already tagged.")
-        return
-    tag_user(chat_id, target)
-    await msg.reply_text(f"Congratulations, you're a admin! 🏳️‍🌈")
-
-
-async def _cmd_untaggay(msg, parts, context, chat_id):
-    target = target_user_id_from_command(msg, parts)
-    if not target:
-        await msg.reply_text("Reply to a user or pass a numeric user id.")
-        return
-    untag_user(chat_id, target)
-    await msg.reply_text(f"Removed gay tag from user {target}.")
-
-
-async def _cmd_listgay(msg, parts, context, chat_id):
-    tagged = list(_tagged_set(chat_id))
-    if not tagged:
-        await msg.reply_text("No tagged users in this chat.")
-        return
-    lines = [f"<b>Tagged users ({len(tagged)})</b>", ""]
-    for uid in tagged:
-        try:
-            member = await context.bot.get_chat_member(chat_id, uid)
-            name = member.user.first_name or member.user.username or f"User {uid}"
-            lines.append(f"• {_html.escape(name)} (gay) — <code>{uid}</code>")
-        except Exception:
-            lines.append(f"• <code>{uid}</code> (gay)")
-    await msg.reply_text("\n".join(lines), parse_mode="HTML")
-
 
 async def _cmd_testall(msg, parts, context, chat_id):
     platform = parts[1].lower() if len(parts) > 1 else "instagram"
@@ -1134,9 +1053,6 @@ ADMIN_CMDS = {
     "/fallback": _cmd_fallback,
     "/textspam": _cmd_textspam,
     "/testall": _cmd_testall,
-    "/taggay": _cmd_taggay,
-    "/untaggay": _cmd_untaggay,
-    "/listgay": _cmd_listgay,
 }
 
 # ── Main text handler ──────────────────────────────────────────────────────────
@@ -1198,8 +1114,7 @@ async def handle_message(update, context):
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else None
-    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
-    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
+    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_fixed_url,
@@ -1249,8 +1164,7 @@ async def handle_caption(update, context):
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
-    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
-    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
+    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_fixed_url,
