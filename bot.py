@@ -634,7 +634,7 @@ async def process_text(text, chat_id, chat_settings):
     for raw in urls:
         fixed, platform, original = await fix_url(raw, chat_id, chat_settings)
         if fixed != raw:
-            if original and seen_recent("fix", chat_id, original, dedup_window):
+            if original and seen_recent("fix", chat_id, strip_tracking(original), dedup_window):
                 continue
             new_text = new_text.replace(raw, fixed)
             changed = True
@@ -1061,14 +1061,17 @@ async def handle_message(update, context):
     if not chat_settings["enabled"]:
         return
 
+    has_url = bool(URL_RE.search(text))
+
+    if not has_url:
+        if chat_settings["text_spam"] and len(text) >= 4:
+            if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
+                await safe_delete(msg, "duplicate-text")
+        return
+
     if not check_rate(chat_id, user_id, int(chat_settings["rate_limit"]), int(chat_settings["rate_window"])):
         logger.info("Rate limited user %s in chat %s", user_id, chat_id)
         return
-
-    if chat_settings["text_spam"] and len(text) >= 4 and not URL_RE.search(text):
-        if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
-            await safe_delete(msg, "duplicate-text")
-            return
 
     new_text, changed, first_fixed_url, platform = await process_text(text, chat_id, chat_settings)
     if not changed:
