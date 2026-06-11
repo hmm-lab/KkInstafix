@@ -238,10 +238,10 @@ ABOUT_TEXT = (
 )
 
 WELCOME_TEXT = (
-    "Hi, I'm Mehrab's link fixer bot.\n\n"
-    "I automatically rewrite supported social links so Telegram previews work better.\n"
-    "Admins can use /status, /providers, /setprovider, /enable, /disable, /muteuser, and /testall.\n"
-    "Try /about for credits."
+    "👋 Hi! I fix social media links so Telegram previews work properly.\n\n"
+    "📷 Instagram · 🐦 Twitter/X · 🎵 TikTok · 🤖 Reddit · and more\n\n"
+    "I'll automatically rewrite links as they're posted. "
+    "Admins can configure me with /providers and /status."
 )
 
 # ── Database ───────────────────────────────────────────────────────────────────
@@ -667,50 +667,47 @@ def format_repost_text(user, mode, platform=None, url=None, extra=""):
 
 
 def providers_text(chat_id):
-    lines = ["<b>Providers for this chat</b>", ""]
+    lines = ["<b>Providers</b>", ""]
     for plat in sorted(PROVIDERS):
         cur = get_choice(chat_id, plat)
-        opt_list = []
-        for k in PROVIDERS[plat]["options"]:
-            opt_list.append(f"<b>{k}</b>" if k == cur else k)
-        lines.append(f"{plat}: {', '.join(opt_list)}")
+        emoji = PLATFORM_EMOJI.get(plat, "▪️")
+        opt_list = [f"<b>{k}</b>" if k == cur else k for k in PROVIDERS[plat]["options"]]
+        lines.append(f"{emoji} <b>{plat}</b>  {' · '.join(opt_list)}")
     lines += [
         "",
         "<b>Admin commands</b>",
-        "/setprovider instagram vx",
+        "/setprovider &lt;platform&gt; &lt;provider&gt;",
         "/resetproviders",
-        "/enable  /disable",
-        "/muteuser (reply or user id)",
-        "/unmuteuser (reply or user id)",
+        "/enable  ·  /disable",
+        "/muteuser  ·  /unmuteuser",
         "/setsendermode first_name|username|full_name|none",
-        "/setdedup 60",
-        "/setratelimit 5 30",
-        "/ignoreforwards on|off",
-        "/fallback on|off",
-        "/textspam on|off",
-        "/testall instagram",
+        "/setdedup &lt;seconds&gt;",
+        "/setratelimit &lt;count&gt; &lt;seconds&gt;",
+        "/ignoreforwards on|off  ·  /fallback on|off  ·  /textspam on|off",
+        "/testall &lt;platform&gt;",
         "",
-        "<b>Public commands</b>",
-        "/providers  /status  /about  /credits  /me",
-        "/mehrab  /mo  /genius",
+        "<b>Public</b>  /status · /about · /start · /help",
     ]
     return "\n".join(lines)
 
 
 def status_text(chat_id):
     s = get_chat_settings(chat_id)
-    on_off = lambda v: "✅ on" if v else "❌ off"
-    return "\n".join([
-        "<b>Chat status</b>",
-        f"Bot: {on_off(s['enabled'])}",
-        f"Sender mode: <code>{s['sender_mode']}</code>",
-        f"Dedup window: <code>{s['dedup_window']}s</code>",
-        f"Rate limit: <code>{s['rate_limit']}</code> links per <code>{s['rate_window']}s</code>",
-        f"Ignore forwards: {on_off(s['ignore_forwards'])}",
-        f"Provider fallback: {on_off(s['provider_fallback'])}",
-        f"Text spam filter: {on_off(s['text_spam'])}",
-        f"Muted users: <code>{blocked_user_count(chat_id)}</code>",
-    ])
+    on = lambda v: "✅" if v else "❌"
+    rows = [
+        ("🤖 Bot",            on(s["enabled"])),
+        ("👤 Sender mode",    f"<code>{s['sender_mode']}</code>"),
+        ("⏱ Dedup window",   f"<code>{s['dedup_window']}s</code>"),
+        ("🚦 Rate limit",     f"<code>{s['rate_limit']}</code> per <code>{s['rate_window']}s</code>"),
+        ("↩️ Ignore fwds",    on(s["ignore_forwards"])),
+        ("🔄 Fallback",       on(s["provider_fallback"])),
+        ("🗑 Text spam",      on(s["text_spam"])),
+        ("🔇 Muted users",    f"<code>{blocked_user_count(chat_id)}</code>"),
+    ]
+    lines = ["<b>Chat status</b>", ""]
+    for label, value in rows:
+        lines.append(f"{label}  {value}")
+    return "\n".join(lines)
 
 
 def parse_on_off(value):
@@ -803,12 +800,16 @@ async def _cmd_about(msg, parts, context, chat_id):
 
 async def _cmd_start(msg, parts, context, chat_id):
     if msg.chat.type == "private":
+        platforms = " · ".join(
+            f"{PLATFORM_EMOJI.get(p, '')} {p}" for p in sorted(PROVIDERS)
+        )
         await msg.reply_text(
-            "Hi! I'm Mehrab's link fixer bot.\n\n"
-            "Send me any supported social media link (Instagram, Twitter/X, TikTok, Reddit, and more) "
-            "and I'll rewrite it so Telegram previews work properly.\n\n"
+            "<b>KkInstafix</b> — social link fixer\n\n"
+            "Send me a link and I'll rewrite it so Telegram shows a proper preview.\n\n"
+            f"<b>Supported platforms</b>\n{platforms}\n\n"
             "Add me to a group and I'll fix links automatically.\n"
-            "Use /providers to see supported platforms, or /about for credits."
+            "/providers · /status · /about",
+            parse_mode="HTML",
         )
     else:
         await msg.reply_text(WELCOME_TEXT)
@@ -824,12 +825,20 @@ async def _cmd_status(msg, parts, context, chat_id):
 
 async def _cmd_enable(msg, parts, context, chat_id):
     update_chat_setting(chat_id, "enabled", 1)
-    await msg.reply_text("Bot enabled in this chat.")
+    await msg.reply_text("✅ Bot enabled — links will be fixed in this chat.")
 
 
 async def _cmd_disable(msg, parts, context, chat_id):
     update_chat_setting(chat_id, "enabled", 0)
-    await msg.reply_text("Bot disabled in this chat.")
+    await msg.reply_text("🚫 Bot disabled — links will be left as-is.")
+
+
+def _user_display(msg, target_id):
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        u = msg.reply_to_message.from_user
+        name = u.first_name or u.username or str(target_id)
+        return f"<b>{_html.escape(name)}</b>"
+    return f"<code>{target_id}</code>"
 
 
 async def _cmd_muteuser(msg, parts, context, chat_id):
@@ -838,10 +847,10 @@ async def _cmd_muteuser(msg, parts, context, chat_id):
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
     if is_user_muted(chat_id, target):
-        await msg.reply_text(f"User {target} is already muted.")
+        await msg.reply_text(f"🔇 {_user_display(msg, target)} is already muted.", parse_mode="HTML")
         return
     mute_user(chat_id, target)
-    await msg.reply_text(f"Muted user {target}.")
+    await msg.reply_text(f"🔇 Muted {_user_display(msg, target)}.", parse_mode="HTML")
 
 
 async def _cmd_unmuteuser(msg, parts, context, chat_id):
@@ -850,15 +859,27 @@ async def _cmd_unmuteuser(msg, parts, context, chat_id):
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
     if not is_user_muted(chat_id, target):
-        await msg.reply_text(f"User {target} is not muted.")
+        await msg.reply_text(f"🔊 {_user_display(msg, target)} is not muted.", parse_mode="HTML")
         return
     unmute_user(chat_id, target)
-    await msg.reply_text(f"Unmuted user {target}.")
+    await msg.reply_text(f"🔊 Unmuted {_user_display(msg, target)}.", parse_mode="HTML")
 
 
 async def _cmd_resetproviders(msg, parts, context, chat_id):
+    changed = []
+    for plat in sorted(PROVIDERS):
+        cur = get_choice(chat_id, plat)
+        default = PROVIDERS[plat]["default"]
+        if cur != default:
+            emoji = PLATFORM_EMOJI.get(plat, "▪️")
+            changed.append(f"{emoji} {plat}  <code>{cur}</code> → <code>{default}</code>")
     reset_providers(chat_id)
-    await msg.reply_text("Providers reset to defaults.")
+    if changed:
+        await msg.reply_text(
+            "🔄 Providers reset to defaults:\n\n" + "\n".join(changed), parse_mode="HTML"
+        )
+    else:
+        await msg.reply_text("✅ All providers were already at defaults.")
 
 
 async def _cmd_setprovider(msg, parts, context, chat_id):
@@ -867,21 +888,33 @@ async def _cmd_setprovider(msg, parts, context, chat_id):
         return
     plat, prov = parts[1].lower(), parts[2].lower()
     if plat not in PROVIDERS:
-        await msg.reply_text("Unknown platform. Try /providers")
+        available = " · ".join(sorted(PROVIDERS))
+        await msg.reply_text(f"Unknown platform.\n\nAvailable: {available}", parse_mode="HTML")
         return
     if prov not in PROVIDERS[plat]["options"]:
-        await msg.reply_text("Unknown provider. Options: " + ", ".join(PROVIDERS[plat]["options"]))
+        opts = " · ".join(PROVIDERS[plat]["options"])
+        await msg.reply_text(
+            f"Unknown provider for {plat}.\n\nOptions: {opts}", parse_mode="HTML"
+        )
         return
+    old = get_choice(chat_id, plat)
     set_choice(chat_id, plat, prov)
-    await msg.reply_text(f"Set {plat} to {prov}.")
+    emoji = PLATFORM_EMOJI.get(plat, "▪️")
+    await msg.reply_text(
+        f"{emoji} <b>{plat}</b>  <code>{old}</code> → <code>{prov}</code>",
+        parse_mode="HTML",
+    )
 
 
 async def _cmd_setsendermode(msg, parts, context, chat_id):
-    if len(parts) != 2 or parts[1] not in ("first_name", "username", "full_name", "none"):
+    modes = ("first_name", "username", "full_name", "none")
+    if len(parts) != 2 or parts[1] not in modes:
         await msg.reply_text("Usage: /setsendermode first_name|username|full_name|none")
         return
     update_chat_setting(chat_id, "sender_mode", parts[1])
-    await msg.reply_text(f"sender_mode set to {parts[1]}.")
+    await msg.reply_text(
+        f"👤 Sender mode set to <code>{parts[1]}</code>.", parse_mode="HTML"
+    )
 
 
 async def _cmd_setdedup(msg, parts, context, chat_id):
@@ -993,8 +1026,11 @@ async def _cmd_testall(msg, parts, context, chat_id):
     if not base_url:
         await msg.reply_text("No sample URL. Pass one: /testall instagram https://...")
         return
+    emoji = PLATFORM_EMOJI.get(platform, "▪️")
+    n = len(PROVIDERS[platform]["options"])
     await msg.reply_text(
-        f"Testing {len(PROVIDERS[platform]['options'])} providers for {platform}...\n{base_url}"
+        f"{emoji} Testing <b>{n}</b> providers for <b>{platform}</b>\n<code>{base_url}</code>",
+        parse_mode="HTML",
     )
     for key, host in PROVIDERS[platform]["options"].items():
         parsed = urlparse(base_url)
@@ -1007,12 +1043,13 @@ async def _cmd_testall(msg, parts, context, chat_id):
         )
         try:
             await msg.reply_text(
-                f"{PLATFORM_EMOJI.get(platform, '?')} [{key}] {fixed}",
+                f"<code>[{key}]</code> {fixed}",
                 link_preview_options=preview,
+                parse_mode="HTML",
             )
         except Exception:
             logger.exception("/testall failed for %s %s in chat %s", platform, key, chat_id)
-            await msg.reply_text(f"[{key}] failed")
+            await msg.reply_text(f"<code>[{key}]</code> ❌ failed", parse_mode="HTML")
 
 
 # ── Command dispatch maps ──────────────────────────────────────────────────────
