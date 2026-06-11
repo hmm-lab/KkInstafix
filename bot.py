@@ -667,14 +667,16 @@ def format_repost_text(user, mode, platform=None, url=None, extra=""):
 
 
 def providers_text(chat_id):
-    lines = ["Providers for this chat:", ""]
+    lines = ["<b>Providers for this chat</b>", ""]
     for plat in sorted(PROVIDERS):
         cur = get_choice(chat_id, plat)
-        opts = ", ".join(PROVIDERS[plat]["options"])
-        lines.append(f"{plat}: {cur}  (options: {opts})")
-        lines.append("")
+        opt_list = []
+        for k in PROVIDERS[plat]["options"]:
+            opt_list.append(f"<b>{k}</b>" if k == cur else k)
+        lines.append(f"{plat}: {', '.join(opt_list)}")
     lines += [
-        "Admin commands:",
+        "",
+        "<b>Admin commands</b>",
         "/setprovider instagram vx",
         "/resetproviders",
         "/enable  /disable",
@@ -688,7 +690,7 @@ def providers_text(chat_id):
         "/textspam on|off",
         "/testall instagram",
         "",
-        "Public commands:",
+        "<b>Public commands</b>",
         "/providers  /status  /about  /credits  /me",
         "/mehrab  /mo  /genius",
     ]
@@ -697,17 +699,17 @@ def providers_text(chat_id):
 
 def status_text(chat_id):
     s = get_chat_settings(chat_id)
+    on_off = lambda v: "✅ on" if v else "❌ off"
     return "\n".join([
-        "Chat status:",
-        f"enabled: {bool(s['enabled'])}",
-        f"sender_mode: {s['sender_mode']}",
-        f"dedup_window: {s['dedup_window']}s",
-        f"rate_limit: {s['rate_limit']} per {s['rate_window']}s",
-        f"ignore_forwards: {bool(s['ignore_forwards'])}",
-        f"provider_fallback: {bool(s['provider_fallback'])}",
-        f"caption_style: {s['caption_style']}",
-        f"text_spam: {bool(s['text_spam'])}",
-        f"muted_users: {blocked_user_count(chat_id)}",
+        "<b>Chat status</b>",
+        f"Bot: {on_off(s['enabled'])}",
+        f"Sender mode: <code>{s['sender_mode']}</code>",
+        f"Dedup window: <code>{s['dedup_window']}s</code>",
+        f"Rate limit: <code>{s['rate_limit']}</code> links per <code>{s['rate_window']}s</code>",
+        f"Ignore forwards: {on_off(s['ignore_forwards'])}",
+        f"Provider fallback: {on_off(s['provider_fallback'])}",
+        f"Text spam filter: {on_off(s['text_spam'])}",
+        f"Muted users: <code>{blocked_user_count(chat_id)}</code>",
     ])
 
 
@@ -799,12 +801,25 @@ async def _cmd_about(msg, parts, context, chat_id):
     await send_about(context, msg)
 
 
+async def _cmd_start(msg, parts, context, chat_id):
+    if msg.chat.type == "private":
+        await msg.reply_text(
+            "Hi! I'm Mehrab's link fixer bot.\n\n"
+            "Send me any supported social media link (Instagram, Twitter/X, TikTok, Reddit, and more) "
+            "and I'll rewrite it so Telegram previews work properly.\n\n"
+            "Add me to a group and I'll fix links automatically.\n"
+            "Use /providers to see supported platforms, or /about for credits."
+        )
+    else:
+        await msg.reply_text(WELCOME_TEXT)
+
+
 async def _cmd_providers(msg, parts, context, chat_id):
-    await msg.reply_text(providers_text(chat_id))
+    await msg.reply_text(providers_text(chat_id), parse_mode="HTML")
 
 
 async def _cmd_status(msg, parts, context, chat_id):
-    await msg.reply_text(status_text(chat_id))
+    await msg.reply_text(status_text(chat_id), parse_mode="HTML")
 
 
 async def _cmd_enable(msg, parts, context, chat_id):
@@ -822,6 +837,9 @@ async def _cmd_muteuser(msg, parts, context, chat_id):
     if not target:
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
+    if is_user_muted(chat_id, target):
+        await msg.reply_text(f"User {target} is already muted.")
+        return
     mute_user(chat_id, target)
     await msg.reply_text(f"Muted user {target}.")
 
@@ -830,6 +848,9 @@ async def _cmd_unmuteuser(msg, parts, context, chat_id):
     target = target_user_id_from_command(msg, parts)
     if not target:
         await msg.reply_text("Reply to a user or pass a numeric user id.")
+        return
+    if not is_user_muted(chat_id, target):
+        await msg.reply_text(f"User {target} is not muted.")
         return
     unmute_user(chat_id, target)
     await msg.reply_text(f"Unmuted user {target}.")
@@ -867,56 +888,62 @@ async def _cmd_setdedup(msg, parts, context, chat_id):
     if len(parts) != 2 or not parts[1].isdigit():
         await msg.reply_text("Usage: /setdedup 60")
         return
-    value = max(5, min(3600, int(parts[1])))
+    requested = int(parts[1])
+    value = max(5, min(3600, requested))
     update_chat_setting(chat_id, "dedup_window", value)
-    await msg.reply_text(f"dedup_window set to {value}s.")
+    note = f" (clamped from {requested})" if value != requested else ""
+    await msg.reply_text(f"Dedup window set to <code>{value}s</code>{note}.", parse_mode="HTML")
 
 
 async def _cmd_setratelimit(msg, parts, context, chat_id):
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
         await msg.reply_text("Usage: /setratelimit 5 30")
         return
-    count = max(1, min(50, int(parts[1])))
-    window = max(5, min(3600, int(parts[2])))
+    req_count, req_window = int(parts[1]), int(parts[2])
+    count = max(1, min(50, req_count))
+    window = max(5, min(3600, req_window))
     update_chat_setting(chat_id, "rate_limit", count)
     update_chat_setting(chat_id, "rate_window", window)
-    await msg.reply_text(f"rate_limit set to {count} per {window}s.")
+    notes = []
+    if count != req_count:
+        notes.append(f"count clamped from {req_count}")
+    if window != req_window:
+        notes.append(f"window clamped from {req_window}s")
+    note = f" ({', '.join(notes)})" if notes else ""
+    await msg.reply_text(
+        f"Rate limit set to <code>{count}</code> links per <code>{window}s</code>{note}.",
+        parse_mode="HTML",
+    )
 
 
 async def _cmd_ignoreforwards(msg, parts, context, chat_id):
-    if len(parts) != 2:
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
         await msg.reply_text("Usage: /ignoreforwards on|off")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /ignoreforwards on|off")
-        return
     update_chat_setting(chat_id, "ignore_forwards", value)
-    await msg.reply_text(f"ignore_forwards set to {bool(value)}.")
+    state = "✅ on — forwarded posts will be ignored" if value else "❌ off — forwarded posts will be processed"
+    await msg.reply_text(f"Ignore forwards: {state}.")
 
 
 async def _cmd_fallback(msg, parts, context, chat_id):
-    if len(parts) != 2:
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
         await msg.reply_text("Usage: /fallback on|off")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /fallback on|off")
-        return
     update_chat_setting(chat_id, "provider_fallback", value)
-    await msg.reply_text(f"provider_fallback set to {bool(value)}.")
+    state = "✅ on — will try backup providers if primary is down" if value else "❌ off — always uses the selected provider"
+    await msg.reply_text(f"Provider fallback: {state}.")
 
 
 async def _cmd_textspam(msg, parts, context, chat_id):
-    if len(parts) != 2:
+    if len(parts) != 2 or parse_on_off(parts[1]) is None:
         await msg.reply_text("Usage: /textspam on|off")
         return
     value = parse_on_off(parts[1])
-    if value is None:
-        await msg.reply_text("Usage: /textspam on|off")
-        return
     update_chat_setting(chat_id, "text_spam", value)
-    await msg.reply_text(f"text_spam set to {bool(value)}.")
+    state = "✅ on — repeated plain text will be deleted" if value else "❌ off — repeated plain text is allowed"
+    await msg.reply_text(f"Text spam filter: {state}.")
 
 
 async def _cmd_taggay(msg, parts, context, chat_id):
@@ -924,8 +951,11 @@ async def _cmd_taggay(msg, parts, context, chat_id):
     if not target:
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
+    if is_user_tagged(chat_id, target):
+        await msg.reply_text(f"User {target} is already tagged.")
+        return
     tag_user(chat_id, target)
-    await msg.reply_text(f"Congratulations, your a admin! 🏳️‍🌈")
+    await msg.reply_text(f"Congratulations, you're a admin! 🏳️‍🌈")
 
 
 async def _cmd_untaggay(msg, parts, context, chat_id):
@@ -988,6 +1018,7 @@ async def _cmd_testall(msg, parts, context, chat_id):
 # ── Command dispatch maps ──────────────────────────────────────────────────────
 
 PUBLIC_CMDS = {
+    "/start": _cmd_start,
     "/mehrab": _cmd_photo,
     "/mo": _cmd_photo,
     "/genius": _cmd_photo,
@@ -1180,8 +1211,7 @@ async def handle_new_members(update, context):
     if not msg or not msg.new_chat_members:
         return
     try:
-        me = await context.bot.get_me()
-        if any(member.id == me.id for member in msg.new_chat_members):
+        if any(member.id == context.bot.id for member in msg.new_chat_members):
             await msg.reply_text(WELCOME_TEXT)
     except Exception:
         logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else "?")

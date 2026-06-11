@@ -242,8 +242,8 @@ def test_providers_text_contains_platforms():
 def test_status_text_contains_settings():
     bot.init_db()
     text = bot.status_text(99999)
-    assert "enabled" in text
-    assert "rate_limit" in text
+    assert "Bot" in text
+    assert "Rate limit" in text
 
 
 # ── DEFAULT_CHAT_SETTINGS ────────────────────────────────────────────────────
