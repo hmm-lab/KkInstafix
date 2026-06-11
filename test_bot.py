@@ -264,9 +264,24 @@ def test_default_settings_include_all_toggles():
 
 def test_admin_commands_registered():
     for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam",
-                "/muteuser", "/unmuteuser", "/setprovider", "/resetproviders",
+                "/muteuser", "/unmuteuser", "/listmuted", "/setprovider", "/resetproviders",
                 "/setsendermode", "/setdedup", "/testall"):
         assert cmd in bot.ADMIN_CMDS, f"{cmd} missing from ADMIN_CMDS"
+
+
+def test_help_is_not_providers():
+    assert bot.PUBLIC_CMDS["/help"] is not bot.PUBLIC_CMDS["/providers"]
+
+
+def test_help_text_covers_key_commands():
+    for cmd in ("/setprovider", "/muteuser", "/listmuted", "/testall", "/enable", "/disable"):
+        assert cmd in bot.HELP_TEXT, f"{cmd} missing from HELP_TEXT"
+
+
+def test_about_text_uses_html_not_markdown():
+    assert "*" not in bot.ABOUT_TEXT
+    assert "_" not in bot.ABOUT_TEXT
+    assert "<b>" in bot.ABOUT_TEXT
 
 
 # ── dedup key strips tracking params ─────────────────────────────────────────

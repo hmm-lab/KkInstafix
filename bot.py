@@ -230,11 +230,11 @@ SAMPLE_URLS = {
 }
 
 ABOUT_TEXT = (
-    "💖 *About this bot*\n\n"
+    "<b>💖 About this bot</b>\n\n"
     "My name is Mehrab and I love you Motki 🥰\n\n"
     "This bot fixes social media links so they embed properly in Telegram. "
     "It can also reduce repeated link, text, sticker, and GIF spam in groups.\n\n"
-    "_Made with love by Mehrab_ 💖"
+    "<i>Made with love by Mehrab</i> 💖"
 )
 
 WELCOME_TEXT = (
@@ -421,6 +421,14 @@ def blocked_user_count(chat_id):
         (chat_id,),
     ).fetchone()
     return row["c"] if row else 0
+
+
+def get_muted_user_ids(chat_id):
+    conn = db_connect()
+    rows = conn.execute(
+        "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
+    ).fetchall()
+    return [r["user_id"] for r in rows]
 
 
 def _tagged_set(chat_id) -> set:
@@ -783,10 +791,10 @@ async def send_about(context, msg):
                 chat_id=msg.chat_id,
                 photo=img,
                 caption=ABOUT_TEXT,
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
     else:
-        await msg.reply_text(ABOUT_TEXT, parse_mode="Markdown")
+        await msg.reply_text(ABOUT_TEXT, parse_mode="HTML")
 
 # ── Command handlers ───────────────────────────────────────────────────────────
 
@@ -1052,6 +1060,49 @@ async def _cmd_testall(msg, parts, context, chat_id):
             await msg.reply_text(f"<code>[{key}]</code> ❌ failed", parse_mode="HTML")
 
 
+async def _cmd_listmuted(msg, parts, context, chat_id):
+    muted = get_muted_user_ids(chat_id)
+    if not muted:
+        await msg.reply_text("No muted users in this chat.")
+        return
+    lines = [f"<b>Muted users ({len(muted)})</b>", ""]
+    for uid in muted:
+        try:
+            member = await context.bot.get_chat_member(chat_id, uid)
+            name = member.user.first_name or member.user.username or str(uid)
+            lines.append(f"• 🔇 {_html.escape(name)} — <code>{uid}</code>")
+        except Exception:
+            lines.append(f"• 🔇 <code>{uid}</code>")
+    await msg.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+HELP_TEXT = (
+    "<b>KkInstafix — command reference</b>\n\n"
+    "<b>Anyone</b>\n"
+    "/start — welcome message\n"
+    "/providers — current providers for each platform\n"
+    "/status — current chat settings\n"
+    "/about — credits\n\n"
+    "<b>Admins only</b>\n"
+    "/enable · /disable — turn the bot on or off\n"
+    "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
+    "/resetproviders — restore all defaults\n"
+    "/muteuser · /unmuteuser — mute/unmute by reply or user ID\n"
+    "/listmuted — list all muted users\n"
+    "/setsendermode first_name|username|full_name|none\n"
+    "/setdedup &lt;seconds&gt; — dedup window (5–3600)\n"
+    "/setratelimit &lt;n&gt; &lt;seconds&gt; — rate limit per user\n"
+    "/ignoreforwards on|off\n"
+    "/fallback on|off — try backup providers if primary is down\n"
+    "/textspam on|off — delete repeated plain-text messages\n"
+    "/testall &lt;platform&gt; [url] — test every provider side-by-side"
+)
+
+
+async def _cmd_help(msg, parts, context, chat_id):
+    await msg.reply_text(HELP_TEXT, parse_mode="HTML")
+
+
 # ── Command dispatch maps ──────────────────────────────────────────────────────
 
 PUBLIC_CMDS = {
@@ -1063,7 +1114,7 @@ PUBLIC_CMDS = {
     "/credits": _cmd_about,
     "/me": _cmd_about,
     "/providers": _cmd_providers,
-    "/help": _cmd_providers,
+    "/help": _cmd_help,
     "/status": _cmd_status,
     "/config": _cmd_status,
 }
@@ -1073,6 +1124,7 @@ ADMIN_CMDS = {
     "/disable": _cmd_disable,
     "/muteuser": _cmd_muteuser,
     "/unmuteuser": _cmd_unmuteuser,
+    "/listmuted": _cmd_listmuted,
     "/resetproviders": _cmd_resetproviders,
     "/setprovider": _cmd_setprovider,
     "/setsendermode": _cmd_setsendermode,
