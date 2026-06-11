@@ -47,7 +47,9 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 PORT = int(os.environ.get("PORT", 8443))
 IMAGE_FILE = "30364.jpg"
 GENIUS_VIDEO = "genius.mp4"
-DB_FILE = "bot_data.sqlite3"
+# Set DATA_DIR to a Railway persistent volume mount (e.g. /data) so settings,
+# stats and undo records survive redeploys. Defaults to the working directory.
+DB_FILE = os.path.join(os.environ.get("DATA_DIR", "."), "bot_data.sqlite3")
 _start_time = time.time()
 
 # ── Providers ──────────────────────────────────────────────────────────────────
@@ -115,7 +117,7 @@ PROVIDERS = {
     },
     "threads": {
         "default": "fix",
-        "domains": ["threads.net"],
+        "domains": ["threads.net", "threads.com"],
         "options": {
             "fix": "fixthreads.net",
             "vx": "vxthreads.net",
@@ -211,7 +213,7 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv"}
 _expand_cache: dict = {}  # short URL -> expanded URL
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
@@ -232,6 +234,11 @@ DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
     "sender_mode": "first_name",
     "dedup_window": 60,
+    "rate_limit": 5,
+    "rate_window": 30,
+    "ignore_forwards": 1,
+    "provider_fallback": 1,
+    "text_spam": 1,
 }
 
 RATE_LIMIT = 5       # links per user per window
@@ -804,9 +811,11 @@ _RESTRICTION_PHRASES = [
 def _is_restricted_sync(url: str) -> bool:
     """Return True if the URL is inaccessible: 4xx HTTP error or known restriction phrases."""
     try:
+        # Use Telegram's real preview-crawler UA so we test exactly what
+        # Telegram sees; embed providers whitelist this UA.
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"},
+            headers={"User-Agent": "TelegramBot (like TwitterBot)"},
         )
         with urllib.request.urlopen(req, timeout=6) as resp:
             chunk = resp.read(3072).decode("utf-8", errors="ignore").lower()
@@ -818,7 +827,7 @@ def _is_restricted_sync(url: str) -> bool:
         return False
 
 
-async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str, original_text: str, parse_mode):
+async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str, original_text: str, preview=None, reply_markup=None):
     """Background task: if the fixed URL is inaccessible, edit the message to explain."""
     loop = asyncio.get_running_loop()
     restricted = await loop.run_in_executor(None, _is_restricted_sync, check_url)
@@ -832,6 +841,8 @@ async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str
             message_id=msg_id,
             text=new_text,
             parse_mode="HTML",
+            link_preview_options=preview,
+            reply_markup=reply_markup,
         )
     except Exception:
         pass
@@ -914,6 +925,7 @@ async def fix_url(raw, chat_id, chat_settings):
             return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None, None
         return raw, None, None, None
     preferred = get_choice(chat_id, platform)
+    allow_fallback = bool(chat_settings.get("provider_fallback", 1))
     noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
     # If a no-account frontend is chosen, skip health-checking the frontend
     # itself (it's just a browser link) and only health-check the embed provider
@@ -923,14 +935,14 @@ async def fix_url(raw, chat_id, chat_settings):
         embed_key = noauth_embed[preferred]
         embed_fixed, _ = await choose_provider_url(
             url, platform, embed_key,
-            allow_fallback=True,
+            allow_fallback=allow_fallback,
         )
         return fixed + tail, platform, url, embed_fixed
     fixed, _ = await choose_provider_url(
         url,
         platform,
         preferred,
-        allow_fallback=True,
+        allow_fallback=allow_fallback,
     )
     return fixed + tail, platform, url, fixed
 
@@ -1046,6 +1058,10 @@ def status_text(chat_id):
         enabled_line,
         f"Sender label: <code>{mode}</code>",
         f"Dedup window: <code>{s['dedup_window']}s</code>",
+        f"Rate limit: <code>{s.get('rate_limit', RATE_LIMIT)} links / {s.get('rate_window', RATE_WINDOW)}s</code>",
+        f"Ignore forwards: {on_off(s.get('ignore_forwards', 1))}",
+        f"Provider fallback: {on_off(s.get('provider_fallback', 1))}",
+        f"Text spam deletion: {on_off(s.get('text_spam', 1))}",
         f"Muted users: <code>{muted}</code>",
     ])
 
@@ -1243,6 +1259,9 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/taggay · /untaggay · /listgay — tag management\n"
         "<code>/setsendermode first_name|username|full_name|none</code>\n"
         "<code>/setdedup &lt;seconds&gt;</code> — dedup window\n"
+        "<code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code> — link rate limit\n"
+        "<code>/ignoreforwards on|off</code> · <code>/fallback on|off</code> · <code>/textspam on|off</code>\n"
+        "/resetstats — clear this chat's stats\n"
         "<code>/testall &lt;platform&gt; [url]</code> — test all providers\n"
         "/export · /import — backup and restore settings\n"
         "/ping — uptime and cache info"
@@ -1574,6 +1593,66 @@ async def _cmd_testall(msg, parts, context, chat_id):
         pass
 
 
+async def _cmd_setratelimit(msg, parts, context, chat_id):
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await msg.reply_text(
+            "Usage: <code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code>\n"
+            "Example: <code>/setratelimit 5 30</code> — max 5 links per user per 30 seconds.",
+            parse_mode="HTML",
+        )
+        return
+    count = max(1, min(100, int(parts[1])))
+    window = max(5, min(3600, int(parts[2])))
+    update_chat_settings_batch(chat_id, {"rate_limit": count, "rate_window": window})
+    await msg.reply_text(
+        f"Rate limit set: <b>{count}</b> links per user per <b>{window}s</b>.",
+        parse_mode="HTML",
+    )
+
+
+def _make_toggle_cmd(setting_key, on_text, off_text, usage):
+    async def _cmd(msg, parts, context, chat_id):
+        value = parse_on_off(parts[1]) if len(parts) == 2 else None
+        if value is None:
+            await msg.reply_text(usage, parse_mode="HTML")
+            return
+        update_chat_setting(chat_id, setting_key, value)
+        await msg.reply_text(on_text if value else off_text)
+    return _cmd
+
+
+_cmd_ignoreforwards = _make_toggle_cmd(
+    "ignore_forwards",
+    "Forwarded posts will be ignored.",
+    "Forwarded posts will now be processed too.",
+    "Usage: <code>/ignoreforwards on|off</code>",
+)
+
+_cmd_fallback = _make_toggle_cmd(
+    "provider_fallback",
+    "Provider fallback enabled — if a provider is down, the next one is used.",
+    "Provider fallback disabled — the chosen provider is always used.",
+    "Usage: <code>/fallback on|off</code>",
+)
+
+_cmd_textspam = _make_toggle_cmd(
+    "text_spam",
+    "Repeated text deletion enabled.",
+    "Repeated text deletion disabled.",
+    "Usage: <code>/textspam on|off</code>",
+)
+
+
+async def _cmd_resetstats(msg, parts, context, chat_id):
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?", (chat_id,)
+    ).fetchone()
+    conn.execute("DELETE FROM chat_stats WHERE chat_id = ?", (chat_id,))
+    conn.commit()
+    await msg.reply_text(f"📊 Stats reset — cleared {row['c']} recorded link fixes.")
+
+
 async def _cmd_taggay(msg, parts, context, chat_id):
     target = target_user_id_from_command(msg, parts)
     if not target:
@@ -1639,6 +1718,11 @@ ADMIN_CMDS = {
     "/setprovider": _cmd_setprovider,
     "/setsendermode": _cmd_setsendermode,
     "/setdedup": _cmd_setdedup,
+    "/setratelimit": _cmd_setratelimit,
+    "/ignoreforwards": _cmd_ignoreforwards,
+    "/fallback": _cmd_fallback,
+    "/textspam": _cmd_textspam,
+    "/resetstats": _cmd_resetstats,
     "/testall": _cmd_testall,
     "/export": _cmd_export,
     "/import": _cmd_import,
@@ -1668,7 +1752,7 @@ async def handle_message(update, context):
         await safe_delete(msg, "muted-user")
         return
 
-    if is_forwarded(msg):
+    if chat_settings.get("ignore_forwards", 1) and is_forwarded(msg):
         return
 
     if text.startswith("/"):
@@ -1691,9 +1775,20 @@ async def handle_message(update, context):
     if not chat_settings["enabled"]:
         return
 
-    if not check_rate(chat_id, user_id, RATE_LIMIT, RATE_WINDOW):
+    has_url = bool(URL_RE.search(text))
+
+    if not has_url:
+        # Plain text: only spam-dedup applies — no link rate budget consumed.
+        if chat_settings.get("text_spam", 1) and len(text) >= 4:
+            if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
+                await safe_delete(msg, "duplicate-text")
+        return
+
+    rate_limit = int(chat_settings.get("rate_limit", RATE_LIMIT))
+    rate_window = int(chat_settings.get("rate_window", RATE_WINDOW))
+    if not check_rate(chat_id, user_id, rate_limit, rate_window):
         logger.info("Rate limited user %s in chat %s", user_id, chat_id)
-        if not seen_recent("ratewarn", chat_id, str(user_id), RATE_WINDOW):
+        if not seen_recent("ratewarn", chat_id, str(user_id), rate_window):
             label = sender_label(msg.from_user, "first_name") or "you"
             try:
                 await msg.reply_text(
@@ -1703,11 +1798,6 @@ async def handle_message(update, context):
             except Exception:
                 pass
         return
-
-    if len(text) >= 4 and not URL_RE.search(text):
-        if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
-            await safe_delete(msg, "duplicate-text")
-            return
 
     new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms = await process_text(text, chat_id, chat_settings)
     if not changed:
@@ -1767,7 +1857,7 @@ async def handle_message(update, context):
     # page, edit the message to explain why the preview looks broken.
     if sent_msg and first_preview_url and fixed_count == 1:
         asyncio.create_task(
-            _warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, post_text, post_parse_mode)
+            _warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, post_text, preview=preview, reply_markup=markup)
         )
 
 # ── Caption handler ────────────────────────────────────────────────────────────
@@ -1789,9 +1879,9 @@ async def handle_caption(update, context):
     if is_user_muted(chat_id, user_id):
         await safe_delete(msg, "muted-user-caption")
         return
-    if is_forwarded(msg):
+    if chat_settings.get("ignore_forwards", 1) and is_forwarded(msg):
         return
-    if not check_rate(chat_id, user_id, RATE_LIMIT, RATE_WINDOW):
+    if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
 
     new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.caption, chat_id, chat_settings)
@@ -2183,8 +2273,7 @@ async def handle_new_members(update, context):
     if not msg or not msg.new_chat_members:
         return
     try:
-        me = await context.bot.get_me()
-        if any(member.id == me.id for member in msg.new_chat_members):
+        if any(member.id == context.bot.id for member in msg.new_chat_members):
             await msg.reply_text(WELCOME_TEXT, parse_mode="HTML")
     except Exception:
         logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else "?")
@@ -2225,6 +2314,11 @@ _ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
     BotCommand("listmuted", "List all muted users"),
     BotCommand("setsendermode", "Change sender label format"),
     BotCommand("setdedup", "Change dedup window in seconds"),
+    BotCommand("setratelimit", "Set link rate limit: <count> <seconds>"),
+    BotCommand("ignoreforwards", "Ignore forwarded posts: on|off"),
+    BotCommand("fallback", "Provider fallback: on|off"),
+    BotCommand("textspam", "Repeated text deletion: on|off"),
+    BotCommand("resetstats", "Clear this chat's stats"),
     BotCommand("testall", "Test all providers for a platform"),
     BotCommand("export", "Download a JSON backup"),
     BotCommand("import", "Restore from a JSON backup"),

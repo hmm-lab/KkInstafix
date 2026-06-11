@@ -344,3 +344,25 @@ def test_default_settings_keys_match_db():
     s = bot.get_chat_settings(-100_111_222)
     for key in bot.DEFAULT_CHAT_SETTINGS:
         assert key in s, f"default key {key} not in returned settings"
+
+
+def test_default_settings_include_all_toggles():
+    for key in ("rate_limit", "rate_window", "ignore_forwards", "provider_fallback", "text_spam"):
+        assert key in bot.DEFAULT_CHAT_SETTINGS
+
+
+# ── New domains and short links ──────────────────────────────────────────────
+
+def test_threads_com_detected():
+    assert bot.get_platform("threads.com", "/@user/post/x") == "threads"
+    assert bot.get_platform("www.threads.com", "/@user/post/x") == "threads"
+    assert bot.get_platform("threads.net", "/@user/post/x") == "threads"
+
+
+def test_b23_tv_is_short_link():
+    assert "b23.tv" in bot.SHORT_LINK_DOMAINS
+
+
+def test_toggle_commands_registered():
+    for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam", "/resetstats"):
+        assert cmd in bot.ADMIN_CMDS, f"{cmd} missing from ADMIN_CMDS"

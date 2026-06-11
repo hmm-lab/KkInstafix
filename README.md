@@ -82,6 +82,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 - `/ignoreforwards on|off` — ignore forwarded posts or not.
 - `/fallback on|off` — enable or disable provider fallback.
 - `/textspam on|off` — enable or disable repeated text deletion.
+- `/resetstats` — clear this chat's link-fix stats.
 - `/testall <platform>` — test all providers for a platform (runs in parallel).
 - `/testall <platform> <url>` — test all providers with a custom URL.
 - `/export` — download a JSON backup of this chat's settings, providers and mutes.
@@ -117,6 +118,8 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 
 - `vm.tiktok.com/...` and `vt.tiktok.com/...` → expanded to full `tiktok.com/@user/video/ID`
 - `redd.it/...` → expanded to full `reddit.com/r/sub/comments/...`
+- `reddit.com/r/<sub>/s/<id>` → Reddit share links, expanded to the full post URL
+- `b23.tv/...` → expanded to full `bilibili.com/video/...`
 - `instagram.com/share/...` → processed as Instagram content
 
 ## Anti-spam behavior
@@ -135,7 +138,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (37 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (45 tests). Run with `pytest test_bot.py`.
 - `bot_data.sqlite3` — auto-created SQLite database.
 
 ## Data persistence warning
@@ -143,7 +146,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 `bot_data.sqlite3` stores per-chat settings, provider choices, mutes, undo records and stats. On Railway's default filesystem this is **ephemeral** — if the container is rebuilt, the file is lost and all chats fall back to defaults.
 
 To protect against loss:
-1. Attach a Railway persistent volume mounted at the project root, or
+1. Attach a Railway persistent volume (e.g. mounted at `/data`) and set the `DATA_DIR` environment variable to its mount path — the database is then created inside the volume and survives redeploys, or
 2. Use `/export` periodically and save the JSON backup, restoring with `/import` after a wipe.
 
 For a fully managed alternative, port the storage layer to Postgres.
@@ -156,6 +159,7 @@ For a fully managed alternative, port the storage layer to Postgres.
    - `BOT_TOKEN` — required.
    - `WEBHOOK_URL` — recommended. Set to your Railway public URL (e.g. `https://your-app.railway.app`). Enables webhook mode, which is more reliable than polling. Leave unset to use polling instead.
    - `WEBHOOK_SECRET` — optional. If set, the bot verifies that incoming webhook requests include this token, preventing fake updates from anyone who guesses the URL.
+   - `DATA_DIR` — optional. Path of a persistent volume mount (e.g. `/data`) where the SQLite database is stored, so settings and stats survive redeploys.
    - `PORT` — set automatically by Railway; do not override.
 4. Make sure the start command uses lowercase:
    - `python bot.py`
