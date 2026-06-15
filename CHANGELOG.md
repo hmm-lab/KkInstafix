@@ -5,6 +5,14 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-06-15
+
+### Added
+- **Coverage for the remaining handlers** — tests for the caption, edited-message,
+  and channel-post handlers (the edit handler's rate-limit guard was previously
+  untested), plus the important "delete not permitted → reply in place" fallback
+  in `handle_message`. 103 tests total; every update handler now has coverage.
+
 ## [1.15.0] - 2026-06-15
 
 ### Changed

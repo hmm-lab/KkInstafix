@@ -60,9 +60,10 @@ class FakeBot:
 
 class FakeMessage:
     def __init__(self, text=None, user=None, chat=None, reply_to=None,
-                 message_id=1, bot=None, caption=None):
+                 message_id=1, bot=None, caption=None, delete_fails=False):
         self.text = text
         self.caption = caption
+        self.delete_fails = delete_fails
         self.from_user = user
         self.chat = chat or FakeChat()
         self.chat_id = self.chat.id
@@ -84,6 +85,8 @@ class FakeMessage:
         return r
 
     async def delete(self):
+        if self.delete_fails:
+            raise RuntimeError("no delete permission")
         self.deleted = True
         return True
 
@@ -124,10 +127,11 @@ class FakeContext:
 
 
 class FakeUpdate:
-    def __init__(self, message=None, update_id=1, callback_query=None, inline_query=None):
+    def __init__(self, message=None, update_id=1, callback_query=None, inline_query=None,
+                 edited_message=None, channel_post=None):
         self.message = message
-        self.edited_message = None
-        self.channel_post = None
+        self.edited_message = edited_message
+        self.channel_post = channel_post
         self.callback_query = callback_query
         self.inline_query = inline_query
         self.update_id = update_id
@@ -346,3 +350,44 @@ def test_inline_query_no_link_returns_hint():
     run(bot.handle_inline_query(FakeUpdate(inline_query=iq), FakeContext(fb)))
     assert iq.answered and len(iq.answered) == 1
     assert "No supported link" in iq.answered[0].title
+
+
+# ── Caption / edit / channel-post handlers ───────────────────────────────────
+
+def test_handle_caption_fixes_link():
+    fb = FakeBot()
+    msg = FakeMessage(caption="my pic https://twitter.com/u/status/1",
+                      user=FakeUser(5, "Bob"), chat=FakeChat(-1301), bot=fb, message_id=1)
+    run(bot.handle_caption(FakeUpdate(message=msg, update_id=301), FakeContext(fb)))
+    assert msg.replies, "caption handler should reply with the fixed link"
+    assert "vxtwitter.com" in msg.replies[0].text
+
+
+def test_handle_edit_fixes_link():
+    fb = FakeBot()
+    edited = FakeMessage(text="edited https://twitter.com/u/status/1",
+                         user=FakeUser(5, "Bob"), chat=FakeChat(-1302), bot=fb, message_id=1)
+    run(bot.handle_edit(FakeUpdate(edited_message=edited, update_id=302), FakeContext(fb)))
+    assert edited.replies
+    assert "vxtwitter.com" in edited.replies[0].text
+
+
+def test_handle_channel_post_fixes_link():
+    fb = FakeBot()
+    post = FakeMessage(text="https://twitter.com/u/status/1",
+                       user=None, chat=FakeChat(-1303, "channel"), bot=fb, message_id=1)
+    run(bot.handle_channel_post(FakeUpdate(channel_post=post, update_id=303), FakeContext(fb)))
+    assert fb.sent, "channel post should be reposted with the fixed link"
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_handle_message_replies_when_delete_not_permitted():
+    fb = FakeBot()
+    msg = FakeMessage(text="https://twitter.com/u/status/1", user=FakeUser(5, "Bob"),
+                      chat=FakeChat(-1304), bot=fb, message_id=1, delete_fails=True)
+    run(bot.handle_message(FakeUpdate(msg, update_id=304), FakeContext(fb)))
+    # Could not delete → must fall back to replying in-place, not send a new post.
+    assert not msg.deleted
+    assert msg.replies
+    assert "vxtwitter.com" in msg.replies[0].text
+    assert not fb.sent
