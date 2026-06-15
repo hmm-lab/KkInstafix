@@ -48,7 +48,7 @@ def test_get_platform_known():
     assert bot.get_platform("www.instagram.com", "/reel/x") == "instagram"
     assert bot.get_platform("twitter.com", "/x/status/1") == "twitter"
     assert bot.get_platform("x.com", "/x/status/1") == "twitter"
-    assert bot.get_platform("youtube.com", "/shorts/abc") == "youtube_shorts"
+    assert bot.get_platform("youtube.com", "/shorts/abc") == "youtube_watch"
 
 
 def test_get_platform_subdomains():
@@ -427,6 +427,37 @@ def test_check_rate_uses_deque():
     bot._rate_mem.clear()
     bot.check_rate(99901, 99901, 5, 60)
     assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
+
+
+def test_get_platform_youtube_live_and_mobile():
+    assert bot.get_platform("youtube.com", "/live/abcDEF") == "youtube_watch"
+    assert bot.get_platform("m.youtube.com", "/shorts/abc") == "youtube_watch"
+    assert bot.get_platform("m.youtube.com", "/live/abc") == "youtube_watch"
+    # plain watch / profile paths are not rewritten (Telegram previews them fine)
+    assert bot.get_platform("youtube.com", "/watch") is None
+    assert bot.get_platform("youtube.com", "/@channel") is None
+
+
+def test_youtube_path_re_matches_shorts_and_live():
+    assert bot.YOUTUBE_PATH_RE.match("/shorts/abc123").group(1) == "abc123"
+    assert bot.YOUTUBE_PATH_RE.match("/live/xyz_-9").group(1) == "xyz_-9"
+    assert not bot.YOUTUBE_PATH_RE.match("/watch")
+
+
+def test_fix_url_youtube_shorts_and_live_normalize():
+    import asyncio
+    bot.init_db()
+    settings = bot.get_chat_settings(-100_808_001)
+
+    async def fixed(u):
+        return (await bot.fix_url(u, -100_808_001, settings))[0]
+
+    assert asyncio.run(fixed("https://youtube.com/shorts/abc123?si=x")) == \
+        "https://www.youtube.com/watch?v=abc123"
+    assert asyncio.run(fixed("https://youtube.com/live/Lv2?t=120&feature=share")) == \
+        "https://www.youtube.com/watch?v=Lv2&t=120"
+    assert asyncio.run(fixed("https://m.youtube.com/shorts/Mob1?t=30")) == \
+        "https://www.youtube.com/watch?v=Mob1&t=30"
 
 
 def test_strip_youtube_is_share_param():

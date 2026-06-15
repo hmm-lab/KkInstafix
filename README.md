@@ -4,7 +4,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.7.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.8.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -130,6 +130,8 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `instagram.com/share/<id>` → expanded to the real post URL before provider rewriting
 - `t.co/<id>` → Twitter's link wrapper, unwrapped to its target (then fixed or tracking-stripped)
 
+YouTube `/shorts/<id>` and `/live/<id>` URLs (on `youtube.com` and `m.youtube.com`) are normalized to a canonical `youtube.com/watch?v=<id>` link — a `t`/`start` timestamp is kept, share/tracking params are dropped. This is a path rewrite, not a redirect, so it works without network access.
+
 ## Anti-spam behavior
 
 - Same link can be blocked for a configurable dedup window.
@@ -146,7 +148,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (68 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (71 tests). Run with `pytest test_bot.py`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-06-15
+
+### Added
+- **YouTube `/live/` and `m.youtube.com` normalization** — the Shorts converter
+  now also handles `youtube.com/live/<id>` and the mobile `m.youtube.com` host,
+  rewriting both to a canonical `youtube.com/watch?v=<id>` URL. A start-time
+  param (`t` or `start`) is preserved when present, and share/tracking params
+  like `si`/`feature` are dropped.
+
 ## [1.7.0] - 2026-06-15
 
 ### Added

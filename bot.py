@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -235,7 +235,10 @@ YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"
 YOUTUBE_TRACKING = {"si", "is", "feature", "pp"}
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
-SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
+# YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
+# which previews more reliably than the original path form.
+YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]+)", re.IGNORECASE)
+YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com"}
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
@@ -769,8 +772,8 @@ def get_platform(netloc, path):
     host = netloc.lower().removeprefix("www.")
     if host in FIXER_HOSTS:
         return None
-    if host == "youtube.com" and SHORTS_RE.match(path):
-        return "youtube_shorts"
+    if host in YOUTUBE_WATCH_HOSTS and YOUTUBE_PATH_RE.match(path):
+        return "youtube_watch"
     for plat, cfg in PROVIDERS.items():
         for dom in cfg["domains"]:
             if host == dom or host.endswith("." + dom):
@@ -934,10 +937,17 @@ async def fix_url(raw, chat_id, chat_settings):
         return raw, None, None, None
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None, None
-    if platform == "youtube_shorts":
-        m = SHORTS_RE.match(parsed.path)
+    if platform == "youtube_watch":
+        m = YOUTUBE_PATH_RE.match(parsed.path)
         if m:
-            return "https://www.youtube.com/watch?v=" + m.group(1) + tail, None, None, None
+            watch = "https://www.youtube.com/watch?v=" + m.group(1)
+            # Preserve a start-time param (t / start) if the original had one.
+            q = parse_qs(parsed.query)
+            for tkey in ("t", "start"):
+                if q.get(tkey):
+                    watch += f"&{tkey}=" + q[tkey][0]
+                    break
+            return watch + tail, None, None, None
         return raw, None, None, None
     preferred = get_choice(chat_id, platform)
     allow_fallback = bool(chat_settings.get("provider_fallback", 1))
