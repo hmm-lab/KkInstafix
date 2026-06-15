@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-06-15
+
+### Fixed
+- **Substring corruption when rewriting multiple links** — `process_text` built
+  the output with `str.replace(raw, fixed)`, which replaces every occurrence
+  *and substring*. When one URL token was a string prefix of another in the same
+  message (e.g. `.../p?utm_id=1` inside `.../p?utm_id=1&keep=2`), fixing the
+  shorter link corrupted the longer one (the example mangled to `.../p&keep=2`).
+  Rewriting now happens in a single regex pass that matches whole URL tokens
+  exactly, so links can no longer clobber each other.
+
 ## [1.5.0] - 2026-06-15
 
 ### Added

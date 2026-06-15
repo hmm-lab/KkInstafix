@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -972,7 +972,6 @@ def build_fixed_for_key(original_url, platform, key):
 
 async def process_text(text, chat_id, chat_settings):
     urls = URL_RE.findall(text)
-    new_text = text
     changed = False
     fixed_count = 0
     first_fixed_url = None
@@ -980,20 +979,33 @@ async def process_text(text, chat_id, chat_settings):
     first_platform = None
     fixed_platforms = []
     dedup_window = int(chat_settings["dedup_window"])
+    replacements = {}  # exact raw token -> fixed token (only URLs we rewrite)
     for raw in urls:
+        if raw in replacements:
+            continue  # this exact token already resolved
         fixed, platform, original, preview = await fix_url(raw, chat_id, chat_settings)
-        if fixed != raw:
-            if original and seen_recent("fix", chat_id, original, dedup_window):
-                continue
-            new_text = new_text.replace(raw, fixed)
-            changed = True
-            fixed_count += 1
-            if platform:
-                fixed_platforms.append(platform)
-            if not first_fixed_url:
-                first_fixed_url = fixed.split()[0]
-                first_preview_url = preview
-                first_platform = platform
+        if fixed == raw:
+            continue
+        if original and seen_recent("fix", chat_id, original, dedup_window):
+            continue
+        replacements[raw] = fixed
+        changed = True
+        fixed_count += 1
+        if platform:
+            fixed_platforms.append(platform)
+        if not first_fixed_url:
+            first_fixed_url = fixed.split()[0]
+            first_preview_url = preview
+            first_platform = platform
+
+    if changed:
+        # Rewrite each URL token in a single regex pass, matching whole tokens
+        # exactly. str.replace() would also clobber substrings — a short URL that
+        # is a prefix of a longer one (e.g. ".../p?utm_id=1" inside
+        # ".../p?utm_id=1&keep=2") would corrupt the longer link.
+        new_text = URL_RE.sub(lambda m: replacements.get(m.group(0), m.group(0)), text)
+    else:
+        new_text = text
     return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count, fixed_platforms
 
 

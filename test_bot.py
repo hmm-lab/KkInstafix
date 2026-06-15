@@ -429,6 +429,37 @@ def test_check_rate_uses_deque():
     assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
 
 
+def test_process_text_no_substring_corruption():
+    # When one URL token is a prefix of another, a naive str.replace would clobber
+    # the longer link. process_text must rewrite each whole token exactly once.
+    import asyncio
+    bot.init_db()
+    bot._recent_mem.clear()
+    cid = -100_778_001
+    settings = bot.get_chat_settings(cid)
+    raw1 = "https://shop.example.com/p?utm_id=1"
+    raw2 = "https://shop.example.com/p?utm_id=1&keep=12"  # raw1 is a string prefix
+    text = f"x {raw1} y {raw2} z"
+    new_text, changed, *_ = asyncio.run(bot.process_text(text, cid, settings))
+    assert changed
+    assert new_text == "x https://shop.example.com/p y https://shop.example.com/p?keep=12 z"
+    assert "p&keep=12" not in new_text  # the substring-clobber signature
+
+
+def test_process_text_multi_distinct_links():
+    import asyncio
+    bot.init_db()
+    bot._recent_mem.clear()
+    cid = -100_778_002
+    settings = bot.get_chat_settings(cid)
+    text = "a https://example.com/x?utm_source=z b https://other.example/y?fbclid=1 c"
+    new_text, changed, _, _, _, count, _ = asyncio.run(bot.process_text(text, cid, settings))
+    assert changed
+    assert count == 2
+    assert "utm_source" not in new_text and "fbclid" not in new_text
+    assert "a " in new_text and " b " in new_text and " c" in new_text
+
+
 def test_sample_urls_cover_all_platforms():
     # /testall and tools/check_providers.py silently skip any platform missing a
     # sample URL — this guard fails loudly if a new platform forgets one.
