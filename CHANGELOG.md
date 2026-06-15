@@ -5,6 +5,16 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-06-15
+
+### Changed
+- **`/clean` now cleans as thoroughly as a rewrite** — previously it only applied
+  the conservative *generic* strip, so `/clean` on a Twitter link left `?s=20&t=`
+  and on a TikTok link left session junk. A new host-aware `clean_url` helper
+  removes a known platform's share tokens (the global list plus that platform's
+  `PLATFORM_TRACKING`) while keeping the original host, and still falls back to
+  the YouTube-aware, fragment-preserving generic strip for everything else.
+
 ## [1.9.0] - 2026-06-15
 
 ### Fixed

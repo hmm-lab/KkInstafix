@@ -4,7 +4,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.10.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -62,7 +62,7 @@ Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md) for release hist
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
 - `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
-- `/clean` — reply to a message (or pass a URL) to strip tracking params from its links without rewriting them.
+- `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
 - `/version` — show the running bot version.
 - `/about`, `/credits`, `/me` — about / credits message.
 - `/mehrab`, `/mo` — send the custom image.
@@ -149,7 +149,7 @@ YouTube `/shorts/<id>` and `/live/<id>` URLs (on `youtube.com` and `m.youtube.co
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (76 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (79 tests). Run with `pytest test_bot.py`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

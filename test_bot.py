@@ -493,6 +493,26 @@ def test_fix_url_youtube_shorts_and_live_normalize():
         "https://www.youtube.com/watch?v=Mob1&t=30"
 
 
+def test_clean_url_platform_strips_share_tokens_keeps_host():
+    # /clean must clean a platform link as thoroughly as a rewrite, minus the host swap.
+    assert bot.clean_url("https://twitter.com/u/status/1?s=20&t=tok") == \
+        "https://twitter.com/u/status/1"
+    assert bot.clean_url("https://www.instagram.com/p/abc?igshid=1&utm_source=x") == \
+        "https://www.instagram.com/p/abc"
+    assert bot.clean_url("https://www.tiktok.com/@u/video/123?is_from_webapp=1&_t=z") == \
+        "https://www.tiktok.com/@u/video/123"
+
+
+def test_clean_url_generic_keeps_fragment_and_ambiguous_params():
+    assert bot.clean_url("https://docs.example.com/g?utm_id=1#sec") == \
+        "https://docs.example.com/g#sec"
+    assert "s=hello" in bot.clean_url("https://blog.example.com/?s=hello")
+
+
+def test_clean_url_keeps_meaningful_platform_params():
+    assert "context=3" in bot.clean_url("https://www.reddit.com/r/x/comments/1/y?context=3")
+
+
 def test_strip_youtube_is_share_param():
     # Real-world report: youtu.be share link used ?is= (not ?si=).
     assert bot.strip_generic_tracking(

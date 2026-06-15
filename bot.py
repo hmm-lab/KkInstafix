@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.9.0"
+__version__ = "1.10.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -806,6 +806,21 @@ def apply_provider(url, platform, provider_key):
     return strip_tracking(fixed, extra=PLATFORM_TRACKING.get(platform))
 
 
+def clean_url(url):
+    """Strip tracking from a single URL WITHOUT swapping to a fixer host.
+
+    For a known platform this removes the same params a rewrite would (the global
+    TRACKING list plus that platform's share tokens), just keeping the original
+    host. For everything else it applies the conservative generic strip (which is
+    YouTube-aware and preserves fragments). Powers the /clean command.
+    """
+    parsed = urlparse(url)
+    platform = get_platform(parsed.netloc, parsed.path)
+    if platform and platform in PROVIDERS:
+        return strip_tracking(url, extra=PLATFORM_TRACKING.get(platform))
+    return strip_generic_tracking(url)
+
+
 def _check_url_sync(url: str) -> bool:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
@@ -1352,7 +1367,7 @@ async def _cmd_clean(msg, parts, context, chat_id):
     changed_any = False
     for raw in urls:
         url, _tail = trim(raw)
-        stripped = strip_generic_tracking(url)
+        stripped = clean_url(url)
         if stripped != url:
             changed_any = True
         if stripped not in seen:
