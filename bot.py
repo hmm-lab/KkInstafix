@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -227,6 +227,12 @@ GENERIC_TRACKING = {
     # Campaign / analytics identifiers (unambiguous, vendor-documented)
     "ncid", "cmpid", "_branch_referrer", "oly_enc_id", "oly_anon_id",
 }
+
+# YouTube share/analytics params. "si"/"feature" are already global; "is" and
+# "pp" are too generic to strip from arbitrary sites (plenty use ?is=...), so
+# they are only removed when the host is YouTube.
+YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
+YOUTUBE_TRACKING = {"si", "is", "feature", "pp"}
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
@@ -734,14 +740,17 @@ def strip_tracking(url):
 
 def strip_generic_tracking(url):
     """Remove known tracking params from any URL, preserving everything else
-    (path, fragment, and non-tracking query params)."""
+    (path, fragment, and non-tracking query params). On YouTube hosts a few
+    extra share params (e.g. ?si=, ?is=) are also dropped."""
     parsed = urlparse(url)
     if not parsed.query:
         return url
+    host = parsed.netloc.lower().removeprefix("www.")
+    drop = GENERIC_TRACKING | YOUTUBE_TRACKING if host in YOUTUBE_HOSTS else GENERIC_TRACKING
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
-        if k.lower() not in GENERIC_TRACKING
+        if k.lower() not in drop
     }
     return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params,

@@ -429,6 +429,24 @@ def test_check_rate_uses_deque():
     assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
 
 
+def test_strip_youtube_is_share_param():
+    # Real-world report: youtu.be share link used ?is= (not ?si=).
+    assert bot.strip_generic_tracking(
+        "https://youtu.be/pIOGxOaST_s?is=rUR1jaoJ8dqwR-EV"
+    ) == "https://youtu.be/pIOGxOaST_s"
+
+
+def test_strip_youtube_keeps_video_and_timestamp():
+    out = bot.strip_generic_tracking("https://www.youtube.com/watch?v=abc&is=x&t=30")
+    assert "v=abc" in out and "t=30" in out and "is=" not in out
+
+
+def test_youtube_tracking_not_stripped_on_other_sites():
+    # "is"/"pp" are too generic to strip globally — only on YouTube hosts.
+    assert "is=loading" in bot.strip_generic_tracking("https://example.com/p?is=loading")
+    assert "pp=1" in bot.strip_generic_tracking("https://shop.example.com/x?pp=1")
+
+
 def test_process_text_no_substring_corruption():
     # When one URL token is a prefix of another, a naive str.replace would clobber
     # the longer link. process_text must rewrite each whole token exactly once.

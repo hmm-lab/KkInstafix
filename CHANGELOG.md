@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-06-15
+
+### Added
+- **YouTube-scoped share-param stripping** — YouTube share links sometimes carry
+  `?is=<token>` (a variant of the usual `?si=`). `is` and `pp` are too generic to
+  strip from arbitrary sites, so they are now removed only when the host is
+  YouTube (`youtube.com`, `youtu.be`, `m.`/`music.youtube.com`). Essential params
+  like `v` (video id) and `t` (timestamp) are preserved.
+
 ## [1.6.0] - 2026-06-15
 
 ### Fixed
