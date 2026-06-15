@@ -20,6 +20,8 @@ from telegram import (
 from telegram.error import Conflict
 from telegram.ext import Application, MessageHandler, filters
 
+__version__ = "1.1.0"
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -825,6 +827,10 @@ async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id), parse_mode="HTML")
 
 
+async def _cmd_version(msg, parts, context, chat_id):
+    await msg.reply_text(f"KkInstafix <b>v{__version__}</b>", parse_mode="HTML")
+
+
 async def _cmd_clean(msg, parts, context, chat_id):
     source = ""
     if msg.reply_to_message:
@@ -1080,7 +1086,8 @@ HELP_TEXT = (
     "/providers — current providers for each platform\n"
     "/status — current chat settings\n"
     "/clean — strip tracking from a replied link (or /clean &lt;url&gt;)\n"
-    "/about — credits\n\n"
+    "/about — credits\n"
+    "/version — show the bot version\n\n"
     "<b>Admins only</b>\n"
     "/enable · /disable — turn the bot on or off\n"
     "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
@@ -1116,6 +1123,7 @@ PUBLIC_CMDS = {
     "/status": _cmd_status,
     "/config": _cmd_status,
     "/clean": _cmd_clean,
+    "/version": _cmd_version,
 }
 
 ADMIN_CMDS = {

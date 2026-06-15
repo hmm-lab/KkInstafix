@@ -319,6 +319,15 @@ def test_clean_command_registered():
     assert "/clean" in bot.PUBLIC_CMDS
 
 
+def test_version_command_registered():
+    assert "/version" in bot.PUBLIC_CMDS
+
+
+def test_version_string_is_semver():
+    import re
+    assert re.match(r"^\d+\.\d+\.\d+$", bot.__version__), bot.__version__
+
+
 # ── /clean command behavior ──────────────────────────────────────────────────
 
 class _FakeReply:

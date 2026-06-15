@@ -4,6 +4,8 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, and DeviantArt.
 
+Current version: **1.1.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Features
 
 - Rewrites supported links automatically.
@@ -45,6 +47,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 - `/providers` — show current providers and options.
 - `/status` or `/config` — show current chat settings.
 - `/clean` — reply to a message (or pass a URL) to strip tracking params from its links without rewriting them.
+- `/version` — show the running bot version.
 - `/about`, `/credits`, `/me` — about / credits message.
 - `/mehrab`, `/mo`, `/genius` — send the custom image.
 
