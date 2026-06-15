@@ -4,7 +4,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.3.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -13,7 +13,7 @@ Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for release hist
 - Preserves reply chains when reposting fixed links.
 - Multi-link support: messages with more than one link get all links fixed.
 - Supports captioned media posts with links.
-- Short-link expansion: `vm.tiktok.com`, `redd.it`, etc. are followed to the real URL first.
+- Short-link expansion: `vm.tiktok.com`, `redd.it`, `youtu.be`, etc. are followed to the real URL first.
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
 - Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
@@ -126,7 +126,8 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `reddit.com/r/<sub>/s/<id>` → Reddit share links, expanded to the full post URL
 - `tiktok.com/t/<id>` → TikTok share links, expanded to the full video URL
 - `b23.tv/...` → expanded to full `bilibili.com/video/...`
-- `instagram.com/share/...` → processed as Instagram content
+- `youtu.be/VIDEO_ID` → expanded to `youtube.com/watch?v=VIDEO_ID` (tracking stripped)
+- `instagram.com/share/<id>` → expanded to the real post URL before provider rewriting
 
 ## Anti-spam behavior
 
@@ -144,7 +145,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (53 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (57 tests). Run with `pytest test_bot.py`.
 - `bot_data.sqlite3` — auto-created SQLite database.
 
 ## Data persistence warning

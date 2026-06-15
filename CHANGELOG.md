@@ -5,6 +5,38 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-15
+
+### Added
+- **`youtu.be` short-link expansion** — `youtu.be/VIDEO_ID` links now expand to
+  `youtube.com/watch?v=VIDEO_ID` before tracking stripping, producing a clean,
+  canonical URL instead of the short link.
+- **Instagram `/share/` expansion** — `instagram.com/share/<id>` share links are
+  now expanded to the real post URL before provider rewriting, so the fixer
+  provider receives a valid `/p/<id>/` path instead of an untranslated `/share/`
+  path.
+- **`_expand_cache` LRU eviction** — the short-URL expansion cache now evicts the
+  least-recently-used entry when it reaches 2 000 items, instead of silently
+  stopping to cache new entries.
+
+### Fixed
+- **`fix_url` silent expansion drop** — when a short link expanded to a URL that
+  had no additional tracking params to strip (e.g. `youtu.be/abc` with no `?si=`),
+  the expansion was discarded and the original short URL was returned unchanged.
+  Fixed by comparing the cleaned result against the pre-expansion URL.
+
+### Changed
+- **`handle_edit` rate limiting** — edited messages with links are now subject to
+  the same per-user rate limit as regular messages, closing an exploit where
+  repeatedly editing a message could bypass rate limiting.
+- **`seen_recent` hot-path cleanup removed** — the O(n) dedup-cache scan that
+  triggered inline on the 100 001st entry is moved to the hourly `cleanup_db`
+  job, with a 500 000-entry safety cap that clears the cache entirely if the
+  periodic job can't keep up.
+- **`check_rate` O(1) eviction** — rate-limit timestamp windows now use
+  `collections.deque` with `popleft()` instead of `list.pop(0)`, reducing
+  eviction cost from O(n) to O(1).
+
 ## [1.2.0] - 2026-06-15
 
 This release merges the two development lines together: the feature-rich `main`

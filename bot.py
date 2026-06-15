@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -227,8 +227,9 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv"}
-_expand_cache: dict = {}  # short URL -> expanded URL
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "youtu.be"}
+_expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
+_EXPAND_CACHE_MAX = 2000
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
 SEEN_UPDATES: OrderedDict = OrderedDict()
@@ -533,6 +534,10 @@ def cleanup_db():
     cutoff = now - 7200
     for key in [k for k, ts_list in _rate_mem.items() if not ts_list or ts_list[-1] < cutoff]:
         del _rate_mem[key]
+    for key in [k for k, v in _recent_mem.items() if v < cutoff]:
+        del _recent_mem[key]
+    if len(_recent_mem) > 500_000:
+        _recent_mem.clear()
     for key in [k for k, (_, exp) in _admin_cache.items() if exp < now]:
         del _admin_cache[key]
     if len(_user_names) > 50_000:
@@ -677,14 +682,10 @@ def seen_recent(kind, chat_id, event_key, window):
     if ts and now - ts < window:
         return True
     _recent_mem[key] = now
-    if len(_recent_mem) > 100_000:
-        cutoff = now - 7200
-        for k in [k for k, v in _recent_mem.items() if v < cutoff]:
-            del _recent_mem[k]
     return False
 
 
-_rate_mem: dict = {}  # (chat_id, user_id) -> list of timestamps
+_rate_mem: dict = {}  # (chat_id, user_id) -> deque of timestamps
 
 
 def check_rate(chat_id, user_id, limit_count, window):
@@ -692,12 +693,11 @@ def check_rate(chat_id, user_id, limit_count, window):
     key = (chat_id, user_id)
     timestamps = _rate_mem.get(key)
     if timestamps is None:
-        timestamps = []
+        timestamps = deque()
         _rate_mem[key] = timestamps
-    # Evict expired entries
     cutoff = now - window
     while timestamps and timestamps[0] < cutoff:
-        timestamps.pop(0)
+        timestamps.popleft()
     if len(timestamps) >= limit_count:
         return False
     timestamps.append(now)
@@ -833,6 +833,7 @@ async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str
 
 def _expand_short_url_sync(url: str) -> str:
     if url in _expand_cache:
+        _expand_cache.move_to_end(url)
         return _expand_cache[url]
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
@@ -842,8 +843,9 @@ def _expand_short_url_sync(url: str) -> str:
         result = getattr(e, "url", None) or url
     except Exception:
         result = url
-    if len(_expand_cache) < 2000:
-        _expand_cache[url] = result
+    _expand_cache[url] = result
+    if len(_expand_cache) > _EXPAND_CACHE_MAX:
+        _expand_cache.popitem(last=False)
     return result
 
 
@@ -887,26 +889,31 @@ INSTAGRAM_CONTENT_RE = re.compile(
 
 async def fix_url(raw, chat_id, chat_settings):
     url, tail = trim(raw)
+    original_url = url  # pre-expansion URL for dedup and non-platform comparison
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
     # Expand short-link and share-link redirects before platform detection.
-    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, plus path-based
-    # share links — Reddit /r/<sub>/s/<id> and TikTok /t/<id> — that redirect
-    # to the real post.
+    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, plus
+    # path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and
+    # Instagram /share/<id> — that all redirect to the canonical post URL.
     if host in SHORT_LINK_DOMAINS or (
         host == "reddit.com" and re.match(r"^/r/[^/]+/s/", parsed.path, re.IGNORECASE)
     ) or (
         host == "tiktok.com" and re.match(r"^/t/", parsed.path, re.IGNORECASE)
+    ) or (
+        host == "instagram.com" and re.match(r"^/share/", parsed.path, re.IGNORECASE)
     ):
         url = await expand_short_url(url)
         parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
         # Not a rewritable platform, but still strip tracking junk
-        # (e.g. YouTube ?si=, generic utm_*/fbclid params).
+        # (e.g. YouTube ?si=, generic utm_*/fbclid params). Also catches youtu.be
+        # expansion: the expanded URL differs from original_url even if no
+        # additional params need stripping.
         cleaned = strip_generic_tracking(url)
-        if cleaned != url:
-            return cleaned + tail, None, url, cleaned
+        if cleaned != original_url:
+            return cleaned + tail, None, cleaned, cleaned
         return raw, None, None, None
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None, None
@@ -1919,6 +1926,8 @@ async def handle_edit(update, context):
     if not chat_settings["enabled"]:
         return
     if is_user_muted(chat_id, user_id):
+        return
+    if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
     if not URL_RE.search(msg.text):
         return

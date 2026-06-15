@@ -409,3 +409,40 @@ def test_tiktok_t_share_is_short_path():
     # main expands vm/vt.tiktok.com via SHORT_LINK_DOMAINS; /t/ is path-based.
     import re
     assert re.match(r"^/t/", "/t/ZSabc/", re.IGNORECASE)
+
+
+def test_youtu_be_in_short_link_domains():
+    assert "youtu.be" in bot.SHORT_LINK_DOMAINS
+
+
+def test_instagram_share_path_triggers_expansion():
+    import re
+    assert re.match(r"^/share/", "/share/AbCdEf123/", re.IGNORECASE)
+    assert not re.match(r"^/share/", "/p/AbCdEf123/", re.IGNORECASE)
+    assert not re.match(r"^/share/", "/reel/AbCdEf123/", re.IGNORECASE)
+
+
+def test_check_rate_uses_deque():
+    from collections import deque
+    bot._rate_mem.clear()
+    bot.check_rate(99901, 99901, 5, 60)
+    assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
+
+
+def test_expand_cache_lru_evicts_oldest():
+    from collections import OrderedDict
+    bot._expand_cache.clear()
+    original_max = bot._EXPAND_CACHE_MAX
+    try:
+        bot._EXPAND_CACHE_MAX = 3
+        for i in range(4):
+            url = f"https://youtu.be/vid{i}"
+            bot._expand_cache[url] = f"https://www.youtube.com/watch?v=vid{i}"
+            if len(bot._expand_cache) > bot._EXPAND_CACHE_MAX:
+                bot._expand_cache.popitem(last=False)
+        assert "https://youtu.be/vid0" not in bot._expand_cache
+        assert "https://youtu.be/vid3" in bot._expand_cache
+        assert len(bot._expand_cache) == 3
+    finally:
+        bot._EXPAND_CACHE_MAX = original_max
+        bot._expand_cache.clear()
