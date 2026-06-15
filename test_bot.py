@@ -84,6 +84,39 @@ def test_apply_provider_strips_tracking():
     assert "utm_source" not in out
 
 
+def test_apply_provider_strips_twitter_share_token():
+    # ?s=20&t=<token> is Twitter's share tracking; both must be gone after rewrite.
+    out = bot.apply_provider("https://twitter.com/u/status/1?s=20&t=AbCdToken", "twitter", "vx")
+    assert out == "https://vxtwitter.com/u/status/1"
+
+
+def test_apply_provider_strips_tiktok_session_junk():
+    out = bot.apply_provider(
+        "https://www.tiktok.com/@u/video/123?is_from_webapp=1&sender_device=pc&_t=xyz",
+        "tiktok", "tnk",
+    )
+    assert out == "https://tnktok.com/@u/video/123"
+
+
+def test_apply_provider_keeps_meaningful_query():
+    # Non-tracking params on other platforms must survive (e.g. Reddit context).
+    out = bot.apply_provider("https://www.reddit.com/r/x/comments/1/y?context=3", "reddit", "vx")
+    assert "context=3" in out
+
+
+def test_platform_tracking_keys_are_lowercase():
+    for platform, keys in bot.PLATFORM_TRACKING.items():
+        assert platform in bot.PROVIDERS, f"{platform} not a real platform"
+        for k in keys:
+            assert k == k.lower()
+
+
+def test_cycle_button_url_also_strips_platform_tracking():
+    # build_fixed_for_key powers the 🔁 button; it must clean share tokens too.
+    link, preview = bot.build_fixed_for_key("https://twitter.com/u/status/1?t=tok", "twitter", "fx")
+    assert "t=tok" not in link and "t=tok" not in preview
+
+
 # ── INSTAGRAM_CONTENT_RE ──────────────────────────────────────────────────────
 
 def test_instagram_content_re():

@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -210,6 +210,23 @@ TRACKING = [
     "igsh", "igshid", "utm_source", "utm_medium", "utm_campaign",
     "utm_content", "utm_term", "utm_id", "fbclid", "ref", "hl", "s", "si",
 ]
+_TRACKING_SET = {t.lower() for t in TRACKING}
+
+# Extra tracking params stripped only for a specific platform when rewriting.
+# These keys are unambiguous tracking on their platform but are meaningful
+# elsewhere (e.g. "t" is a YouTube timestamp), so they must not go in the global
+# TRACKING list. The embed providers need only the path, so dropping these is
+# always safe for a rewritten link.
+PLATFORM_TRACKING = {
+    # Twitter/X share tokens: ?s=20&t=<token>, plus cxt context blobs.
+    "twitter": {"t", "cxt"},
+    # TikTok app/web session and referrer junk.
+    "tiktok": {
+        "is_from_webapp", "sender_device", "sender_web_id", "web_id",
+        "_t", "_r", "_d", "share_app_id", "share_link_id", "u_code",
+        "preview_pb", "refer", "referer_url", "referer_video_id",
+    },
+}
 
 # Tracking params safe to strip from ANY link (e.g. YouTube), unlike TRACKING
 # this deliberately excludes ambiguous keys like "s"/"ref" that legitimate
@@ -729,12 +746,13 @@ def is_duplicate_update(update_id):
     return False
 
 
-def strip_tracking(url):
+def strip_tracking(url, extra=None):
+    drop = _TRACKING_SET if not extra else _TRACKING_SET | extra
     parsed = urlparse(url)
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
-        if k.lower() not in TRACKING
+        if k.lower() not in drop
     }
     return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(kept, doseq=True), "")
@@ -785,7 +803,7 @@ def apply_provider(url, platform, provider_key):
     host = PROVIDERS[platform]["options"][provider_key]
     parsed = urlparse(url)
     fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, ""))
-    return strip_tracking(fixed)
+    return strip_tracking(fixed, extra=PLATFORM_TRACKING.get(platform))
 
 
 def _check_url_sync(url: str) -> bool:

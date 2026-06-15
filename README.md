@@ -4,7 +4,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.8.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -15,6 +15,7 @@ Current version: **1.8.0** — see [CHANGELOG.md](CHANGELOG.md) for release hist
 - Supports captioned media posts with links.
 - Short-link expansion: `vm.tiktok.com`, `redd.it`, `youtu.be`, etc. are followed to the real URL first.
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone.
+- Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
 - Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
 - Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
@@ -148,7 +149,7 @@ YouTube `/shorts/<id>` and `/live/<id>` URLs (on `youtube.com` and `m.youtube.co
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (71 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (76 tests). Run with `pytest test_bot.py`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

@@ -5,6 +5,19 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-06-15
+
+### Fixed
+- **Tracking-token leak on rewritten Twitter/X and TikTok links** — rewriting a
+  tweet kept Twitter's `?t=<token>` share token (only `s` was stripped), and
+  rewritten TikTok links kept `is_from_webapp`, `sender_device`, `_t` and other
+  session junk. These keys are unambiguous tracking on their platform but
+  meaningful elsewhere (`t` is a YouTube timestamp), so they're stripped via a
+  new per-platform `PLATFORM_TRACKING` map applied during rewriting rather than
+  the global list. The 🔁 provider-cycle button benefits too, since it shares the
+  same `apply_provider` path. Non-tracking query params on other platforms (e.g.
+  Reddit `?context=3`) are preserved.
+
 ## [1.8.0] - 2026-06-15
 
 ### Added
