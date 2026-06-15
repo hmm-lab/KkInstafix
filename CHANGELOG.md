@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-06-15
+
+### Added
+- **Callback-handler test coverage** — `test_handlers.py` now also covers the 🔁
+  cycle-provider button (the historically most fragile feature): editing to the
+  next provider from a plain-URL message and from a `text_link` entity (label
+  preserved), the unknown-platform alert path, the `test` callback, and the
+  admin-only gate on `/menu` callbacks. 96 tests total.
+
 ## [1.13.0] - 2026-06-15
 
 ### Added
