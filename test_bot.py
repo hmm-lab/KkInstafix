@@ -34,6 +34,48 @@ def test_strip_tracking_preserves_path():
     assert "/p/abc" in bot.strip_tracking("https://instagram.com/p/abc?igshid=1")
 
 
+# ── strip_generic_tracking ────────────────────────────────────────────────────
+
+def test_strip_generic_tracking_removes_youtube_si():
+    out = bot.strip_generic_tracking("https://youtu.be/dQw4w9WgXcQ?si=AbCdEf123")
+    assert out == "https://youtu.be/dQw4w9WgXcQ"
+
+
+def test_strip_generic_tracking_keeps_real_params():
+    out = bot.strip_generic_tracking(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42&si=track"
+    )
+    assert "v=dQw4w9WgXcQ" in out
+    assert "t=42" in out
+    assert "si=" not in out
+
+
+def test_strip_generic_tracking_removes_utm_and_fbclid():
+    out = bot.strip_generic_tracking(
+        "https://example.com/article?id=5&utm_source=news&fbclid=xyz"
+    )
+    assert "id=5" in out
+    assert "utm_source" not in out
+    assert "fbclid" not in out
+
+
+def test_strip_generic_tracking_keeps_ambiguous_search_param():
+    # "s" is a tracking key in TRACKING (Twitter), but legit sites use it for
+    # search, so the generic stripper must leave it alone.
+    out = bot.strip_generic_tracking("https://blog.example.com/?s=hello+world")
+    assert "s=hello" in out
+
+
+def test_strip_generic_tracking_preserves_fragment():
+    out = bot.strip_generic_tracking("https://example.com/page?utm_id=1#section")
+    assert out.endswith("#section")
+
+
+def test_strip_generic_tracking_noop_without_query():
+    url = "https://example.com/clean/path"
+    assert bot.strip_generic_tracking(url) == url
+
+
 # ── trim ──────────────────────────────────────────────────────────────────────
 
 def test_trim_strips_trailing_punctuation():

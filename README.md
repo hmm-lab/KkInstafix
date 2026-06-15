@@ -7,6 +7,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 ## Features
 
 - Rewrites supported links automatically.
+- Strips tracking parameters from links, including non-rewritten ones like YouTube (`?si=`), `utm_*`, `fbclid`, and other click identifiers.
 - Keeps Telegram link previews enabled with large media previews when possible.
 - Preserves reply chains when reposting fixed links.
 - Supports captioned media posts with links.

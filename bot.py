@@ -171,6 +171,17 @@ TRACKING = [
     "utm_content", "utm_term", "utm_id", "fbclid", "ref", "hl", "s", "si",
 ]
 
+# Tracking params safe to strip from ANY link (e.g. YouTube), unlike TRACKING
+# this deliberately excludes ambiguous keys like "s"/"ref" that legitimate
+# sites use for search and routing.
+GENERIC_TRACKING = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+    "utm_id", "utm_name", "utm_reader", "utm_social", "utm_brand",
+    "fbclid", "gclid", "dclid", "msclkid", "yclid", "twclid", "ttclid",
+    "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_id", "wickedid",
+    "igsh", "igshid", "si", "feature",
+}
+
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
@@ -494,6 +505,23 @@ def strip_tracking(url):
     )
 
 
+def strip_generic_tracking(url):
+    """Remove known tracking params from any URL, preserving everything else
+    (path, fragment, and non-tracking query params)."""
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    kept = {
+        k: v
+        for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
+        if k.lower() not in GENERIC_TRACKING
+    }
+    return urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params,
+         urlencode(kept, doseq=True), parsed.fragment)
+    )
+
+
 def trim(raw):
     url, tail = raw, ""
     while url and url[-1] in TAIL:
@@ -570,6 +598,11 @@ async def fix_url(raw, chat_id, chat_settings):
     parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
+        # Not a rewritable platform, but still strip tracking junk
+        # (e.g. YouTube ?si=, generic utm_*/fbclid params).
+        cleaned = strip_generic_tracking(url)
+        if cleaned != url:
+            return cleaned + tail, None, url
         return raw, None, None
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None
