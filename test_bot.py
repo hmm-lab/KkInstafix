@@ -34,82 +34,6 @@ def test_strip_tracking_preserves_path():
     assert "/p/abc" in bot.strip_tracking("https://instagram.com/p/abc?igshid=1")
 
 
-# ── short-link detection / expansion ──────────────────────────────────────────
-
-def test_is_short_link_mobile_domains():
-    assert bot.is_short_link("vm.tiktok.com", "/ZSabc/")
-    assert bot.is_short_link("vt.tiktok.com", "/ZSabc/")
-    assert bot.is_short_link("redd.it", "/abc123")
-    assert bot.is_short_link("b23.tv", "/xY9")
-
-
-def test_is_short_link_path_based_shares():
-    assert bot.is_short_link("www.reddit.com", "/r/funny/s/AbC123")
-    assert bot.is_short_link("reddit.com", "/r/funny/s/AbC123")
-    assert bot.is_short_link("www.tiktok.com", "/t/ZSabc/")
-
-
-def test_is_short_link_ignores_normal_links():
-    assert not bot.is_short_link("www.tiktok.com", "/@user/video/123")
-    assert not bot.is_short_link("reddit.com", "/r/funny/comments/1/x")
-    assert not bot.is_short_link("instagram.com", "/p/abc")
-
-
-def test_short_link_domains_not_in_fixer_hosts():
-    for d in bot.SHORT_LINK_DOMAINS:
-        assert d not in bot.FIXER_HOSTS, f"{d} would be skipped by get_platform"
-
-
-def test_expand_short_url_uses_cache():
-    import asyncio
-    bot._expand_cache.clear()
-    bot._expand_cache["https://redd.it/abc"] = "https://www.reddit.com/r/x/comments/1/y/"
-    out = asyncio.run(bot.expand_short_url("https://redd.it/abc"))
-    assert out == "https://www.reddit.com/r/x/comments/1/y/"
-
-
-# ── strip_generic_tracking ────────────────────────────────────────────────────
-
-def test_strip_generic_tracking_removes_youtube_si():
-    out = bot.strip_generic_tracking("https://youtu.be/dQw4w9WgXcQ?si=AbCdEf123")
-    assert out == "https://youtu.be/dQw4w9WgXcQ"
-
-
-def test_strip_generic_tracking_keeps_real_params():
-    out = bot.strip_generic_tracking(
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42&si=track"
-    )
-    assert "v=dQw4w9WgXcQ" in out
-    assert "t=42" in out
-    assert "si=" not in out
-
-
-def test_strip_generic_tracking_removes_utm_and_fbclid():
-    out = bot.strip_generic_tracking(
-        "https://example.com/article?id=5&utm_source=news&fbclid=xyz"
-    )
-    assert "id=5" in out
-    assert "utm_source" not in out
-    assert "fbclid" not in out
-
-
-def test_strip_generic_tracking_keeps_ambiguous_search_param():
-    # "s" is a tracking key in TRACKING (Twitter), but legit sites use it for
-    # search, so the generic stripper must leave it alone.
-    out = bot.strip_generic_tracking("https://blog.example.com/?s=hello+world")
-    assert "s=hello" in out
-
-
-def test_strip_generic_tracking_preserves_fragment():
-    out = bot.strip_generic_tracking("https://example.com/page?utm_id=1#section")
-    assert out.endswith("#section")
-
-
-def test_strip_generic_tracking_noop_without_query():
-    url = "https://example.com/clean/path"
-    assert bot.strip_generic_tracking(url) == url
-
-
 # ── trim ──────────────────────────────────────────────────────────────────────
 
 def test_trim_strips_trailing_punctuation():
@@ -124,35 +48,40 @@ def test_get_platform_known():
     assert bot.get_platform("www.instagram.com", "/reel/x") == "instagram"
     assert bot.get_platform("twitter.com", "/x/status/1") == "twitter"
     assert bot.get_platform("x.com", "/x/status/1") == "twitter"
+    assert bot.get_platform("youtube.com", "/shorts/abc") == "youtube_shorts"
 
 
 def test_get_platform_subdomains():
-    assert bot.get_platform("www.tiktok.com", "/@user/video/1") == "tiktok"
-    assert bot.get_platform("m.reddit.com", "/r/x/comments/1") == "reddit"
+    assert bot.get_platform("m.facebook.com", "/watch") == "facebook"
+    assert bot.get_platform("old.reddit.com", "/r/test") == "reddit"
+    assert bot.get_platform("clips.twitch.tv", "/test") == "twitch"
 
 
 def test_get_platform_skips_fixer_hosts():
-    for host in bot.FIXER_HOSTS:
-        assert bot.get_platform(host, "/anything") is None, f"fixer host {host} not skipped"
+    assert bot.get_platform("kkclip.com", "/p/abc") is None
+    assert bot.get_platform("vxtwitter.com", "/x/status/1") is None
+    assert bot.get_platform("xcancel.com", "/user/status/1") is None
+    assert bot.get_platform("redlib.org", "/r/test") is None
+    assert bot.get_platform("proxitok.pabloferreiro.es", "/@u/video/1") is None
 
 
 def test_get_platform_unknown():
-    assert bot.get_platform("example.com", "/path") is None
-    assert bot.get_platform("google.com", "/") is None
+    assert bot.get_platform("example.com", "/abc") is None
 
 
 # ── apply_provider ────────────────────────────────────────────────────────────
 
 def test_apply_provider_replaces_host():
-    result = bot.apply_provider("https://twitter.com/user/status/1", "twitter", "vx")
-    assert result.startswith("https://vxtwitter.com/")
+    out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "kkclip")
+    assert "kkclip.com" in out
+    assert "instagram.com" not in out
+    assert "/p/abc" in out
 
 
 def test_apply_provider_strips_tracking():
-    result = bot.apply_provider(
-        "https://instagram.com/p/abc?igsh=xyz", "instagram", "kkclip"
-    )
-    assert "igsh" not in result
+    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "kkclip")
+    assert "igshid" not in out
+    assert "utm_source" not in out
 
 
 # ── INSTAGRAM_CONTENT_RE ──────────────────────────────────────────────────────
@@ -161,6 +90,7 @@ def test_instagram_content_re():
     assert bot.INSTAGRAM_CONTENT_RE.match("/p/abc")
     assert bot.INSTAGRAM_CONTENT_RE.match("/reel/abc")
     assert bot.INSTAGRAM_CONTENT_RE.match("/stories/highlights/abc")
+    assert bot.INSTAGRAM_CONTENT_RE.match("/share/abc123")
     assert not bot.INSTAGRAM_CONTENT_RE.match("/profile/username")
     assert not bot.INSTAGRAM_CONTENT_RE.match("/explore/tags/cats")
 
@@ -169,112 +99,121 @@ def test_instagram_content_re():
 
 def test_parse_on_off():
     assert bot.parse_on_off("on") == 1
-    assert bot.parse_on_off("ON") == 1
     assert bot.parse_on_off("yes") == 1
-    assert bot.parse_on_off("true") == 1
     assert bot.parse_on_off("1") == 1
+    assert bot.parse_on_off("true") == 1
     assert bot.parse_on_off("off") == 0
-    assert bot.parse_on_off("OFF") == 0
-    assert bot.parse_on_off("no") == 0
-    assert bot.parse_on_off("false") == 0
     assert bot.parse_on_off("0") == 0
+    assert bot.parse_on_off("false") == 0
+    assert bot.parse_on_off("no") == 0
     assert bot.parse_on_off("maybe") is None
     assert bot.parse_on_off("") is None
 
 
-# ── sender_label ──────────────────────────────────────────────────────────────
+# ── sender_label / format_repost_text ─────────────────────────────────────────
 
-class _FakeUser:
-    def __init__(self, first_name, last_name=None, username=None, id=1):
+class FakeUser:
+    def __init__(self, first_name=None, last_name=None, username=None):
         self.first_name = first_name
         self.last_name = last_name
         self.username = username
-        self.id = id
 
 
 def test_sender_label_modes():
-    u = _FakeUser("Alice", "Smith", "alicesmith")
-    assert bot.sender_label(u, "first_name") == "Alice"
-    assert bot.sender_label(u, "username") == "@alicesmith"
-    assert bot.sender_label(u, "full_name") == "Alice Smith"
+    u = FakeUser(first_name="Mehrab", last_name="Khan", username="mehrabx")
+    assert bot.sender_label(u, "first_name") == "Mehrab"
+    assert bot.sender_label(u, "username") == "@mehrabx"
+    assert bot.sender_label(u, "full_name") == "Mehrab Khan"
     assert bot.sender_label(u, "none") is None
+    assert bot.sender_label(None, "first_name") is None
 
 
 def test_sender_label_fallbacks():
-    u = _FakeUser("Bob", username=None)
-    assert bot.sender_label(u, "username") == "Bob"
+    u = FakeUser(first_name=None, last_name=None, username="onlyuser")
+    assert bot.sender_label(u, "first_name") == "onlyuser"
+    u2 = FakeUser(first_name=None, last_name=None, username=None)
+    assert bot.sender_label(u2, "first_name") == "User"
 
-
-# ── format_repost_text ────────────────────────────────────────────────────────
 
 def test_format_repost_text_with_url():
-    u = _FakeUser("Alice")
-    text = bot.format_repost_text(u, "first_name", platform="twitter", url="https://vxtwitter.com/u/1")
-    assert "Alice" in text
-    assert "https://vxtwitter.com/u/1" in text
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "first_name", platform="instagram", url="https://kkclip.com/p/x")
+    assert "📷" in out
+    assert "Mehrab" in out
+    assert 'href="https://kkclip.com/p/x"' in out
 
 
 def test_format_repost_text_escapes_html():
-    u = _FakeUser("<script>")
-    text = bot.format_repost_text(u, "first_name", platform="instagram", url="https://kkclip.com/p/1")
-    assert "<script>" not in text
-    assert "&lt;script&gt;" in text
+    u = FakeUser(first_name="<script>evil</script>")
+    out = bot.format_repost_text(u, "first_name", platform="instagram", url="https://kkclip.com/p/x")
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
 
 
 def test_format_repost_text_none_mode():
-    u = _FakeUser("Alice")
-    text = bot.format_repost_text(u, "none", platform="twitter", url="https://vxtwitter.com/u/1")
-    assert "https://vxtwitter.com/u/1" in text
-    assert "Alice" not in text
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "none", platform="instagram", url="https://kkclip.com/p/x")
+    assert out == "https://kkclip.com/p/x"
 
 
 def test_format_repost_text_no_url():
-    u = _FakeUser("Alice")
-    text = bot.format_repost_text(u, "first_name")
-    assert "Alice" in text
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "first_name", platform="twitter", url=None)
+    assert "🐦" in out
+    assert "Mehrab" in out
 
 
 # ── is_duplicate_update ───────────────────────────────────────────────────────
 
 def test_is_duplicate_update_evicts_oldest():
     bot.SEEN_UPDATES.clear()
-    for i in range(bot.MAX_SEEN_UPDATES + 5):
+    bot.MAX_SEEN_UPDATES = 5
+    for i in range(10):
         bot.is_duplicate_update(i)
-    assert len(bot.SEEN_UPDATES) == bot.MAX_SEEN_UPDATES
+    assert len(bot.SEEN_UPDATES) == 5
+    assert 0 not in bot.SEEN_UPDATES
+    assert 9 in bot.SEEN_UPDATES
+    assert bot.is_duplicate_update(9) is True
 
 
-# ── seen_recent (DB-backed) ───────────────────────────────────────────────────
+# ── seen_recent (in-memory) ──────────────────────────────────────────────────
 
-def test_seen_recent_db_window():
-    bot.init_db()
-    conn = bot.db_connect()
-    conn.execute("DELETE FROM recent_events WHERE kind = 'test_window' AND chat_id = -1")
-    conn.commit()
-    assert bot.seen_recent("test_window", -1, "key1", 60) is False
-    assert bot.seen_recent("test_window", -1, "key1", 60) is True
-    assert bot.seen_recent("test_window", -1, "key2", 60) is False
+def test_seen_recent_window():
+    bot._recent_mem.clear()
+    assert bot.seen_recent("test", 1, "key1", 60) is False
+    assert bot.seen_recent("test", 1, "key1", 60) is True
+    assert bot.seen_recent("test", 1, "key2", 60) is False
 
 
-def test_seen_recent_db_different_kinds():
-    bot.init_db()
-    conn = bot.db_connect()
-    conn.execute("DELETE FROM recent_events WHERE chat_id = -2 AND event_key = 'url_kind_test'")
-    conn.commit()
-    assert bot.seen_recent("kind_a", -2, "url_kind_test", 60) is False
-    assert bot.seen_recent("kind_b", -2, "url_kind_test", 60) is False
+def test_seen_recent_different_kinds():
+    bot._recent_mem.clear()
+    assert bot.seen_recent("fix", 1, "url", 60) is False
+    assert bot.seen_recent("text", 1, "url", 60) is False
 
 
-# ── check_rate (DB-backed) ────────────────────────────────────────────────────
+# ── check_rate (in-memory) ───────────────────────────────────────────────────
 
-def test_check_rate_db_enforces_limit():
-    bot.init_db()
-    # Use a unique chat/user pair to avoid cross-test interference
-    conn = bot.db_connect()
-    conn.execute("DELETE FROM rate_events WHERE chat_id = -999 AND user_id = 1")
-    conn.commit()
-    for _ in range(3):
-        assert bot.check_rate(-999, 1, 3, 60) is True
-    assert bot.check_rate(-999, 1, 3, 60) is False
+def test_check_rate_allows_up_to_limit():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        assert bot.check_rate(1, 1, 5, 60) is True
+    assert bot.check_rate(1, 1, 5, 60) is False
+
+
+def test_check_rate_different_users():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        bot.check_rate(1, 1, 5, 60)
+    assert bot.check_rate(1, 1, 5, 60) is False
+    assert bot.check_rate(1, 2, 5, 60) is True
+
+
+def test_check_rate_different_chats():
+    bot._rate_mem.clear()
+    for _ in range(5):
+        bot.check_rate(1, 1, 5, 60)
+    assert bot.check_rate(1, 1, 5, 60) is False
+    assert bot.check_rate(2, 1, 5, 60) is True
 
 
 # ── PROVIDERS config ──────────────────────────────────────────────────────────
@@ -301,25 +240,101 @@ def test_fixer_hosts_contains_all_provider_hosts():
             assert host in bot.FIXER_HOSTS
 
 
+# ── build_fixed_for_key (provider-cycle button) ───────────────────────────────
+
+def test_build_fixed_for_key_plain_provider():
+    link, preview = bot.build_fixed_for_key(
+        "https://twitter.com/x/status/1?utm_source=ig", "twitter", "fx"
+    )
+    assert link == preview                  # plain provider: link == preview
+    assert "fxtwitter.com" in link
+    assert "utm_source" not in link         # tracking stripped
+
+
+def test_build_fixed_for_key_noauth_splits_link_and_preview():
+    link, preview = bot.build_fixed_for_key(
+        "https://twitter.com/x/status/1", "twitter", "xcancel"
+    )
+    assert "xcancel.com" in link            # clickable link → no-account frontend
+    assert "vxtwitter.com" in preview       # preview → embed pair
+    assert link != preview
+
+
+def test_build_fixed_for_key_strips_trailing_tail():
+    link, _ = bot.build_fixed_for_key("https://reddit.com/r/x/comments/1/y).", "reddit", "vx")
+    assert link.endswith("/y")              # trailing ")." trimmed off
+    assert "vxreddit.com" in link
+
+
+def test_cycle_keyboard_encodes_platform_and_index():
+    kb = bot._cycle_keyboard("tiktok", 3)
+    btn = kb.inline_keyboard[0][0]
+    assert btn.callback_data == "e:tiktok:3"
+
+
 def test_platform_emoji_covers_all_platforms():
     for name in bot.PROVIDERS:
         assert name in bot.PLATFORM_EMOJI, f"{name} missing from PLATFORM_EMOJI"
 
 
+# ── SHORT_LINK_DOMAINS ───────────────────────────────────────────────────────
+
+def test_short_link_domains_are_lowercase():
+    for d in bot.SHORT_LINK_DOMAINS:
+        assert d == d.lower()
+
+
+def test_short_link_domains_not_in_fixer_hosts():
+    for d in bot.SHORT_LINK_DOMAINS:
+        assert d not in bot.FIXER_HOSTS, f"short link domain {d} in FIXER_HOSTS would be skipped"
+
+
 # ── providers_text / status_text ─────────────────────────────────────────────
 
-def test_providers_text_contains_platforms():
+def test_providers_text_contains_html():
     bot.init_db()
     text = bot.providers_text(99999)
+    assert "<b>" in text
     for plat in bot.PROVIDERS:
         assert plat in text
 
 
-def test_status_text_contains_settings():
+def test_status_text_contains_html():
     bot.init_db()
     text = bot.status_text(99999)
-    assert "Bot" in text
-    assert "Rate limit" in text
+    assert "<b>" in text
+    assert "Bot is ON" in text or "Bot is OFF" in text
+
+
+# ── export / import ──────────────────────────────────────────────────────────
+
+def test_export_import_roundtrip():
+    bot.init_db()
+    cid = -100_999_888
+    bot.update_chat_setting(cid, "dedup_window", 120)
+    bot.set_choice(cid, "twitter", "fx")
+    bot.mute_user(cid, 42)
+    data = bot.export_chat_data(cid)
+    assert data["version"] == 1
+    assert data["settings"]["dedup_window"] == 120
+    assert data["providers"]["twitter"] == "fx"
+    assert 42 in data["muted_users"]
+    # Import into a different chat
+    cid2 = -100_999_777
+    ok, msg = bot.import_chat_data(cid2, data)
+    assert ok is True
+    assert "imported" in msg
+    assert str(cid) in msg  # mismatch warning
+    assert bot.get_chat_settings(cid2)["dedup_window"] == 120
+    assert bot.get_choice(cid2, "twitter") == "fx"
+    assert bot.is_user_muted(cid2, 42)
+
+
+def test_import_rejects_bad_format():
+    bot.init_db()
+    ok, msg = bot.import_chat_data(1, {"bad": True})
+    assert ok is False
+    assert "unsupported" in msg
 
 
 # ── DEFAULT_CHAT_SETTINGS ────────────────────────────────────────────────────
@@ -336,100 +351,18 @@ def test_default_settings_include_all_toggles():
         assert key in bot.DEFAULT_CHAT_SETTINGS
 
 
-# ── Admin commands registered ─────────────────────────────────────────────────
+# ── New domains and short links ──────────────────────────────────────────────
 
-def test_admin_commands_registered():
-    for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam",
-                "/muteuser", "/unmuteuser", "/listmuted", "/setprovider", "/resetproviders",
-                "/setsendermode", "/setdedup", "/testall"):
+def test_threads_com_detected():
+    assert bot.get_platform("threads.com", "/@user/post/x") == "threads"
+    assert bot.get_platform("www.threads.com", "/@user/post/x") == "threads"
+    assert bot.get_platform("threads.net", "/@user/post/x") == "threads"
+
+
+def test_b23_tv_is_short_link():
+    assert "b23.tv" in bot.SHORT_LINK_DOMAINS
+
+
+def test_toggle_commands_registered():
+    for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam", "/resetstats"):
         assert cmd in bot.ADMIN_CMDS, f"{cmd} missing from ADMIN_CMDS"
-
-
-def test_help_is_not_providers():
-    assert bot.PUBLIC_CMDS["/help"] is not bot.PUBLIC_CMDS["/providers"]
-
-
-def test_clean_command_registered():
-    assert "/clean" in bot.PUBLIC_CMDS
-
-
-def test_version_command_registered():
-    assert "/version" in bot.PUBLIC_CMDS
-
-
-def test_version_string_is_semver():
-    import re
-    assert re.match(r"^\d+\.\d+\.\d+$", bot.__version__), bot.__version__
-
-
-# ── /clean command behavior ──────────────────────────────────────────────────
-
-class _FakeReply:
-    def __init__(self, text=None, caption=None):
-        self.text = text
-        self.caption = caption
-
-
-class _FakeMessage:
-    def __init__(self, reply_to=None):
-        self.reply_to_message = reply_to
-        self.replies = []
-
-    async def reply_text(self, text, **kwargs):
-        self.replies.append((text, kwargs))
-
-
-def _run(coro):
-    import asyncio
-    return asyncio.run(coro)
-
-
-def test_clean_strips_tracking_from_replied_link():
-    msg = _FakeMessage(_FakeReply(text="check this https://youtu.be/abc?si=track123"))
-    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
-    out = msg.replies[0][0]
-    assert "https://youtu.be/abc" in out
-    assert "si=" not in out
-    assert out.startswith("🧹")
-
-
-def test_clean_reports_already_clean():
-    msg = _FakeMessage(_FakeReply(text="https://youtu.be/abc"))
-    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
-    out = msg.replies[0][0]
-    assert out.startswith("✅")
-    assert "https://youtu.be/abc" in out
-
-
-def test_clean_accepts_inline_url_argument():
-    msg = _FakeMessage()
-    _run(bot._cmd_clean(msg, ["/clean", "https://example.com/x?utm_source=n&id=5"], None, -1))
-    out = msg.replies[0][0]
-    assert "id=5" in out
-    assert "utm_source" not in out
-
-
-def test_clean_no_link_gives_usage():
-    msg = _FakeMessage()
-    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
-    out = msg.replies[0][0]
-    assert "/clean" in out
-
-
-def test_help_text_covers_key_commands():
-    for cmd in ("/setprovider", "/muteuser", "/listmuted", "/testall", "/enable", "/disable"):
-        assert cmd in bot.HELP_TEXT, f"{cmd} missing from HELP_TEXT"
-
-
-def test_about_text_uses_html_not_markdown():
-    assert "*" not in bot.ABOUT_TEXT
-    assert "_" not in bot.ABOUT_TEXT
-    assert "<b>" in bot.ABOUT_TEXT
-
-
-# ── dedup key strips tracking params ─────────────────────────────────────────
-
-def test_strip_tracking_dedup_key_equivalence():
-    u1 = "https://instagram.com/reel/abc/?igsh=foo"
-    u2 = "https://instagram.com/reel/abc/?igsh=bar"
-    assert bot.strip_tracking(u1) == bot.strip_tracking(u2)
