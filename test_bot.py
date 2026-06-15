@@ -366,3 +366,46 @@ def test_b23_tv_is_short_link():
 def test_toggle_commands_registered():
     for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam", "/resetstats"):
         assert cmd in bot.ADMIN_CMDS, f"{cmd} missing from ADMIN_CMDS"
+
+
+# ── generic tracking strip (YouTube etc.) ─────────────────────────────────────
+
+def test_strip_generic_tracking_removes_youtube_si():
+    assert bot.strip_generic_tracking("https://youtu.be/abc?si=track") == "https://youtu.be/abc"
+
+
+def test_strip_generic_tracking_keeps_real_params():
+    out = bot.strip_generic_tracking("https://www.youtube.com/watch?v=abc&t=30&si=x")
+    assert "v=abc" in out and "t=30" in out and "si=" not in out
+
+
+def test_strip_generic_tracking_keeps_ambiguous_search_param():
+    # "s" is in TRACKING but legit sites use it for search — generic stripper leaves it.
+    assert "s=hello" in bot.strip_generic_tracking("https://blog.example.com/?s=hello")
+
+
+def test_strip_generic_tracking_preserves_fragment():
+    assert bot.strip_generic_tracking("https://example.com/p?utm_id=1#sec").endswith("#sec")
+
+
+def test_taggay_fully_removed():
+    for name in ("_cmd_taggay", "_cmd_untaggay", "_cmd_listgay", "tag_user", "is_user_tagged"):
+        assert not hasattr(bot, name), f"{name} should be gone"
+    for cmd in ("/taggay", "/untaggay", "/listgay"):
+        assert cmd not in bot.ADMIN_CMDS and cmd not in bot.PUBLIC_CMDS
+
+
+def test_clean_and_version_registered():
+    assert "/clean" in bot.PUBLIC_CMDS
+    assert "/version" in bot.PUBLIC_CMDS
+
+
+def test_version_is_semver():
+    import re
+    assert re.match(r"^\d+\.\d+\.\d+$", bot.__version__)
+
+
+def test_tiktok_t_share_is_short_path():
+    # main expands vm/vt.tiktok.com via SHORT_LINK_DOMAINS; /t/ is path-based.
+    import re
+    assert re.match(r"^/t/", "/t/ZSabc/", re.IGNORECASE)

@@ -14,13 +14,14 @@ Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for release hist
 - Multi-link support: messages with more than one link get all links fixed.
 - Supports captioned media posts with links.
 - Short-link expansion: `vm.tiktok.com`, `redd.it`, etc. are followed to the real URL first.
+- Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
 - Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
 - Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
 - Per-user rate limiting.
 - Inline mode: use `@KkInstaFixBot <link>` in any chat without adding the bot.
 - Interactive `/menu` for admins to change providers with inline buttons.
-- Command autocomplete in Telegram (registered via `setMyCommands`).
+- Commands are intentionally hidden from the Telegram "/" autocomplete menu to keep the UI uncluttered — they still work when typed.
 - Admin-only moderation and config commands.
 - SQLite storage so settings survive restarts.
 - In-memory caches for settings, providers, mutes, dedup, and rate limiting — zero DB reads on the hot path.
@@ -60,6 +61,8 @@ Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md) for release hist
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
 - `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
+- `/clean` — reply to a message (or pass a URL) to strip tracking params from its links without rewriting them.
+- `/version` — show the running bot version.
 - `/about`, `/credits`, `/me` — about / credits message.
 - `/mehrab`, `/mo` — send the custom image.
 - `/genius` — send the custom video.
@@ -121,6 +124,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `vm.tiktok.com/...` and `vt.tiktok.com/...` → expanded to full `tiktok.com/@user/video/ID`
 - `redd.it/...` → expanded to full `reddit.com/r/sub/comments/...`
 - `reddit.com/r/<sub>/s/<id>` → Reddit share links, expanded to the full post URL
+- `tiktok.com/t/<id>` → TikTok share links, expanded to the full video URL
 - `b23.tv/...` → expanded to full `bilibili.com/video/...`
 - `instagram.com/share/...` → processed as Instagram content
 
@@ -140,7 +144,7 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (45 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (53 tests). Run with `pytest test_bot.py`.
 - `bot_data.sqlite3` — auto-created SQLite database.
 
 ## Data persistence warning

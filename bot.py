@@ -14,8 +14,9 @@ from collections import OrderedDict
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
-    BotCommand,
     BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
     BotCommandScopeDefault,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -236,13 +237,11 @@ _known_chats: set = set()
 _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
-_tagged_cache: dict = {}     # chat_id -> set of tagged user_ids
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 _file_id_cache: dict = {}    # filename -> telegram file_id
 _admin_cache: dict = {}      # (chat_id, user_id) -> (is_admin, expiry_ts)
 _user_names: dict = {}       # user_id -> first_name (from messages)
 _ADMIN_CACHE_TTL = 300
-
 
 DEFAULT_CHAT_SETTINGS = {
     "enabled": 1,
@@ -299,11 +298,11 @@ SAMPLE_URLS = {
 }
 
 ABOUT_TEXT = (
-    "<b>💖 About this bot</b>\n\n"
+    "💖 *About this bot*\n\n"
     "My name is Mehrab and I love you Motki 🥰\n\n"
     "This bot fixes social media links so they embed properly in Telegram. "
     "It can also reduce repeated link, text, sticker, and GIF spam in groups.\n\n"
-    "<i>Made with love by Mehrab</i> 💖"
+    "_Made with love by Mehrab_ 💖"
 )
 
 WELCOME_TEXT = (
@@ -352,13 +351,6 @@ def _warm_muted_cache():
         _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
-def _warm_tagged_cache():
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, user_id FROM tagged_users").fetchall():
-        _tagged_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
-
-
-
 def init_db():
     conn = db_connect()
     conn.executescript(
@@ -389,12 +381,6 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         );
 
-        CREATE TABLE IF NOT EXISTS tagged_users (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, user_id)
-        );
-
         CREATE TABLE IF NOT EXISTS chat_stats (
             chat_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
@@ -418,7 +404,6 @@ def init_db():
     _warm_chat_cache()
     _warm_providers_cache()
     _warm_muted_cache()
-    _warm_tagged_cache()
 
 
 def ensure_chat_settings(chat_id):
@@ -537,40 +522,6 @@ def is_user_muted(chat_id, user_id):
 
 def blocked_user_count(chat_id):
     return len(_muted_set(chat_id))
-
-
-def _tagged_set(chat_id) -> set:
-    if chat_id not in _tagged_cache:
-        conn = db_connect()
-        rows = conn.execute(
-            "SELECT user_id FROM tagged_users WHERE chat_id = ?", (chat_id,)
-        ).fetchall()
-        _tagged_cache[chat_id] = {r["user_id"] for r in rows}
-    return _tagged_cache[chat_id]
-
-
-def tag_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "INSERT OR IGNORE INTO tagged_users(chat_id, user_id) VALUES(?, ?)",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _tagged_set(chat_id).add(user_id)
-
-
-def untag_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "DELETE FROM tagged_users WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _tagged_set(chat_id).discard(user_id)
-
-
-def is_user_tagged(chat_id, user_id):
-    return user_id in _tagged_set(chat_id)
 
 
 def cleanup_db():
@@ -799,41 +750,6 @@ def trim(raw):
     return url, tail
 
 
-def is_short_link(netloc, path):
-    """True if the URL is a short/share link that must be expanded before the
-    real platform can be detected (mobile share domains, Reddit /s/ and
-    TikTok /t/ path-based share links)."""
-    host = netloc.lower().removeprefix("www.")
-    if host in SHORT_LINK_DOMAINS:
-        return True
-    if host == "reddit.com" and re.match(r"^/r/[^/]+/s/", path, re.IGNORECASE):
-        return True
-    if host == "tiktok.com" and re.match(r"^/t/", path, re.IGNORECASE):
-        return True
-    return False
-
-
-def _expand_short_url_sync(url):
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.geturl() or url
-    except urllib.error.HTTPError as e:
-        return getattr(e, "url", None) or url
-    except Exception:
-        return url
-
-
-async def expand_short_url(url):
-    cached = _expand_cache.get(url)
-    if cached:
-        return cached
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, _expand_short_url_sync, url)
-    _expand_cache[url] = result
-    return result
-
-
 def get_platform(netloc, path):
     host = netloc.lower().removeprefix("www.")
     if host in FIXER_HOSTS:
@@ -974,15 +890,23 @@ async def fix_url(raw, chat_id, chat_settings):
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
     # Expand short-link and share-link redirects before platform detection.
-    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, and Reddit's newer
-    # /r/<sub>/s/<id> share URLs which also redirect to the real post.
+    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, plus path-based
+    # share links — Reddit /r/<sub>/s/<id> and TikTok /t/<id> — that redirect
+    # to the real post.
     if host in SHORT_LINK_DOMAINS or (
         host == "reddit.com" and re.match(r"^/r/[^/]+/s/", parsed.path, re.IGNORECASE)
+    ) or (
+        host == "tiktok.com" and re.match(r"^/t/", parsed.path, re.IGNORECASE)
     ):
         url = await expand_short_url(url)
         parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
+        # Not a rewritable platform, but still strip tracking junk
+        # (e.g. YouTube ?si=, generic utm_*/fbclid params).
+        cleaned = strip_generic_tracking(url)
+        if cleaned != url:
+            return cleaned + tail, None, url, cleaned
         return raw, None, None, None
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None, None
@@ -1044,7 +968,7 @@ async def process_text(text, chat_id, chat_settings):
     for raw in urls:
         fixed, platform, original, preview = await fix_url(raw, chat_id, chat_settings)
         if fixed != raw:
-            if original and seen_recent("fix", chat_id, strip_tracking(original), dedup_window):
+            if original and seen_recent("fix", chat_id, original, dedup_window):
                 continue
             new_text = new_text.replace(raw, fixed)
             changed = True
@@ -1069,14 +993,13 @@ def sender_label(user, mode):
     return user.first_name or user.username or "User"
 
 
-def format_repost_text(user, mode, platform=None, url=None, extra=""):
+def format_repost_text(user, mode, platform=None, url=None):
     label = sender_label(user, mode)
     emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
     if label and url:
-        return f'{emoji} <a href="{url}">{_html.escape(label)}{extra}</a>'.strip()
+        return f'{emoji} <a href="{url}">{_html.escape(label)}</a>'.strip()
     if label:
-        display = label + extra
-        return f"{emoji} {display}".strip() if emoji else display
+        return f"{emoji} {label}".strip() if emoji else label
     return url or ""
 
 
@@ -1275,7 +1198,7 @@ async def send_about(context, msg):
                 chat_id=msg.chat_id,
                 photo=photo_src,
                 caption=ABOUT_TEXT,
-                parse_mode="HTML",
+                parse_mode="Markdown",
             )
             if not cached and sent.photo:
                 _file_id_cache[IMAGE_FILE + ":about"] = sent.photo[-1].file_id
@@ -1283,7 +1206,7 @@ async def send_about(context, msg):
             if not cached:
                 photo_src.close()
     else:
-        await msg.reply_text(ABOUT_TEXT, parse_mode="HTML")
+        await msg.reply_text(ABOUT_TEXT, parse_mode="Markdown")
 
 # ── Command handlers ───────────────────────────────────────────────────────────
 
@@ -1299,23 +1222,6 @@ async def _cmd_about(msg, parts, context, chat_id):
     await send_about(context, msg)
 
 
-async def _cmd_start(msg, parts, context, chat_id):
-    if msg.chat.type == "private":
-        platforms = " · ".join(
-            f"{PLATFORM_EMOJI.get(p, '')} {p}" for p in sorted(PROVIDERS)
-        )
-        await msg.reply_text(
-            "<b>KkInstafix</b> — social link fixer\n\n"
-            "Send me a link and I'll rewrite it so Telegram shows a proper preview.\n\n"
-            f"<b>Supported platforms</b>\n{platforms}\n\n"
-            "Add me to a group and I'll fix links automatically.\n"
-            "/providers · /status · /about",
-            parse_mode="HTML",
-        )
-    else:
-        await msg.reply_text(WELCOME_TEXT)
-
-
 async def _cmd_providers(msg, parts, context, chat_id):
     await msg.reply_text(providers_text(chat_id), parse_mode="HTML")
 
@@ -1328,7 +1234,9 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/status — current chat settings\n"
         "/stats — link-fix counts and top senders\n"
         "/undo — reply to a bot message to reveal the original link\n"
+        "/clean — strip tracking from a replied link (or /clean &lt;url&gt;)\n"
         "/about — credits\n"
+        "/version — show the bot version\n"
         "/mehrab · /genius — custom image / video\n\n"
         "<b>💬 Inline</b>\n"
         "<code>@KkInstaFixBot &lt;link&gt;</code> — fix a link in any chat without adding the bot\n\n"
@@ -1340,7 +1248,6 @@ async def _cmd_help(msg, parts, context, chat_id):
         "<code>/setprovider &lt;platform&gt; &lt;key&gt;</code> — change a provider\n"
         "/resetproviders — restore all defaults\n"
         "/muteuser · /unmuteuser · /listmuted — mute management\n"
-        "/taggay · /untaggay · /listgay — tag management\n"
         "<code>/setsendermode first_name|username|full_name|none</code>\n"
         "<code>/setdedup &lt;seconds&gt;</code> — dedup window\n"
         "<code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code> — link rate limit\n"
@@ -1355,6 +1262,49 @@ async def _cmd_help(msg, parts, context, chat_id):
 
 async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id), parse_mode="HTML")
+
+
+async def _cmd_version(msg, parts, context, chat_id):
+    await msg.reply_text(f"KkInstafix <b>v{__version__}</b>", parse_mode="HTML")
+
+
+async def _cmd_clean(msg, parts, context, chat_id):
+    source = ""
+    if msg.reply_to_message:
+        source = msg.reply_to_message.text or msg.reply_to_message.caption or ""
+    if not source and len(parts) > 1:
+        source = " ".join(parts[1:])
+
+    urls = URL_RE.findall(source)
+    if not urls:
+        await msg.reply_text(
+            "Reply to a message with a link, or use <code>/clean &lt;url&gt;</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    seen = set()
+    cleaned = []
+    changed_any = False
+    for raw in urls:
+        url, _tail = trim(raw)
+        stripped = strip_generic_tracking(url)
+        if stripped != url:
+            changed_any = True
+        if stripped not in seen:
+            seen.add(stripped)
+            cleaned.append(stripped)
+
+    if len(cleaned) == 1:
+        preview = LinkPreviewOptions(
+            is_disabled=False, url=cleaned[0], prefer_large_media=True, show_above_text=False
+        )
+    else:
+        preview = LinkPreviewOptions(is_disabled=True)
+
+    header = "🧹 Cleaned:" if changed_any else "✅ Already clean:"
+    body = "\n".join(cleaned)
+    await msg.reply_text(f"{header}\n{body}", link_preview_options=preview)
 
 
 async def _cmd_testcb(msg, parts, context, chat_id):
@@ -1505,7 +1455,7 @@ async def _cmd_menu(msg, parts, context, chat_id):
 
 async def _cmd_enable(msg, parts, context, chat_id):
     update_chat_setting(chat_id, "enabled", 1)
-    await msg.reply_text("✅ Bot enabled — links will be fixed in this chat.")
+    await msg.reply_text("Bot enabled in this chat.")
 
 
 async def _cmd_disable(msg, parts, context, chat_id):
@@ -1534,11 +1484,8 @@ async def _cmd_muteuser(msg, parts, context, chat_id):
     if not target:
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
-    if is_user_muted(chat_id, target):
-        await msg.reply_text(f"🔇 {_user_display(msg, target)} is already muted.", parse_mode="HTML")
-        return
     mute_user(chat_id, target)
-    await msg.reply_text(f"🔇 Muted {_user_display(msg, target)}.", parse_mode="HTML")
+    await msg.reply_text(f"Muted user {target}.")
 
 
 async def _cmd_unmuteuser(msg, parts, context, chat_id):
@@ -1546,11 +1493,8 @@ async def _cmd_unmuteuser(msg, parts, context, chat_id):
     if not target:
         await msg.reply_text("Reply to a user or pass a numeric user id.")
         return
-    if not is_user_muted(chat_id, target):
-        await msg.reply_text(f"🔊 {_user_display(msg, target)} is not muted.", parse_mode="HTML")
-        return
     unmute_user(chat_id, target)
-    await msg.reply_text(f"🔊 Unmuted {_user_display(msg, target)}.", parse_mode="HTML")
+    await msg.reply_text(f"Unmuted user {target}.")
 
 
 async def _cmd_resetproviders(msg, parts, context, chat_id):
@@ -1592,7 +1536,6 @@ async def _cmd_setprovider(msg, parts, context, chat_id):
             parse_mode="HTML",
         )
         return
-    old = get_choice(chat_id, plat)
     set_choice(chat_id, plat, prov)
     emoji = PLATFORM_EMOJI.get(plat, "")
     await msg.reply_text(f"{emoji} {plat} provider set to <b>{prov}</b>.", parse_mode="HTML")
@@ -1626,8 +1569,7 @@ async def _cmd_setdedup(msg, parts, context, chat_id):
             parse_mode="HTML",
         )
         return
-    requested = int(parts[1])
-    value = max(5, min(3600, requested))
+    value = max(5, min(3600, int(parts[1])))
     update_chat_setting(chat_id, "dedup_window", value)
     minutes = value // 60
     human = f"{minutes} minute{'s' if minutes != 1 else ''}" if minutes else f"{value} seconds"
@@ -1676,52 +1618,7 @@ async def _cmd_testall(msg, parts, context, chat_id):
             )
         except Exception:
             logger.exception("/testall failed for %s %s in chat %s", platform, key, chat_id)
-            await msg.reply_text(f"<code>[{key}]</code> ❌ failed", parse_mode="HTML")
-
-
-async def _cmd_listmuted(msg, parts, context, chat_id):
-    muted = get_muted_user_ids(chat_id)
-    if not muted:
-        await msg.reply_text("No muted users in this chat.")
-        return
-    lines = [f"<b>Muted users ({len(muted)})</b>", ""]
-    for uid in muted:
-        try:
-            member = await context.bot.get_chat_member(chat_id, uid)
-            name = member.user.first_name or member.user.username or str(uid)
-            lines.append(f"• 🔇 {_html.escape(name)} — <code>{uid}</code>")
-        except Exception:
-            lines.append(f"• 🔇 <code>{uid}</code>")
-    await msg.reply_text("\n".join(lines), parse_mode="HTML")
-
-
-HELP_TEXT = (
-    "<b>KkInstafix — command reference</b>\n\n"
-    "<b>Anyone</b>\n"
-    "/start — welcome message\n"
-    "/providers — current providers for each platform\n"
-    "/status — current chat settings\n"
-    "/clean — strip tracking from a replied link (or /clean &lt;url&gt;)\n"
-    "/about — credits\n"
-    "/version — show the bot version\n\n"
-    "<b>Admins only</b>\n"
-    "/enable · /disable — turn the bot on or off\n"
-    "/setprovider &lt;platform&gt; &lt;key&gt; — change provider\n"
-    "/resetproviders — restore all defaults\n"
-    "/muteuser · /unmuteuser — mute/unmute by reply or user ID\n"
-    "/listmuted — list all muted users\n"
-    "/setsendermode first_name|username|full_name|none\n"
-    "/setdedup &lt;seconds&gt; — dedup window (5–3600)\n"
-    "/setratelimit &lt;n&gt; &lt;seconds&gt; — rate limit per user\n"
-    "/ignoreforwards on|off\n"
-    "/fallback on|off — try backup providers if primary is down\n"
-    "/textspam on|off — delete repeated plain-text messages\n"
-    "/testall &lt;platform&gt; [url] — test every provider side-by-side"
-)
-
-
-async def _cmd_help(msg, parts, context, chat_id):
-    await msg.reply_text(HELP_TEXT, parse_mode="HTML")
+            await msg.reply_text(f"[{key}] failed")
 
     await asyncio.gather(*[_test_one(k, h) for k, h in options.items()])
     try:
@@ -1790,40 +1687,6 @@ async def _cmd_resetstats(msg, parts, context, chat_id):
     await msg.reply_text(f"📊 Stats reset — cleared {row['c']} recorded link fixes.")
 
 
-async def _cmd_taggay(msg, parts, context, chat_id):
-    target = target_user_id_from_command(msg, parts)
-    if not target:
-        await msg.reply_text("Reply to a user or pass a numeric user id.")
-        return
-    tag_user(chat_id, target)
-    await msg.reply_text("Congratulations, your a admin! 🏳️‍🌈")
-
-
-async def _cmd_untaggay(msg, parts, context, chat_id):
-    target = target_user_id_from_command(msg, parts)
-    if not target:
-        await msg.reply_text("Reply to a user or pass a numeric user id.")
-        return
-    untag_user(chat_id, target)
-    await msg.reply_text(f"Removed gay tag from user {target}.")
-
-
-async def _cmd_listgay(msg, parts, context, chat_id):
-    tagged = list(_tagged_set(chat_id))
-    if not tagged:
-        await msg.reply_text("No tagged users in this chat.")
-        return
-    lines = [f"<b>Tagged users ({len(tagged)})</b>", ""]
-    for uid in tagged:
-        try:
-            member = await context.bot.get_chat_member(chat_id, uid)
-            name = member.user.first_name or member.user.username or f"User {uid}"
-            lines.append(f"• {_html.escape(name)} (gay) — <code>{uid}</code>")
-        except Exception:
-            lines.append(f"• <code>{uid}</code> (gay)")
-    await msg.reply_text("\n".join(lines), parse_mode="HTML")
-
-
 # ── Command dispatch maps ──────────────────────────────────────────────────────
 
 PUBLIC_CMDS = {
@@ -1841,6 +1704,8 @@ PUBLIC_CMDS = {
     "/config": _cmd_status,
     "/stats": _cmd_stats,
     "/undo": _cmd_undo,
+    "/clean": _cmd_clean,
+    "/version": _cmd_version,
 }
 
 ADMIN_CMDS = {
@@ -1863,9 +1728,6 @@ ADMIN_CMDS = {
     "/testall": _cmd_testall,
     "/export": _cmd_export,
     "/import": _cmd_import,
-    "/taggay": _cmd_taggay,
-    "/untaggay": _cmd_untaggay,
-    "/listgay": _cmd_listgay,
 }
 
 # ── Main text handler ──────────────────────────────────────────────────────────
@@ -1949,16 +1811,13 @@ async def handle_message(update, context):
         show_above_text=False,
     ) if first_fixed_url else None
 
-    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
     if fixed_count > 1:
         # Multiple links: preserve the full message context with all URLs replaced
         label = sender_label(msg.from_user, chat_settings["sender_mode"])
-        if label and extra_tag:
-            label = label + extra_tag
         post_text = f"{label}:\n{new_text}" if label else new_text
         post_parse_mode = None
     else:
-        post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
+        post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
         post_parse_mode = "HTML"
 
     # "Try another provider" button — single-link reposts where the platform
@@ -2029,8 +1888,7 @@ async def handle_caption(update, context):
         increment_stat(chat_id, plat, user_id)
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
-    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
-    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
+    clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
@@ -2069,8 +1927,7 @@ async def handle_edit(update, context):
     if not changed:
         return
 
-    extra_tag = " (gay)" if user_id and is_user_tagged(chat_id, user_id) else ""
-    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url, extra=extra_tag)
+    post_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
@@ -2428,51 +2285,25 @@ async def periodic_cleanup(context):
     logger.info("Periodic DB cleanup done.")
 
 
-_PUBLIC_COMMANDS = [
-    BotCommand("start", "Welcome message and quick how-to"),
-    BotCommand("help", "Full command reference"),
-    BotCommand("providers", "Show active providers and options"),
-    BotCommand("status", "Show current chat settings"),
-    BotCommand("stats", "Link-fix counts and top senders"),
-    BotCommand("undo", "See the original link (reply to bot message)"),
-    BotCommand("about", "About this bot"),
-    BotCommand("testcb", "Test that button callbacks work"),
-]
-
-_ADMIN_COMMANDS = _PUBLIC_COMMANDS + [
-    BotCommand("ping", "Check bot uptime and stats"),
-    BotCommand("menu", "Interactive provider picker"),
-    BotCommand("enable", "Enable the bot in this chat"),
-    BotCommand("disable", "Disable the bot in this chat"),
-    BotCommand("setprovider", "Change provider: /setprovider <platform> <key>"),
-    BotCommand("resetproviders", "Reset all providers to defaults"),
-    BotCommand("muteuser", "Mute a user (reply or user ID)"),
-    BotCommand("unmuteuser", "Unmute a user (reply or user ID)"),
-    BotCommand("listmuted", "List all muted users"),
-    BotCommand("setsendermode", "Change sender label format"),
-    BotCommand("setdedup", "Change dedup window in seconds"),
-    BotCommand("setratelimit", "Set link rate limit: <count> <seconds>"),
-    BotCommand("ignoreforwards", "Ignore forwarded posts: on|off"),
-    BotCommand("fallback", "Provider fallback: on|off"),
-    BotCommand("textspam", "Repeated text deletion: on|off"),
-    BotCommand("resetstats", "Clear this chat's stats"),
-    BotCommand("testall", "Test all providers for a platform"),
-    BotCommand("export", "Download a JSON backup"),
-    BotCommand("import", "Restore from a JSON backup"),
-]
-
-
 async def on_startup(app):
     init_db()
     cleanup_db()
     if not WEBHOOK_URL:
         await app.bot.delete_webhook(drop_pending_updates=True)
-    try:
-        await app.bot.set_my_commands(_PUBLIC_COMMANDS, scope=BotCommandScopeDefault())
-        await app.bot.set_my_commands(_ADMIN_COMMANDS, scope=BotCommandScopeAllChatAdministrators())
-        logger.info("Bot commands registered with Telegram.")
-    except Exception:
-        logger.warning("Failed to register bot commands — continuing anyway.", exc_info=True)
+    # Hide the "/" command menu so users aren't overwhelmed with options.
+    # Commands still work when typed; Telegram just won't suggest them. The
+    # "/" button persists if commands remain in ANY scope, so clear them all.
+    for scope in (
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ):
+        try:
+            await app.bot.delete_my_commands(scope=scope)
+        except Exception:
+            logger.warning("Failed clearing bot commands for scope %s",
+                           type(scope).__name__, exc_info=True)
     mode = "webhook" if WEBHOOK_URL else "polling"
     logger.info("Bot started in %s mode. Database ready.", mode)
 
