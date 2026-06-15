@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.14.0"
+__version__ = "1.15.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -2133,18 +2133,24 @@ async def handle_inline_query(update, context):
     urls = URL_RE.findall(text)
     for raw in urls[:5]:
         fixed, platform, original, preview = await fix_url(raw, 0, chat_settings)
-        if fixed == raw or not platform:
+        if fixed == raw:
             continue
-        emoji = PLATFORM_EMOJI.get(platform, "🔗")
+        if platform:
+            title = f"{PLATFORM_EMOJI.get(platform, '🔗')} Fix {platform} link"
+        else:
+            # Non-platform but changed: tracking stripped (e.g. YouTube ?si=) or a
+            # short link normalized. Offer it as a clean-link result so inline mode
+            # is as capable as in-chat cleaning.
+            title = "🧹 Clean link (tracking removed)"
         results.append(
             InlineQueryResultArticle(
                 id=str(uuid.uuid4()),
-                title=f"{emoji} Fix {platform} link",
+                title=title,
                 description=fixed,
                 input_message_content=InputTextMessageContent(
                     message_text=fixed,
                     link_preview_options=LinkPreviewOptions(
-                        is_disabled=False, url=preview, prefer_large_media=True
+                        is_disabled=False, url=preview or fixed, prefer_large_media=True
                     ),
                 ),
             )

@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-06-15
+
+### Changed
+- **Inline mode now also cleans non-platform links** — previously `@bot <link>`
+  only returned a result for rewritable platforms and silently skipped anything
+  else. It now offers a "🧹 Clean link (tracking removed)" result for YouTube and
+  other links whose only change is tracking removal or short-link normalization,
+  matching what the bot does in group chats. Added inline-query handler tests.
+
 ## [1.14.0] - 2026-06-15
 
 ### Added

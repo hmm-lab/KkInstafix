@@ -109,18 +109,27 @@ class FakeCallbackQuery:
         self.edits.append((text, kw))
 
 
+class FakeInlineQuery:
+    def __init__(self, query):
+        self.query = query
+        self.answered = None
+
+    async def answer(self, results, **kw):
+        self.answered = results
+
+
 class FakeContext:
     def __init__(self, bot):
         self.bot = bot
 
 
 class FakeUpdate:
-    def __init__(self, message=None, update_id=1, callback_query=None):
+    def __init__(self, message=None, update_id=1, callback_query=None, inline_query=None):
         self.message = message
         self.edited_message = None
         self.channel_post = None
         self.callback_query = callback_query
-        self.inline_query = None
+        self.inline_query = inline_query
         self.update_id = update_id
 
 
@@ -306,3 +315,34 @@ def test_callback_menu_requires_admin():
     run(bot.handle_callback(FakeUpdate(callback_query=cq), FakeContext(fb)))
     assert cq.answers and "admin" in cq.answers[0][0].lower()
     assert not cq.edits
+
+
+# ── Inline query handler ─────────────────────────────────────────────────────
+
+def test_inline_query_fixes_platform_link():
+    fb = FakeBot()
+    iq = FakeInlineQuery("https://twitter.com/u/status/1")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq), FakeContext(fb)))
+    assert iq.answered
+    r = iq.answered[0]
+    assert "vxtwitter.com" in r.input_message_content.message_text
+    assert "twitter" in r.title
+
+
+def test_inline_query_cleans_youtube_tracking():
+    fb = FakeBot()
+    iq = FakeInlineQuery("https://www.youtube.com/watch?v=abc&si=track")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq), FakeContext(fb)))
+    assert iq.answered
+    r = iq.answered[0]
+    txt = r.input_message_content.message_text
+    assert "si=" not in txt and "v=abc" in txt
+    assert "Clean" in r.title
+
+
+def test_inline_query_no_link_returns_hint():
+    fb = FakeBot()
+    iq = FakeInlineQuery("just some text, no link here")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq), FakeContext(fb)))
+    assert iq.answered and len(iq.answered) == 1
+    assert "No supported link" in iq.answered[0].title
