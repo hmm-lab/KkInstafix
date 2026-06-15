@@ -1,10 +1,12 @@
 # KkInstafix
 
+![tests](https://github.com/hmm-lab/kkinstafix/actions/workflows/tests.yml/badge.svg)
+
 Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.10.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.11.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 

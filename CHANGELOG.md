@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-06-15
+
+### Added
+- **Continuous integration** — a GitHub Actions workflow (`.github/workflows/tests.yml`)
+  runs the full `pytest` suite on Python 3.11 and 3.12 for every push and pull
+  request, plus a no-network smoke test of the provider checker's URL builder.
+  The test suite previously only ran locally; now regressions are caught on push.
+
+### Changed
+- `.gitignore` now also excludes `.pytest_cache/`.
+
 ## [1.10.0] - 2026-06-15
 
 ### Changed
