@@ -682,7 +682,7 @@ def providers_text(chat_id):
         "/ignoreforwards on|off  ·  /fallback on|off  ·  /textspam on|off",
         "/testall &lt;platform&gt;",
         "",
-        "<b>Public</b>  /status · /about · /start · /help",
+        "<b>Public</b>  /status · /clean · /about · /start · /help",
     ]
     return "\n".join(lines)
 
@@ -817,6 +817,45 @@ async def _cmd_providers(msg, parts, context, chat_id):
 
 async def _cmd_status(msg, parts, context, chat_id):
     await msg.reply_text(status_text(chat_id), parse_mode="HTML")
+
+
+async def _cmd_clean(msg, parts, context, chat_id):
+    source = ""
+    if msg.reply_to_message:
+        source = msg.reply_to_message.text or msg.reply_to_message.caption or ""
+    if not source and len(parts) > 1:
+        source = " ".join(parts[1:])
+
+    urls = URL_RE.findall(source)
+    if not urls:
+        await msg.reply_text(
+            "Reply to a message with a link, or use <code>/clean &lt;url&gt;</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    seen = set()
+    cleaned = []
+    changed_any = False
+    for raw in urls:
+        url, _tail = trim(raw)
+        stripped = strip_generic_tracking(url)
+        if stripped != url:
+            changed_any = True
+        if stripped not in seen:
+            seen.add(stripped)
+            cleaned.append(stripped)
+
+    if len(cleaned) == 1:
+        preview = LinkPreviewOptions(
+            is_disabled=False, url=cleaned[0], prefer_large_media=True, show_above_text=False
+        )
+    else:
+        preview = LinkPreviewOptions(is_disabled=True)
+
+    header = "🧹 Cleaned:" if changed_any else "✅ Already clean:"
+    body = "\n".join(cleaned)
+    await msg.reply_text(f"{header}\n{body}", link_preview_options=preview)
 
 
 async def _cmd_enable(msg, parts, context, chat_id):
@@ -1034,6 +1073,7 @@ HELP_TEXT = (
     "/start — welcome message\n"
     "/providers — current providers for each platform\n"
     "/status — current chat settings\n"
+    "/clean — strip tracking from a replied link (or /clean &lt;url&gt;)\n"
     "/about — credits\n\n"
     "<b>Admins only</b>\n"
     "/enable · /disable — turn the bot on or off\n"
@@ -1069,6 +1109,7 @@ PUBLIC_CMDS = {
     "/help": _cmd_help,
     "/status": _cmd_status,
     "/config": _cmd_status,
+    "/clean": _cmd_clean,
 }
 
 ADMIN_CMDS = {

@@ -315,6 +315,64 @@ def test_help_is_not_providers():
     assert bot.PUBLIC_CMDS["/help"] is not bot.PUBLIC_CMDS["/providers"]
 
 
+def test_clean_command_registered():
+    assert "/clean" in bot.PUBLIC_CMDS
+
+
+# ── /clean command behavior ──────────────────────────────────────────────────
+
+class _FakeReply:
+    def __init__(self, text=None, caption=None):
+        self.text = text
+        self.caption = caption
+
+
+class _FakeMessage:
+    def __init__(self, reply_to=None):
+        self.reply_to_message = reply_to
+        self.replies = []
+
+    async def reply_text(self, text, **kwargs):
+        self.replies.append((text, kwargs))
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_clean_strips_tracking_from_replied_link():
+    msg = _FakeMessage(_FakeReply(text="check this https://youtu.be/abc?si=track123"))
+    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
+    out = msg.replies[0][0]
+    assert "https://youtu.be/abc" in out
+    assert "si=" not in out
+    assert out.startswith("🧹")
+
+
+def test_clean_reports_already_clean():
+    msg = _FakeMessage(_FakeReply(text="https://youtu.be/abc"))
+    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
+    out = msg.replies[0][0]
+    assert out.startswith("✅")
+    assert "https://youtu.be/abc" in out
+
+
+def test_clean_accepts_inline_url_argument():
+    msg = _FakeMessage()
+    _run(bot._cmd_clean(msg, ["/clean", "https://example.com/x?utm_source=n&id=5"], None, -1))
+    out = msg.replies[0][0]
+    assert "id=5" in out
+    assert "utm_source" not in out
+
+
+def test_clean_no_link_gives_usage():
+    msg = _FakeMessage()
+    _run(bot._cmd_clean(msg, ["/clean"], None, -1))
+    out = msg.replies[0][0]
+    assert "/clean" in out
+
+
 def test_help_text_covers_key_commands():
     for cmd in ("/setprovider", "/muteuser", "/listmuted", "/testall", "/enable", "/disable"):
         assert cmd in bot.HELP_TEXT, f"{cmd} missing from HELP_TEXT"

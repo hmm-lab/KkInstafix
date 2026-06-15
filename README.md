@@ -44,6 +44,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 - `/providers` — show current providers and options.
 - `/status` or `/config` — show current chat settings.
+- `/clean` — reply to a message (or pass a URL) to strip tracking params from its links without rewriting them.
 - `/about`, `/credits`, `/me` — about / credits message.
 - `/mehrab`, `/mo`, `/genius` — send the custom image.
 
