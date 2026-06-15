@@ -4,7 +4,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.4.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -146,7 +146,8 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (60 tests). Run with `pytest test_bot.py`.
+- `test_bot.py` — pure-function tests (63 tests). Run with `pytest test_bot.py`.
+- `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 
 ## Data persistence warning
@@ -215,6 +216,18 @@ Usually means another instance of the bot is still running somewhere else.
 ### Preview does not show every time
 
 Telegram preview generation is controlled by Telegram itself, so some providers may still work better than others depending on the link. Use `/testall <platform> <url>` to compare providers.
+
+### Checking which providers are up
+
+Run the health checker from a machine with open outbound network:
+
+```bash
+python tools/check_providers.py            # all platforms
+python tools/check_providers.py --platform twitter
+python tools/check_providers.py --json
+```
+
+It prints an UP/DOWN table with embed (Open Graph) detection and exits with the number of down hosts. **Don't run it from a sandbox with an egress allowlist** — every host will return the same proxy error and the result is meaningless (the script warns when it detects this). Inside Telegram, `/testall <platform>` is the equivalent live check.
 
 ## Credits
 

@@ -429,6 +429,47 @@ def test_check_rate_uses_deque():
     assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
 
 
+def test_sample_urls_cover_all_platforms():
+    # /testall and tools/check_providers.py silently skip any platform missing a
+    # sample URL — this guard fails loudly if a new platform forgets one.
+    missing = [p for p in bot.PROVIDERS if p not in bot.SAMPLE_URLS]
+    assert not missing, f"platforms missing a SAMPLE_URL: {missing}"
+
+
+def test_check_providers_tool_builds_url_for_every_host():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "tools", "check_providers.py")
+    spec = importlib.util.spec_from_file_location("check_providers", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    built = list(mod.build_check_urls())
+    # one entry per provider host, each a valid http(s) URL pointing at the host
+    assert len(built) == len(bot.FIXER_HOSTS)
+    for platform, key, host, url, is_default in built:
+        assert url.startswith("http")
+        assert host in url
+    # default flag is set for exactly one key per platform
+    for platform in bot.PROVIDERS:
+        defaults = [b for b in built if b[0] == platform and b[4]]
+        assert len(defaults) == 1
+
+
+def test_check_providers_is_up_classifier():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "tools", "check_providers.py")
+    spec = importlib.util.spec_from_file_location("check_providers", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.is_up(200) is True
+    assert mod.is_up(404) is True   # host responded, post may be gone
+    assert mod.is_up(500) is False
+    assert mod.is_up(None) is False
+
+
 def test_tco_in_short_link_domains():
     assert "t.co" in bot.SHORT_LINK_DOMAINS
     # Must not collide with any fixer host or platform, or expansion is skipped.

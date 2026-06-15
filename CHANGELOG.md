@@ -5,6 +5,21 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-15
+
+### Added
+- **`tools/check_providers.py`** — a standalone provider health checker. It
+  builds a fixed URL for every provider host (reusing the bot's own
+  `SAMPLE_URLS` + `apply_provider`, so it never drifts from real behaviour),
+  fetches each with Telegram's preview-crawler User-Agent, and prints an
+  UP/DOWN table with embed (Open Graph) detection. Supports `--platform`,
+  `--json`, and `--timeout`; exit code equals the number of DOWN hosts so it
+  can gate CI. Detects and warns when every host returns the same proxy error
+  (i.e. you're running behind an egress allowlist and the result is meaningless).
+- **`SAMPLE_URLS` coverage guard test** — fails loudly if a platform is added
+  without a sample URL, which would otherwise silently skip it in both
+  `/testall` and the health checker.
+
 ## [1.4.0] - 2026-06-15
 
 ### Added
