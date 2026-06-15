@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -220,6 +220,12 @@ GENERIC_TRACKING = {
     "fbclid", "gclid", "dclid", "msclkid", "yclid", "twclid", "ttclid",
     "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_id", "wickedid",
     "igsh", "igshid", "si", "feature",
+    # Facebook/Meta mobile share identifiers
+    "mibextid", "extid",
+    # Reddit web tracking
+    "rdt",
+    # Campaign / analytics identifiers (unambiguous, vendor-documented)
+    "ncid", "cmpid", "_branch_referrer", "oly_enc_id", "oly_anon_id",
 }
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
@@ -227,7 +233,7 @@ SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "youtu.be"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "youtu.be", "t.co"}
 _expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
 _EXPAND_CACHE_MAX = 2000
 HEALTH_CACHE: dict = {}
@@ -893,9 +899,11 @@ async def fix_url(raw, chat_id, chat_settings):
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
     # Expand short-link and share-link redirects before platform detection.
-    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, plus
-    # path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and
-    # Instagram /share/<id> — that all redirect to the canonical post URL.
+    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, t.co,
+    # plus path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and
+    # Instagram /share/<id> — that all redirect to the canonical post URL. A
+    # t.co link unwraps to its target, which is then fixed (if it's a known
+    # platform) or tracking-stripped like any other plain link.
     if host in SHORT_LINK_DOMAINS or (
         host == "reddit.com" and re.match(r"^/r/[^/]+/s/", parsed.path, re.IGNORECASE)
     ) or (

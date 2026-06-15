@@ -429,6 +429,27 @@ def test_check_rate_uses_deque():
     assert isinstance(bot._rate_mem.get((99901, 99901)), deque)
 
 
+def test_tco_in_short_link_domains():
+    assert "t.co" in bot.SHORT_LINK_DOMAINS
+    # Must not collide with any fixer host or platform, or expansion is skipped.
+    assert "t.co" not in bot.FIXER_HOSTS
+    assert bot.get_platform("t.co", "/abc123") is None
+
+
+def test_strip_generic_tracking_removes_facebook_mibextid():
+    out = bot.strip_generic_tracking("https://www.facebook.com/story?id=99&mibextid=abc")
+    assert "mibextid" not in out
+    assert "id=99" in out
+
+
+def test_strip_generic_tracking_removes_new_campaign_params():
+    for param in ("rdt", "ncid", "cmpid", "_branch_referrer", "oly_enc_id", "oly_anon_id", "extid"):
+        url = f"https://example.com/article?{param}=track&real=keep"
+        out = bot.strip_generic_tracking(url)
+        assert f"{param}=" not in out, f"{param} survived in {out}"
+        assert "real=keep" in out
+
+
 def test_expand_cache_lru_evicts_oldest():
     from collections import OrderedDict
     bot._expand_cache.clear()

@@ -5,6 +5,19 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-15
+
+### Added
+- **`t.co` Twitter short-link expansion** — `t.co/<id>` wrapper links (produced
+  whenever a link is copied out of a tweet) are now unwrapped to their target
+  before processing. If the target is a known platform it gets fixed; otherwise
+  it's tracking-stripped like any other plain link.
+- **Expanded generic tracking list** — now also strips Facebook/Meta mobile
+  share identifiers (`mibextid`, `extid`), Reddit web tracking (`rdt`), and
+  several vendor-documented campaign/analytics identifiers (`ncid`, `cmpid`,
+  `_branch_referrer`, `oly_enc_id`, `oly_anon_id`). The list stays conservative —
+  ambiguous keys like `s`/`ref`/`hl` are still left alone.
+
 ## [1.3.0] - 2026-06-15
 
 ### Added
