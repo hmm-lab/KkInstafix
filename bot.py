@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.12.0"
+__version__ = "1.13.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(

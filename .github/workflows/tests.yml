@@ -28,7 +28,7 @@ jobs:
       - name: Run tests
         env:
           BOT_TOKEN: ci-token-not-used
-        run: pytest test_bot.py -q
+        run: pytest -q
 
       - name: Provider checker smoke test (build URLs, no network)
         run: python -c "import tools.check_providers as c; assert len(list(c.build_check_urls())) > 0; print('check_providers OK')"

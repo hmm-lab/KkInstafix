@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-06-15
+
+### Added
+- **Handler test coverage** — a new `test_handlers.py` exercises the async update
+  handlers with lightweight fakes (no real Telegram): the link-rewrite happy
+  path, unsupported-link no-op, muted-user deletion, public/admin command
+  routing (including the admin permission gate), repeated-text dedup, duplicate-
+  update skipping, and rate-limit enforcement. The handlers previously had zero
+  tests. CI now runs the full suite (`pytest -q`, 91 tests) instead of only the
+  pure-function file.
+
 ## [1.12.0] - 2026-06-15
 
 ### Fixed
