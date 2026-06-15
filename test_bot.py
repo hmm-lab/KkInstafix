@@ -34,6 +34,40 @@ def test_strip_tracking_preserves_path():
     assert "/p/abc" in bot.strip_tracking("https://instagram.com/p/abc?igshid=1")
 
 
+# ── short-link detection / expansion ──────────────────────────────────────────
+
+def test_is_short_link_mobile_domains():
+    assert bot.is_short_link("vm.tiktok.com", "/ZSabc/")
+    assert bot.is_short_link("vt.tiktok.com", "/ZSabc/")
+    assert bot.is_short_link("redd.it", "/abc123")
+    assert bot.is_short_link("b23.tv", "/xY9")
+
+
+def test_is_short_link_path_based_shares():
+    assert bot.is_short_link("www.reddit.com", "/r/funny/s/AbC123")
+    assert bot.is_short_link("reddit.com", "/r/funny/s/AbC123")
+    assert bot.is_short_link("www.tiktok.com", "/t/ZSabc/")
+
+
+def test_is_short_link_ignores_normal_links():
+    assert not bot.is_short_link("www.tiktok.com", "/@user/video/123")
+    assert not bot.is_short_link("reddit.com", "/r/funny/comments/1/x")
+    assert not bot.is_short_link("instagram.com", "/p/abc")
+
+
+def test_short_link_domains_not_in_fixer_hosts():
+    for d in bot.SHORT_LINK_DOMAINS:
+        assert d not in bot.FIXER_HOSTS, f"{d} would be skipped by get_platform"
+
+
+def test_expand_short_url_uses_cache():
+    import asyncio
+    bot._expand_cache.clear()
+    bot._expand_cache["https://redd.it/abc"] = "https://www.reddit.com/r/x/comments/1/y/"
+    out = asyncio.run(bot.expand_short_url("https://redd.it/abc"))
+    assert out == "https://www.reddit.com/r/x/comments/1/y/"
+
+
 # ── strip_generic_tracking ────────────────────────────────────────────────────
 
 def test_strip_generic_tracking_removes_youtube_si():

@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-15
+
+### Added
+- Short/mobile share-link expansion: `vm.tiktok.com`, `vt.tiktok.com`,
+  `redd.it`, and `b23.tv` links are followed to the real post URL before the
+  provider swap. Also handles path-based share links — Reddit
+  `/r/<sub>/s/<id>` and TikTok `/t/<id>` — which previously passed through
+  unfixed. Expanded URLs are cached.
+
 ## [1.1.0] - 2026-06-15
 
 ### Added
@@ -52,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-chat provider selection, admin moderation and config commands,
   dedup/rate-limit anti-spam, SQLite persistence, and provider fallback.
 
+[1.2.0]: https://github.com/hmm-lab/kkinstafix/releases/tag/v1.2.0
 [1.1.0]: https://github.com/hmm-lab/kkinstafix/releases/tag/v1.1.0
 [1.0.0]: https://github.com/hmm-lab/kkinstafix/releases/tag/v1.0.0

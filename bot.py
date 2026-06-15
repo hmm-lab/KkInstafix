@@ -20,7 +20,7 @@ from telegram import (
 from telegram.error import Conflict
 from telegram.ext import Application, MessageHandler, filters
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -194,6 +194,9 @@ URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 SHORTS_RE = re.compile(r"^/shorts/([A-Za-z0-9_-]+)")
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
+# Short/mobile share domains that 301-redirect to the real post URL.
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv"}
+_expand_cache: dict = {}  # short url -> expanded url
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 300
 SEEN_UPDATES: OrderedDict = OrderedDict()
@@ -537,6 +540,41 @@ def trim(raw):
     return url, tail
 
 
+def is_short_link(netloc, path):
+    """True if the URL is a short/share link that must be expanded before the
+    real platform can be detected (mobile share domains, Reddit /s/ and
+    TikTok /t/ path-based share links)."""
+    host = netloc.lower().removeprefix("www.")
+    if host in SHORT_LINK_DOMAINS:
+        return True
+    if host == "reddit.com" and re.match(r"^/r/[^/]+/s/", path, re.IGNORECASE):
+        return True
+    if host == "tiktok.com" and re.match(r"^/t/", path, re.IGNORECASE):
+        return True
+    return False
+
+
+def _expand_short_url_sync(url):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.geturl() or url
+    except urllib.error.HTTPError as e:
+        return getattr(e, "url", None) or url
+    except Exception:
+        return url
+
+
+async def expand_short_url(url):
+    cached = _expand_cache.get(url)
+    if cached:
+        return cached
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _expand_short_url_sync, url)
+    _expand_cache[url] = result
+    return result
+
+
 def get_platform(netloc, path):
     host = netloc.lower().removeprefix("www.")
     if host in FIXER_HOSTS:
@@ -604,6 +642,10 @@ INSTAGRAM_CONTENT_RE = re.compile(
 async def fix_url(raw, chat_id, chat_settings):
     url, tail = trim(raw)
     parsed = urlparse(url)
+    # Expand mobile/share short links to the real post URL before detection.
+    if is_short_link(parsed.netloc, parsed.path):
+        url = await expand_short_url(url)
+        parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
         # Not a rewritable platform, but still strip tracking junk
