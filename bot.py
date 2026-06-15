@@ -1311,6 +1311,12 @@ async def on_startup(app):
     cleanup_db()
     if not WEBHOOK_URL:
         await app.bot.delete_webhook(drop_pending_updates=True)
+    # Hide the "/" command menu so users aren't overwhelmed with options.
+    # Commands still work when typed; Telegram just won't suggest them.
+    try:
+        await app.bot.delete_my_commands()
+    except Exception:
+        logger.exception("Failed clearing bot command menu")
     mode = "webhook" if WEBHOOK_URL else "polling"
     logger.info("Bot started in %s mode. Database ready.", mode)
 
