@@ -183,6 +183,31 @@ def test_format_repost_text_escapes_html():
     assert "&lt;script&gt;" in out
 
 
+def test_format_repost_text_escapes_url_ampersand():
+    # URL with query params: & must become &amp; for HTML parse mode.
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "first_name", platform="reddit",
+                                 url="https://vxreddit.com/r/x/y?a=1&b=2")
+    assert "&amp;b=2" in out
+    assert "?a=1&b=2" not in out  # raw ampersand must not survive
+
+
+def test_format_repost_text_escapes_url_quote():
+    # A stray quote in the URL must not break out of the href attribute.
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "first_name", platform="twitter",
+                                 url='https://vxtwitter.com/u/1"x')
+    assert '"x">' not in out          # attribute not closed early
+    assert "&quot;x" in out
+
+
+def test_format_repost_text_none_mode_escapes_url():
+    u = FakeUser(first_name="Mehrab")
+    out = bot.format_repost_text(u, "none", platform="reddit",
+                                 url="https://x/y?a=1&b=2")
+    assert out == "https://x/y?a=1&amp;b=2"
+
+
 def test_format_repost_text_none_mode():
     u = FakeUser(first_name="Mehrab")
     out = bot.format_repost_text(u, "none", platform="instagram", url="https://kkclip.com/p/x")

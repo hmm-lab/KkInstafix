@@ -5,6 +5,16 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-06-15
+
+### Fixed
+- **HTML escaping of URLs in reposts** — reposts and the 🔁 cycle button render
+  with `parse_mode=HTML` but interpolated the link URL into `href="..."` without
+  escaping. A URL with `&` (query params) produced raw ampersands that could
+  break Telegram's entity parsing (failing the send and dropping formatting),
+  and a `"` could close the attribute. URLs are now `_html.escape(...)`-d for
+  both the href attribute and bare-URL text paths.
+
 ## [1.11.0] - 2026-06-15
 
 ### Added

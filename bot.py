@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1076,10 +1076,13 @@ def format_repost_text(user, mode, platform=None, url=None):
     label = sender_label(user, mode)
     emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
     if label and url:
-        return f'{emoji} <a href="{url}">{_html.escape(label)}</a>'.strip()
+        # The message is sent with parse_mode=HTML, so the URL must be escaped
+        # both for the href attribute (quotes) and HTML entities (&).
+        safe_url = _html.escape(url, quote=True)
+        return f'{emoji} <a href="{safe_url}">{_html.escape(label)}</a>'.strip()
     if label:
         return f"{emoji} {label}".strip() if emoji else label
-    return url or ""
+    return _html.escape(url) if url else ""
 
 
 def providers_text(chat_id):
@@ -2237,10 +2240,11 @@ async def _cycle_provider(cq, data, chat_id):
             preview_url = new_url
 
         emoji = PLATFORM_EMOJI.get(platform, "")
+        safe_url = _html.escape(new_url, quote=True)
         if display_text:
-            text = f'{emoji} <a href="{new_url}">{_html.escape(display_text)}</a>'.strip()
+            text = f'{emoji} <a href="{safe_url}">{_html.escape(display_text)}</a>'.strip()
         else:
-            text = f"{emoji} {new_url}".strip()
+            text = f"{emoji} {safe_url}".strip()
         preview = LinkPreviewOptions(
             is_disabled=False, url=preview_url, prefer_large_media=True, show_above_text=False
         )
