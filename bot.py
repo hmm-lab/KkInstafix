@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.27.0"
+__version__ = "1.28.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -245,11 +245,12 @@ GENERIC_TRACKING = {
     "ncid", "cmpid", "_branch_referrer", "oly_enc_id", "oly_anon_id",
 }
 
-# YouTube share/analytics params. "si"/"feature" are already global; "is" and
-# "pp" are too generic to strip from arbitrary sites (plenty use ?is=...), so
-# they are only removed when the host is YouTube.
+# YouTube-only share/analytics params. "si" is already in GENERIC_TRACKING so
+# it is stripped globally; "is" and "pp" are too generic to strip from arbitrary
+# sites, so they are only removed when the host is YouTube. "feature" is a
+# documented YouTube share param that could be a legitimate flag elsewhere.
 YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
-YOUTUBE_TRACKING = {"si", "is", "feature", "pp"}
+YOUTUBE_TRACKING = {"is", "feature", "pp"}
 
 # Amazon operates under many country TLDs; track all of them by this set.
 AMAZON_TLDS = {
@@ -1025,11 +1026,12 @@ def _expand_short_url_sync(url: str) -> str:
         return _expand_cache[url]
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=2) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             result = resp.url
     except urllib.error.HTTPError as e:
         result = getattr(e, "url", None) or url
-    except Exception:
+    except Exception as exc:
+        logger.debug("Short-link expansion failed for %s: %s", url, exc)
         result = url
     _expand_cache[url] = result
     if len(_expand_cache) > _EXPAND_CACHE_MAX:

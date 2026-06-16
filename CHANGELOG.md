@@ -5,6 +5,27 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] - 2026-06-16
+
+### Changed
+- **`"si"` removed from `YOUTUBE_TRACKING`** — it is already stripped globally
+  via `GENERIC_TRACKING`, so carrying it in the YouTube-specific set was
+  redundant and misleading. `YOUTUBE_TRACKING` now only contains params that are
+  genuinely YouTube-specific (`is`, `feature`, `pp`).
+- **Short-link expansion timeout raised from 2 s to 5 s** — the previous 2-second
+  ceiling caused silent fallback on loaded or geo-distant shortener endpoints;
+  5 seconds is the practical upper bound for a HEAD redirect without hanging the
+  executor thread.
+- **Expansion failures now logged at DEBUG level** — previously silent `except
+  Exception` swallowed the error context; now `logger.debug` records the URL and
+  exception so failures are visible in verbose logs without polluting production
+  output.
+
+### Fixed
+- Updated stale `YOUTUBE_TRACKING` comment which incorrectly said `"si"/"feature"
+  are already global`; since v1.27.0 `feature` lives only in `YOUTUBE_TRACKING`,
+  and `si` is the sole param that remains global.
+
 ## [1.27.0] - 2026-06-16
 
 ### Changed
