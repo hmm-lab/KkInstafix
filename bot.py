@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.33.0"
+__version__ = "1.34.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -2180,7 +2180,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
 
-    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, *_ = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2198,7 +2198,10 @@ async def handle_caption(update, context):
 
     logger.info("Fixed caption link in chat %s for user %s", chat_id, user_id)
     try:
-        await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
+        sent_msg = await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
+        if sent_msg and first_raw_url:
+            store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
+                          sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
     except Exception:
         logger.exception("Caption reply failed in chat %s", chat_id)
 

@@ -5,6 +5,18 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0] - 2026-06-16
+
+### Fixed
+- **`/undo` didn't work for caption-based link fixes** — `handle_caption` fixed
+  links in photo/video captions and replied with the cleaned text, but never
+  called `store_rewrite`, so the undo record was never created. Reply to any
+  bot caption-fix message with `/undo` would silently return "no record found".
+  Fixed by capturing `first_raw_url` from the `process_text` return value,
+  saving the sent message reference, and calling `store_rewrite` after a
+  successful reply — consistent with how `handle_message`, `handle_edit`, and
+  `handle_channel_post` already work.
+
 ## [1.33.0] - 2026-06-16
 
 ### Fixed
