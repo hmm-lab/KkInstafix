@@ -5,6 +5,18 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0] - 2026-06-16
+
+### Fixed
+- **`_is_restricted_sync` false-positive restriction warnings** — the phrase
+  `"restricted to"` was in `_RESTRICTION_PHRASES` and matched as a substring
+  of the first 3 KB of the embed response. This phrase appears on many
+  fully-accessible pages (privacy policies, feature descriptions, help text)
+  and caused the bot to incorrectly edit its message with a "content isn't
+  accessible" warning even when the embed worked fine. Removed the phrase;
+  the remaining five entries are platform-specific enough (e.g. "this account
+  is private", "people under 13 can't see this") to avoid false positives.
+
 ## [1.42.0] - 2026-06-16
 
 ### Fixed

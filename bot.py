@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.42.0"
+__version__ = "1.43.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1011,7 +1011,6 @@ _RESTRICTION_PHRASES = [
     "this account is private",
     "this content isn't available",
     "content not available",
-    "restricted to",
 ]
 
 
