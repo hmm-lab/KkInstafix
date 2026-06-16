@@ -5,6 +5,22 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-06-16
+
+### Added
+- **AliExpress regional domain coverage** — `ALIEXPRESS_DOMAINS` expanded from
+  3 entries to 15, covering `aliexpress.de`, `.fr`, `.es`, `.it`, `.co.uk`,
+  `.com.br`, `.nl`, `.pl`, `.at`, `.ch`, `.se`, `.be`. Tracking strip previously
+  silently skipped all regional stores.
+
+### Changed
+- **`/testall` error message names the platform** — if a platform has no sample
+  URL, the reply now says "No sample URL for **instagram**" instead of the generic
+  hint, making it clear whether it's a bot gap or a user error.
+- **Inline "already clean" hint** — when a user types a link that has no tracking
+  to remove and no provider to swap, the inline result now reads "All links already
+  clean" instead of "No supported link found", which was misleading.
+
 ## [1.24.0] - 2026-06-16
 
 ### Added

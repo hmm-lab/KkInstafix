@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.24.0"
+__version__ = "1.25.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -280,7 +280,12 @@ EBAY_TRACKING = {
     "mkcid", "mkevt", "mkpid", "epid", "nma", "ch", "var", "widget_ver",
 }
 
-ALIEXPRESS_DOMAINS = {"aliexpress.com", "aliexpress.us", "aliexpress.ru"}
+ALIEXPRESS_DOMAINS = {
+    "aliexpress.com", "aliexpress.us", "aliexpress.ru",
+    "aliexpress.fr", "aliexpress.de", "aliexpress.es", "aliexpress.it",
+    "aliexpress.co.uk", "aliexpress.com.br", "aliexpress.nl", "aliexpress.pl",
+    "aliexpress.at", "aliexpress.ch", "aliexpress.se", "aliexpress.be",
+}
 ALIEXPRESS_TRACKING = {
     "spm", "aff_platform", "aff_trace_key", "algo_expid", "algo_pvid",
     "btsid", "ws_ab_test", "pvid", "pdp_npi", "gatewayAdapt",
@@ -1838,7 +1843,11 @@ async def _cmd_testall(msg, parts, context, chat_id):
         return
     base_url = custom_url or SAMPLE_URLS.get(platform)
     if not base_url:
-        await msg.reply_text("No sample URL. Pass one: /testall instagram https://...")
+        await msg.reply_text(
+            f"No sample URL for <b>{_html.escape(platform)}</b>. "
+            f"Pass one: <code>/testall {_html.escape(platform)} https://...</code>",
+            parse_mode="HTML",
+        )
         return
     options = PROVIDERS[platform]["options"]
     emoji = PLATFORM_EMOJI.get(platform, "?")
@@ -2316,11 +2325,17 @@ async def handle_inline_query(update, context):
         )
 
     if not results:
+        if urls:
+            hint_title = "All links already clean"
+            hint_desc = "No tracking params to strip and no provider fix needed."
+        else:
+            hint_title = "No supported link found"
+            hint_desc = "Paste an Instagram, Twitter, TikTok, Reddit, or other social media link."
         results.append(
             InlineQueryResultArticle(
                 id=str(uuid.uuid4()),
-                title="No supported link found",
-                description="Paste an Instagram, Twitter, TikTok, Reddit, or other social media link.",
+                title=hint_title,
+                description=hint_desc,
                 input_message_content=InputTextMessageContent(
                     message_text="Tip: type @KkInstaFixBot followed by a social media link to get a fixed version."
                 ),

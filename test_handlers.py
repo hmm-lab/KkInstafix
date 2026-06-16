@@ -352,6 +352,16 @@ def test_inline_query_no_link_returns_hint():
     assert "No supported link" in iq.answered[0].title
 
 
+def test_inline_query_already_clean_link_returns_clean_hint():
+    # A clean link (no tracking, not a rewritable platform) should show
+    # "already clean" rather than "no supported link found".
+    fb = FakeBot()
+    iq = FakeInlineQuery("https://example.com/article")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq), FakeContext(fb)))
+    assert iq.answered and len(iq.answered) == 1
+    assert "already clean" in iq.answered[0].title.lower()
+
+
 # ── Caption / edit / channel-post handlers ───────────────────────────────────
 
 def test_handle_caption_fixes_link():

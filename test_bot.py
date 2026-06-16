@@ -827,6 +827,15 @@ def test_strip_aliexpress_tracking():
     assert "/item/12345.html" in out
 
 
+def test_aliexpress_regional_tlds_coverage():
+    for domain in ("aliexpress.de", "aliexpress.fr", "aliexpress.co.uk",
+                   "aliexpress.com.br", "aliexpress.nl", "aliexpress.pl"):
+        url = f"https://{domain}/item/12345.html?spm=xxx&aff_platform=link"
+        out = bot.strip_generic_tracking(url)
+        assert "spm=" not in out, f"spm= survived for {domain}"
+        assert "aff_platform=" not in out, f"aff_platform= survived for {domain}"
+
+
 def test_strip_pinterest_tracking():
     url = "https://pinterest.com/pin/12345/?rs=ac&amp_campaign=1"
     out = bot.strip_generic_tracking(url)
