@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.35.0"
+__version__ = "1.36.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -2184,9 +2184,6 @@ async def handle_caption(update, context):
     if not changed:
         return
 
-    for plat in fixed_platforms:
-        increment_stat(chat_id, plat, user_id)
-
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
     clean_text = format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
@@ -2199,6 +2196,8 @@ async def handle_caption(update, context):
     logger.info("Fixed caption link in chat %s for user %s", chat_id, user_id)
     try:
         sent_msg = await msg.reply_text(clean_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
+        for plat in fixed_platforms:
+            increment_stat(chat_id, plat, user_id)
         if sent_msg and first_raw_url:
             store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
                           sender_label(msg.from_user, chat_settings["sender_mode"]) or "")

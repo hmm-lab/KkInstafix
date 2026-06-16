@@ -5,6 +5,23 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0] - 2026-06-16
+
+### Fixed
+- **`handle_caption` incremented stats before the send** — the `increment_stat`
+  calls were placed BEFORE the `try` block that contains `msg.reply_text`, so a
+  failed reply (exception caught by the handler) still incremented the chat's
+  link-fix count. Moved inside the `try` block immediately after the successful
+  `reply_text`, matching the pattern already used by `handle_edit` and
+  `handle_message`.
+
+### Tests
+- **`test_handle_message_stores_rewrite_for_undo`** — verifies that after a
+  `handle_message` rewrite, `lookup_rewrite` returns the original raw URL and
+  the sender name.
+- **`test_handle_caption_stores_rewrite_for_undo`** — verifies that caption-based
+  rewrites also create a `store_rewrite` record so `/undo` works on them.
+
 ## [1.35.0] - 2026-06-16
 
 ### Fixed

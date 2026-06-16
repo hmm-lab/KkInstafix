@@ -441,3 +441,35 @@ def test_cmd_clean_inline_url():
     reply_text = msg.replies[0].text
     assert "twitter.com/u/status/1" in reply_text
     assert "t=tok" not in reply_text
+
+
+# ── /undo store_rewrite integration ──────────────────────────────────────────
+
+def test_handle_message_stores_rewrite_for_undo():
+    """After a rewrite, lookup_rewrite should return the original raw URL."""
+    cid = -1401
+    fb = FakeBot()
+    raw_url = "https://twitter.com/u/status/1"
+    msg = FakeMessage(text=raw_url, user=FakeUser(5, "Bob"),
+                      chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=401), FakeContext(fb)))
+    assert fb.sent, "message should have been rewritten and sent"
+    sent_id = fb.sent[0].message_id
+    original, sender = bot.lookup_rewrite(cid, sent_id)
+    assert original == raw_url
+    assert "Bob" in sender
+
+
+def test_handle_caption_stores_rewrite_for_undo():
+    """Caption rewrites must also create a store_rewrite record for /undo."""
+    cid = -1402
+    fb = FakeBot()
+    raw_url = "https://twitter.com/u/status/2"
+    msg = FakeMessage(caption=f"my photo {raw_url}", user=FakeUser(5, "Bob"),
+                      chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_caption(FakeUpdate(message=msg, update_id=402), FakeContext(fb)))
+    assert msg.replies, "caption handler should reply with the fixed link"
+    sent_id = msg.replies[0].message_id
+    original, sender = bot.lookup_rewrite(cid, sent_id)
+    assert original == raw_url
+    assert "Bob" in sender
