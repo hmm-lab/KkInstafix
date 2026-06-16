@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.31.0"
+__version__ = "1.32.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -742,7 +742,13 @@ def export_chat_data(chat_id):
     settings_row = conn.execute(
         "SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)
     ).fetchone()
-    settings = {k: settings_row[k] for k in DEFAULT_CHAT_SETTINGS} if settings_row else DEFAULT_CHAT_SETTINGS.copy()
+    # Fall back to the default for any key not yet present in the DB row (schema
+    # evolution: new settings added after this chat's row was created).
+    settings = (
+        {k: (settings_row[k] if k in settings_row.keys() else DEFAULT_CHAT_SETTINGS[k])
+         for k in DEFAULT_CHAT_SETTINGS}
+        if settings_row else DEFAULT_CHAT_SETTINGS.copy()
+    )
     providers = {
         row["platform"]: row["provider"]
         for row in conn.execute(
@@ -1697,16 +1703,20 @@ async def _cmd_undo(msg, parts, context, chat_id):
 
 
 async def _cmd_export(msg, parts, context, chat_id):
-    data = export_chat_data(chat_id)
-    payload = json.dumps(data, indent=2).encode("utf-8")
-    buf = io.BytesIO(payload)
-    buf.name = f"kkinstafix-chat-{chat_id}.json"
-    await context.bot.send_document(
-        chat_id=chat_id,
-        document=buf,
-        filename=buf.name,
-        caption="Chat backup. Send this file back with caption /import to restore.",
-    )
+    try:
+        data = export_chat_data(chat_id)
+        payload = json.dumps(data, indent=2).encode("utf-8")
+        buf = io.BytesIO(payload)
+        buf.name = f"kkinstafix-chat-{chat_id}.json"
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=buf,
+            filename=buf.name,
+            caption="Chat backup. Send this file back with caption /import to restore.",
+        )
+    except Exception:
+        logger.exception("_cmd_export failed in chat %s", chat_id)
+        await msg.reply_text("⚠️ Export failed — check the server logs.")
 
 
 async def _cmd_import(msg, parts, context, chat_id):
@@ -1896,7 +1906,8 @@ async def _cmd_testall(msg, parts, context, chat_id):
     )
 
     async def _test_one(key, host):
-        fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, ""))
+        # Use apply_provider so tracking is stripped, matching real bot behaviour.
+        fixed = apply_provider(base_url, platform, key)
         preview = LinkPreviewOptions(
             is_disabled=False, url=fixed,
             prefer_large_media=True, show_above_text=False,

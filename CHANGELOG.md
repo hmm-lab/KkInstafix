@@ -5,6 +5,24 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0] - 2026-06-16
+
+### Fixed
+- **`export_chat_data` KeyError on schema evolution** — the dict comprehension
+  `{k: settings_row[k] for k in DEFAULT_CHAT_SETTINGS}` raised `KeyError` when
+  a chat's DB row predated a newly-added setting column. Now falls back to the
+  `DEFAULT_CHAT_SETTINGS` value for any key not yet present in the row, so
+  `/export` works correctly across schema versions.
+- **`/testall` now strips tracking params** — the `_test_one` helper was
+  reconstructing provider URLs by substituting the host while keeping the full
+  original query string (including tracking tokens). It now uses `apply_provider()`
+  which calls `strip_tracking()`, matching the actual rewrite the bot applies to
+  real messages.
+- **`/export` now catches and reports errors** — `_cmd_export` had no try/except,
+  so any exception from `export_chat_data` or `send_document` propagated silently
+  and the user received no feedback. The handler now logs the exception and replies
+  with a user-facing error message.
+
 ## [1.31.0] - 2026-06-16
 
 ### Fixed
