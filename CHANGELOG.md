@@ -5,6 +5,22 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] - 2026-06-16
+
+### Changed
+- **`"feature"` removed from `GENERIC_TRACKING`** — `?feature=` was being
+  stripped from every URL, which could break legitimate feature-flag or
+  UI-variant parameters on non-YouTube sites. It is still stripped on YouTube
+  hosts via `YOUTUBE_TRACKING` where it is a documented share/analytics param.
+- **`strip_generic_tracking` refactored to use `HOST_TRACKING_MAP`** — the
+  nine sequential `if host in <set>` blocks are replaced by a single
+  `HOST_TRACKING_MAP.get(host)` lookup. The map is built once at import time
+  from the existing domain-set constants, so behaviour is identical but the
+  code is O(1) per call and trivially extensible.
+
+### Fixed
+- No behaviour change for any currently-tracked URL — all 130 tests pass.
+
 ## [1.26.0] - 2026-06-16
 
 ### Added

@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.26.0"
+__version__ = "1.27.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -236,7 +236,7 @@ GENERIC_TRACKING = {
     "utm_id", "utm_name", "utm_reader", "utm_social", "utm_brand",
     "fbclid", "gclid", "dclid", "msclkid", "yclid", "twclid", "ttclid",
     "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_id", "wickedid",
-    "igsh", "igshid", "si", "feature",
+    "igsh", "igshid", "si",
     # Facebook/Meta mobile share identifiers
     "mibextid", "extid",
     # Reddit web tracking
@@ -312,6 +312,24 @@ APPLE_MUSIC_TRACKING = {"itsct", "itscg", "ls", "app", "at", "ct", "itm_campaign
 VIMEO_TRACKING = {"app_id", "referrer", "from", "badge"}
 
 SOUNDCLOUD_TRACKING = {"ref", "in"}  # "si" already in GENERIC_TRACKING; "ref" is not (ambiguous globally)
+
+# Pre-built host → extra tracking params map used by strip_generic_tracking.
+# Built once at import; O(1) lookup per call instead of 10 sequential if-blocks.
+HOST_TRACKING_MAP: dict[str, frozenset] = {}
+for _h in YOUTUBE_HOSTS:
+    HOST_TRACKING_MAP[_h] = YOUTUBE_TRACKING
+for _h in AMAZON_TLDS:
+    HOST_TRACKING_MAP[_h] = AMAZON_TRACKING
+for _h in EBAY_TLDS:
+    HOST_TRACKING_MAP[_h] = EBAY_TRACKING
+for _h in ALIEXPRESS_DOMAINS:
+    HOST_TRACKING_MAP[_h] = ALIEXPRESS_TRACKING
+HOST_TRACKING_MAP["linkedin.com"] = LINKEDIN_TRACKING
+for _h in PINTEREST_DOMAINS:
+    HOST_TRACKING_MAP[_h] = PINTEREST_TRACKING
+HOST_TRACKING_MAP["music.apple.com"] = APPLE_MUSIC_TRACKING
+HOST_TRACKING_MAP["vimeo.com"] = VIMEO_TRACKING
+HOST_TRACKING_MAP["soundcloud.com"] = SOUNDCLOUD_TRACKING
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
@@ -850,24 +868,9 @@ def strip_generic_tracking(url):
         return url
     host = parsed.netloc.lower().removeprefix("www.")
     drop = set(GENERIC_TRACKING)
-    if host in YOUTUBE_HOSTS:
-        drop |= YOUTUBE_TRACKING
-    if host in AMAZON_TLDS:
-        drop |= AMAZON_TRACKING
-    if host in EBAY_TLDS:
-        drop |= EBAY_TRACKING
-    if host in ALIEXPRESS_DOMAINS:
-        drop |= ALIEXPRESS_TRACKING
-    if host == "linkedin.com":
-        drop |= LINKEDIN_TRACKING
-    if host in PINTEREST_DOMAINS:
-        drop |= PINTEREST_TRACKING
-    if host == "music.apple.com":
-        drop |= APPLE_MUSIC_TRACKING
-    if host == "vimeo.com":
-        drop |= VIMEO_TRACKING
-    if host == "soundcloud.com":
-        drop |= SOUNDCLOUD_TRACKING
+    host_extra = HOST_TRACKING_MAP.get(host)
+    if host_extra:
+        drop |= host_extra
     drop_lower = {d.lower() for d in drop}
     kept = {
         k: v
