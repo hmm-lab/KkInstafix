@@ -5,6 +5,25 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0] - 2026-06-16
+
+### Fixed
+- **`handle_import_document` crashed on whitespace-only captions** —
+  `msg.caption.split()[0]` raised `IndexError` when the caption contained
+  only whitespace (e.g. a single space). The `not msg.caption` guard on the
+  preceding line passes because `" "` is truthy. Fixed by splitting first and
+  checking that the result is non-empty before indexing.
+- **`handle_edit` ignored the `ignore_forwards` setting** — edited forwarded
+  messages were always processed even when the chat had "ignore forwards"
+  enabled, because `handle_edit` lacked the `is_forwarded` check that
+  `handle_message` and `handle_caption` both have. Added the check
+  immediately after the `enabled` guard, consistent with the other handlers.
+- **Inline query returned duplicate results for tracking-variant URLs** —
+  when a query contained multiple raw URLs that stripped to the same fixed
+  value (e.g. `instagram.com/p/X?igsh=1` and `instagram.com/p/X?igsh=2`),
+  both were added to `results` producing identical cards. Added a
+  `seen_fixed` set to skip already-added fixed URLs.
+
 ## [1.40.0] - 2026-06-16
 
 ### Fixed

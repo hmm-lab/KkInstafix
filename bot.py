@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.40.0"
+__version__ = "1.41.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -2247,6 +2247,8 @@ async def handle_edit(update, context):
 
     if not chat_settings["enabled"]:
         return
+    if chat_settings.get("ignore_forwards", 1) and is_forwarded(msg):
+        return
     if is_user_muted(chat_id, user_id):
         return
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
@@ -2359,7 +2361,8 @@ async def handle_import_document(update, context):
     msg = update.message
     if not msg or not msg.document or not msg.caption:
         return
-    if not msg.caption.split()[0].lower().startswith("/import"):
+    _cap_parts = msg.caption.split()
+    if not _cap_parts or not _cap_parts[0].lower().startswith("/import"):
         return
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
@@ -2381,11 +2384,13 @@ async def handle_inline_query(update, context):
 
     chat_settings = DEFAULT_CHAT_SETTINGS.copy()
     results = []
+    seen_fixed: set = set()
     urls = URL_RE.findall(text)
     for raw in urls[:5]:
         fixed, platform, original, preview = await fix_url(raw, 0, chat_settings)
-        if fixed == raw:
+        if fixed == raw or fixed in seen_fixed:
             continue
+        seen_fixed.add(fixed)
         if platform:
             title = f"{PLATFORM_EMOJI.get(platform, '🔗')} Fix {platform} link"
         else:
