@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.17.0"
+__version__ = "1.18.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -256,10 +256,12 @@ URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # which previews more reliably than the original path form.
 YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]+)", re.IGNORECASE)
 YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com"}
+# youtu.be/<id> is a pure path rewrite to the canonical watch URL — no network.
+YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "youtu.be", "t.co"}
+SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "t.co"}
 _expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
 _EXPAND_CACHE_MAX = 2000
 HEALTH_CACHE: dict = {}
@@ -952,6 +954,21 @@ async def fix_url(raw, chat_id, chat_settings):
     original_url = url  # pre-expansion URL for dedup and non-platform comparison
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
+    # youtu.be is a pure path rewrite to the canonical watch URL — it must never
+    # be expanded over HTTP. From a server IP that redirect can land on a Google
+    # CAPTCHA page (google.com/sorry/...), so we rewrite the path directly and
+    # drop share/tracking params, keeping only a t/start timestamp.
+    if host == "youtu.be":
+        m = YOUTU_BE_PATH_RE.match(parsed.path)
+        if m:
+            watch = "https://www.youtube.com/watch?v=" + m.group(1)
+            q = parse_qs(parsed.query)
+            for tkey in ("t", "start"):
+                if q.get(tkey):
+                    watch += f"&{tkey}=" + q[tkey][0]
+                    break
+            return watch + tail, None, None, None
+        return raw, None, None, None
     # Expand short-link and share-link redirects before platform detection.
     # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, t.co,
     # plus path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and

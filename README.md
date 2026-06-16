@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.17.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.18.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -15,7 +15,7 @@ Current version: **1.17.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - Preserves reply chains when reposting fixed links.
 - Multi-link support: messages with more than one link get all links fixed.
 - Supports captioned media posts with links.
-- Short-link expansion: `vm.tiktok.com`, `redd.it`, `youtu.be`, etc. are followed to the real URL first.
+- Short-link expansion: `vm.tiktok.com`, `redd.it`, `b23.tv`, etc. are followed to the real URL first (`youtu.be` and YouTube Shorts/Live are rewritten by path, no network).
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
@@ -129,11 +129,10 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `reddit.com/r/<sub>/s/<id>` → Reddit share links, expanded to the full post URL
 - `tiktok.com/t/<id>` → TikTok share links, expanded to the full video URL
 - `b23.tv/...` → expanded to full `bilibili.com/video/...`
-- `youtu.be/VIDEO_ID` → expanded to `youtube.com/watch?v=VIDEO_ID` (tracking stripped)
 - `instagram.com/share/<id>` → expanded to the real post URL before provider rewriting
 - `t.co/<id>` → Twitter's link wrapper, unwrapped to its target (then fixed or tracking-stripped)
 
-YouTube `/shorts/<id>` and `/live/<id>` URLs (on `youtube.com` and `m.youtube.com`) are normalized to a canonical `youtube.com/watch?v=<id>` link — a `t`/`start` timestamp is kept, share/tracking params are dropped. This is a path rewrite, not a redirect, so it works without network access.
+YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on `youtube.com` and `m.youtube.com`) are normalized to a canonical `youtube.com/watch?v=<id>` link — a `t`/`start` timestamp is kept, share/tracking params (`?si=`, `?is=`, `?feature=`) are dropped. This is a path rewrite, **not** a redirect, so it works without network access — important because following a `youtu.be` redirect from a server IP can hit a Google CAPTCHA page instead of the video.
 
 ## Anti-spam behavior
 

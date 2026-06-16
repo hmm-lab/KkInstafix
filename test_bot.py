@@ -482,8 +482,42 @@ def test_tiktok_t_share_is_short_path():
     assert re.match(r"^/t/", "/t/ZSabc/", re.IGNORECASE)
 
 
-def test_youtu_be_in_short_link_domains():
-    assert "youtu.be" in bot.SHORT_LINK_DOMAINS
+def test_youtu_be_not_network_expanded():
+    # youtu.be is a pure path rewrite, never an HTTP redirect — expanding it
+    # from a server IP can land on a Google CAPTCHA (google.com/sorry/...).
+    assert "youtu.be" not in bot.SHORT_LINK_DOMAINS
+
+
+def test_fix_url_youtu_be_path_rewrite_no_network():
+    import asyncio
+    bot.init_db()
+    settings = bot.get_chat_settings(-100_808_002)
+
+    async def fixed(u):
+        return (await bot.fix_url(u, -100_808_002, settings))[0]
+
+    # Real-world report: youtu.be/<id>?is=<token> must become a clean watch URL
+    # without any network call (and never a google.com/sorry redirect).
+    assert asyncio.run(fixed("https://youtu.be/SIYjCMpsDXI?is=oTJnkfU00tpjtqHG")) == \
+        "https://www.youtube.com/watch?v=SIYjCMpsDXI"
+    # ?si= variant too.
+    assert asyncio.run(fixed("https://youtu.be/pIOGxOaST_s?si=track")) == \
+        "https://www.youtube.com/watch?v=pIOGxOaST_s"
+    # A timestamp is preserved.
+    assert asyncio.run(fixed("https://youtu.be/abc123?t=42&si=x")) == \
+        "https://www.youtube.com/watch?v=abc123&t=42"
+
+
+def test_fix_url_youtu_be_returns_no_preview():
+    import asyncio
+    bot.init_db()
+    settings = bot.get_chat_settings(-100_808_002)
+    fixed, platform, original, preview = asyncio.run(
+        bot.fix_url("https://youtu.be/SIYjCMpsDXI?is=tok", -100_808_002, settings)
+    )
+    # Plain link, no rich preview attached.
+    assert platform is None
+    assert preview is None
 
 
 def test_instagram_share_path_triggers_expansion():

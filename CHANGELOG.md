@@ -5,6 +5,19 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-06-16
+
+### Fixed
+- **`youtu.be` no longer expanded over the network** — `youtu.be/<id>` was in
+  the short-link set, so the bot followed it with an HTTP request before
+  rewriting. From a server IP that redirect can land on a Google CAPTCHA page
+  (`google.com/sorry/index?continue=...`), and that garbage URL was reposted
+  instead of the video. `youtu.be` is now a pure, deterministic *path* rewrite
+  to `youtube.com/watch?v=<id>` — no network call — dropping share/tracking
+  params (`?is=`, `?si=`, `?feature=`) while keeping a `t`/`start` timestamp.
+  The result is a plain link with no rich preview, matching the existing
+  Shorts/Live normalization.
+
 ## [1.17.0] - 2026-06-16
 
 ### Fixed
