@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.34.0"
+__version__ = "1.35.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1034,7 +1034,7 @@ async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str
             message_id=msg_id,
             text=new_text,
             parse_mode="HTML",
-            link_preview_options=preview,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             reply_markup=reply_markup,
         )
     except Exception:
@@ -2180,7 +2180,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
 
-    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2202,6 +2202,10 @@ async def handle_caption(update, context):
         if sent_msg and first_raw_url:
             store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
                           sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
+        if sent_msg and first_preview_url and fixed_count == 1:
+            asyncio.create_task(
+                _warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, clean_text)
+            )
     except Exception:
         logger.exception("Caption reply failed in chat %s", chat_id)
 
@@ -2228,7 +2232,7 @@ async def handle_edit(update, context):
     if not URL_RE.search(msg.text):
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2248,6 +2252,10 @@ async def handle_edit(update, context):
         if sent_msg and first_raw_url:
             store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
                           sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
+        if sent_msg and first_preview_url and fixed_count == 1:
+            asyncio.create_task(
+                _warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, post_text, preview=preview)
+            )
     except Exception:
         logger.exception("Edit handler reply failed in chat %s", chat_id)
 
@@ -2294,7 +2302,7 @@ async def handle_channel_post(update, context):
     if not chat_settings["enabled"]:
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2317,6 +2325,10 @@ async def handle_channel_post(update, context):
             increment_stat(chat_id, plat, 0)
         if sent and first_raw_url:
             store_rewrite(chat_id, sent.message_id, first_raw_url, "")
+        if sent and first_preview_url and fixed_count == 1:
+            asyncio.create_task(
+                _warn_if_restricted(context, chat_id, sent.message_id, first_preview_url, new_text, preview=preview)
+            )
     except Exception:
         logger.exception("Channel post reply failed in chat %s", chat_id)
 

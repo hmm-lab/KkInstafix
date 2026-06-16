@@ -5,6 +5,25 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0] - 2026-06-16
+
+### Fixed
+- **Restriction warning missing in caption/edit/channel handlers** —
+  `_warn_if_restricted` (the background task that edits the bot's message to
+  warn when the fixed URL leads to private or age-restricted content) was only
+  wired into `handle_message`. `handle_caption`, `handle_edit`, and
+  `handle_channel_post` sent the fixed link but never checked for restriction
+  pages. All three handlers now spawn `_warn_if_restricted` under the same
+  `fixed_count == 1` guard used in `handle_message`, and the `fixed_count`
+  element was previously discarded (`_`) in those callers — now properly
+  captured.
+- **Restriction warning kept the broken preview** — when `_warn_if_restricted`
+  edited the bot's message to append the ⚠️ notice, it passed through the
+  original `LinkPreviewOptions` (pointing at the now-known-inaccessible URL),
+  causing Telegram to keep attempting a preview for content that can't be shown.
+  The edit now passes `LinkPreviewOptions(is_disabled=True)` so the preview is
+  suppressed alongside the warning text.
+
 ## [1.34.0] - 2026-06-16
 
 ### Fixed
