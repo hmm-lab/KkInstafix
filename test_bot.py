@@ -408,6 +408,44 @@ def test_import_rejects_bad_format():
     assert "unsupported" in msg
 
 
+def test_import_rejects_out_of_range_int_settings():
+    bot.init_db()
+    cid = -100_777_001
+    # dedup_window=0 is below the 5–3600 valid range and must be rejected
+    data = {
+        "version": 1,
+        "chat_id": cid,
+        "settings": {"dedup_window": 0, "rate_limit": 0, "rate_window": 0},
+        "providers": {},
+        "muted_users": [],
+    }
+    ok, _ = bot.import_chat_data(cid, data)
+    assert ok is True
+    settings = bot.get_chat_settings(cid)
+    # all three should fall back to defaults, not the imported zeros
+    assert settings["dedup_window"] == bot.DEFAULT_CHAT_SETTINGS["dedup_window"]
+    assert settings["rate_limit"] == bot.DEFAULT_CHAT_SETTINGS["rate_limit"]
+    assert settings["rate_window"] == bot.DEFAULT_CHAT_SETTINGS["rate_window"]
+
+
+def test_import_accepts_in_range_int_settings():
+    bot.init_db()
+    cid = -100_777_002
+    data = {
+        "version": 1,
+        "chat_id": cid,
+        "settings": {"dedup_window": 5, "rate_limit": 100, "rate_window": 3600},
+        "providers": {},
+        "muted_users": [],
+    }
+    ok, _ = bot.import_chat_data(cid, data)
+    assert ok is True
+    settings = bot.get_chat_settings(cid)
+    assert settings["dedup_window"] == 5
+    assert settings["rate_limit"] == 100
+    assert settings["rate_window"] == 3600
+
+
 # ── DEFAULT_CHAT_SETTINGS ────────────────────────────────────────────────────
 
 def test_default_settings_keys_match_db():

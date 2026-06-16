@@ -5,6 +5,20 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0] - 2026-06-16
+
+### Fixed
+- **`/import` accepted out-of-range integer settings** — `import_chat_data`
+  validated `dedup_window`, `rate_limit`, and `rate_window` only as non-negative
+  integers (`value < 0`), allowing values like `0` or `999999` that would break
+  runtime behaviour. A `dedup_window` of `0` causes `seen_recent` to never fire
+  (dedup disabled); a `rate_limit` of `0` blocks every message; a `rate_window`
+  of `0` or extremely large value produces nonsensical rate-limit windows.
+  Replaced the shared `_INT_POS_SETTINGS` set with a `_INT_POS_BOUNDS` dict
+  mapping each key to `(min, max)` and added a `lo <= value <= hi` guard,
+  matching the bounds enforced by the corresponding admin commands:
+  `dedup_window` 5–3600, `rate_limit` 1–100, `rate_window` 5–3600.
+
 ## [1.38.0] - 2026-06-16
 
 ### Fixed

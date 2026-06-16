@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.38.0"
+__version__ = "1.39.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -779,7 +779,11 @@ def import_chat_data(chat_id, data):
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
     _INT_BOOL_SETTINGS = {"enabled", "ignore_forwards", "provider_fallback", "text_spam"}
-    _INT_POS_SETTINGS = {"dedup_window", "rate_limit", "rate_window"}
+    _INT_POS_BOUNDS = {
+        "dedup_window": (5, 3600),
+        "rate_limit": (1, 100),
+        "rate_window": (5, 3600),
+    }
     _SENDER_MODES = {"first_name", "username", "full_name", "none"}
     _CAPTION_STYLES = {"reply"}
     ensure_chat_settings(chat_id)
@@ -790,8 +794,9 @@ def import_chat_data(chat_id, data):
         if key in _INT_BOOL_SETTINGS:
             if not isinstance(value, int) or value not in (0, 1):
                 continue
-        elif key in _INT_POS_SETTINGS:
-            if not isinstance(value, int) or value < 0:
+        elif key in _INT_POS_BOUNDS:
+            lo, hi = _INT_POS_BOUNDS[key]
+            if not isinstance(value, int) or not (lo <= value <= hi):
                 continue
         elif key == "sender_mode":
             if value not in _SENDER_MODES:
