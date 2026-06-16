@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.30.0"
+__version__ = "1.31.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -771,32 +771,47 @@ def import_chat_data(chat_id, data):
     settings = data.get("settings", {})
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
+    _INT_BOOL_SETTINGS = {"enabled", "ignore_forwards", "provider_fallback", "text_spam"}
+    _INT_POS_SETTINGS = {"dedup_window", "rate_limit", "rate_window"}
+    _SENDER_MODES = {"first_name", "username", "full_name", "none"}
     ensure_chat_settings(chat_id)
     conn = db_connect()
     for key, value in settings.items():
-        if key in DEFAULT_CHAT_SETTINGS:
-            conn.execute(
-                f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",
-                (value, chat_id),
-            )
+        if key not in DEFAULT_CHAT_SETTINGS:
+            continue
+        if key in _INT_BOOL_SETTINGS:
+            if not isinstance(value, int) or value not in (0, 1):
+                continue
+        elif key in _INT_POS_SETTINGS:
+            if not isinstance(value, int) or value < 0:
+                continue
+        elif key == "sender_mode":
+            if value not in _SENDER_MODES:
+                continue
+        conn.execute(
+            f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",
+            (value, chat_id),
+        )
     for platform, provider in providers.items():
         if platform in PROVIDERS and provider in PROVIDERS[platform]["options"]:
             conn.execute(
                 "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
                 (chat_id, platform, provider),
             )
+    imported_mutes = 0
     for user_id in muted:
         if isinstance(user_id, int):
             conn.execute(
                 "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
                 (chat_id, user_id),
             )
+            imported_mutes += 1
     conn.commit()
     # Invalidate in-memory caches so changes take effect immediately
     _settings_cache.pop(chat_id, None)
     _providers_cache.pop(chat_id, None)
     _muted_cache.pop(chat_id, None)
-    msg = f"imported {len(providers)} providers, {len(muted)} mutes"
+    msg = f"imported {len(providers)} providers, {imported_mutes} mutes"
     if source_chat and source_chat != chat_id:
         msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
     return True, msg
@@ -2545,6 +2560,7 @@ async def handle_callback(update, context):
             )
             await cq.answer(f"✅ {platform} → {key}")
             return
+        await cq.answer("Unknown action.", show_alert=True)
     except Exception:
         logger.exception("Callback handling failed")
         await cq.answer("Something went wrong.", show_alert=True)

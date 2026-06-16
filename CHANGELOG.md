@@ -5,6 +5,27 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] - 2026-06-16
+
+### Fixed
+- **Callback spinner never resolved on unknown menu action** — if a callback
+  payload started with `m:` but didn't match any of the four handled patterns
+  (`m:close`, `m:back`, `m:p:*`, `m:s:*`), the handler exited the `try` block
+  without calling `cq.answer()`, leaving Telegram's loading spinner hung
+  indefinitely. Added a catch-all `await cq.answer("Unknown action.")` at the
+  end of the admin menu `try` block.
+- **Import muted-user count was incorrect** — `/import` reported `len(muted)`
+  (the total in the backup file) instead of the number actually written to the
+  DB, silently discarding non-integer user IDs without counting them. Now counts
+  only entries that pass the `isinstance(user_id, int)` guard.
+- **Import settings accepted invalid types** — `/import` inserted chat settings
+  from a backup without type validation; a corrupted or hand-edited JSON with
+  e.g. `"dedup_window": "sixty"` would be written to the DB and later crash the
+  bot with a `ValueError` on `int(chat_settings["dedup_window"])`. Settings are
+  now validated before insertion: boolean flags must be 0 or 1, positive-integer
+  fields must be non-negative ints, and `sender_mode` must be one of the four
+  valid literals.
+
 ## [1.30.0] - 2026-06-16
 
 ### Fixed
