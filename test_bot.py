@@ -581,6 +581,42 @@ def test_clean_url_generic_keeps_fragment_and_ambiguous_params():
     assert "s=hello" in bot.clean_url("https://blog.example.com/?s=hello")
 
 
+def test_clean_url_expanded_expands_short_link():
+    import asyncio
+    # Seed the expand cache so no real HTTP call is made.
+    short = "https://bit.ly/testlink"
+    bot._expand_cache[short] = "https://example.com/article?utm_source=x&utm_medium=y"
+    try:
+        result = asyncio.run(bot.clean_url_expanded(short))
+        assert result == "https://example.com/article"
+    finally:
+        bot._expand_cache.pop(short, None)
+
+
+def test_clean_url_expanded_amazon_asin_after_expansion():
+    import asyncio
+    short = "https://amzn.to/cleantest"
+    bot._expand_cache[short] = \
+        "https://www.amazon.com/Title/dp/B0TESTTEST/ref=sr_1_1?tag=aff"
+    try:
+        result = asyncio.run(bot.clean_url_expanded(short))
+        assert result == "https://www.amazon.com/dp/B0TESTTEST"
+    finally:
+        bot._expand_cache.pop(short, None)
+
+
+def test_amazon_path_re_mobile_patterns():
+    # gp/aw/d (mobile) and gp/offer-listing must also extract the ASIN.
+    # ASINs are exactly 10 alphanumeric characters.
+    mobile = "/gp/aw/d/B0MOBILE12/ref=sr"
+    m = bot.AMAZON_PATH_RE.search(mobile)
+    assert m and m.group(1).upper() == "B0MOBILE12"
+
+    offers = "/gp/offer-listing/B0OFFERS45"
+    m = bot.AMAZON_PATH_RE.search(offers)
+    assert m and m.group(1).upper() == "B0OFFERS45"
+
+
 def test_clean_url_keeps_meaningful_platform_params():
     assert "context=3" in bot.clean_url("https://www.reddit.com/r/x/comments/1/y?context=3")
 

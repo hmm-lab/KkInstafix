@@ -5,6 +5,19 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] - 2026-06-16
+
+### Fixed
+- **`/clean` now expands short links before cleaning** — previously `/clean bit.ly/xyz`
+  returned the short URL unchanged because `bit.ly` has no tracking params and the
+  expansion step was never reached. A new `clean_url_expanded` async helper mirrors
+  `fix_url`'s short-link expansion (and Amazon ASIN extraction) so `/clean` on any
+  shortener produces the expanded, tracking-stripped destination URL.
+- **Amazon ASIN regex covers mobile and offer-listing paths** — `gp/aw/d/<ASIN>`
+  (Amazon mobile) and `gp/offer-listing/<ASIN>` were not matched by `AMAZON_PATH_RE`
+  and fell through to generic tracking strip, leaving the product path with a long
+  `/ref=...` suffix. Both patterns are now included and normalise to `/dp/<ASIN>`.
+
 ## [1.20.0] - 2026-06-16
 
 ### Fixed

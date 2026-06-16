@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.20.0"
+__version__ = "1.21.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -264,7 +264,8 @@ AMAZON_TRACKING = {
     "ie", "hvadid", "hvpos", "hvnetw", "hvrand", "hvdev", "hvtargid",
 }
 AMAZON_PATH_RE = re.compile(
-    r"/(?:dp|gp/product|exec/obidos/ASIN|o/ASIN)/([A-Z0-9]{10})", re.IGNORECASE
+    r"/(?:dp|gp/product|gp/aw/d|gp/offer-listing|exec/obidos/ASIN|o/ASIN)/([A-Z0-9]{10})",
+    re.IGNORECASE,
 )
 
 EBAY_TLDS = {
@@ -909,6 +910,27 @@ def clean_url(url):
     return strip_generic_tracking(url)
 
 
+async def clean_url_expanded(url):
+    """Like clean_url but expands short links first.
+
+    Powers /clean so that `/clean bit.ly/xyz` returns the expanded,
+    tracking-stripped destination rather than the short URL unchanged.
+    Also handles Amazon ASIN canonicalisation after expansion.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host in SHORT_LINK_DOMAINS:
+        url = await expand_short_url(url)
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().removeprefix("www.")
+    # Amazon: extract canonical /dp/ASIN path after expansion.
+    if host in AMAZON_TLDS:
+        m = AMAZON_PATH_RE.search(parsed.path)
+        if m:
+            return f"{parsed.scheme}://{parsed.netloc}/dp/{m.group(1).upper()}"
+    return clean_url(url)
+
+
 def _check_url_sync(url: str) -> bool:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
@@ -1492,7 +1514,7 @@ async def _cmd_clean(msg, parts, context, chat_id):
     changed_any = False
     for raw in urls:
         url, _tail = trim(raw)
-        stripped = clean_url(url)
+        stripped = await clean_url_expanded(url)
         if stripped != url:
             changed_any = True
         if stripped not in seen:
