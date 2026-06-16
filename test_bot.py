@@ -793,6 +793,22 @@ def test_host_tracking_map_consistency():
     assert bot.HOST_TRACKING_MAP.get("soundcloud.com") == bot.SOUNDCLOUD_TRACKING
 
 
+def test_process_text_two_tracking_variants_same_canonical():
+    """Two different tracking variants of the same URL in one message must both be cleaned."""
+    import asyncio
+    bot.init_db()
+    bot._recent_mem.clear()
+    cid = -100_778_050
+    settings = bot.get_chat_settings(cid)
+    raw1 = "https://example.com/page?utm_id=1"
+    raw2 = "https://example.com/page?utm_id=2"
+    text = f"{raw1} and {raw2}"
+    new_text, changed, *_ = asyncio.run(bot.process_text(text, cid, settings))
+    assert changed
+    assert "utm_id=1" not in new_text, "first tracking variant should be cleaned"
+    assert "utm_id=2" not in new_text, "second tracking variant should be cleaned"
+
+
 def test_clean_url_expanded_tco_twitter_strips_share_params():
     import asyncio
     short = "https://t.co/twittertest1"

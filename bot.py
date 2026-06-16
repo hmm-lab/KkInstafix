@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.29.0"
+__version__ = "1.30.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1211,9 +1211,12 @@ async def process_text(text, chat_id, chat_settings):
         fixed, platform, original, preview = await fix_url(raw, chat_id, chat_settings)
         if fixed == raw:
             continue
+        # Record the replacement before the dedup check so that two different
+        # raw tokens that clean to the same canonical URL (e.g. ?utm_id=1 and
+        # ?utm_id=2) both get rewritten in the message text.
+        replacements[raw] = fixed
         if original and seen_recent("fix", chat_id, original, dedup_window):
             continue
-        replacements[raw] = fixed
         changed = True
         fixed_count += 1
         if platform:
@@ -1531,6 +1534,18 @@ async def _cmd_clean(msg, parts, context, chat_id):
         source = " ".join(parts[1:])
 
     urls = URL_RE.findall(source)
+    # Telegram text_link entities store the URL in entity metadata, not in the
+    # visible text — regex can't find them.  Fall back to parse_entities().
+    if not urls and msg.reply_to_message:
+        reply = msg.reply_to_message
+        try:
+            entity_map = reply.parse_entities(types=["text_link", "url"]) or {}
+            for ent, etxt in entity_map.items():
+                url = getattr(ent, "url", None) or etxt
+                if url and url not in urls:
+                    urls.append(url)
+        except Exception:
+            pass
     if not urls:
         await msg.reply_text(
             "Reply to a message with a link, or use <code>/clean &lt;url&gt;</code>.",

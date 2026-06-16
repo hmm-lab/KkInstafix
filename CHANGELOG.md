@@ -5,6 +5,26 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0] - 2026-06-16
+
+### Fixed
+- **`process_text` dedup bug** — when a message contained two different tracking
+  variants of the same canonical URL (e.g. `?utm_id=1` and `?utm_id=2`), only
+  the first was cleaned; the second was silently skipped because `seen_recent`
+  records the canonical URL on its first call, causing the second call to fire the
+  dedup guard. Fixed by recording the token→replacement mapping before the dedup
+  check so both raw tokens are rewritten in the text. The dedup still prevents
+  counting the same canonical URL twice across messages.
+- **`/clean` now extracts Telegram `text_link` entities** — when a reply message
+  contains a clickable hyperlink (e.g. Markdown `[label](url)` formatted by the
+  sender), the URL lives in the entity metadata, not the visible text, so the regex
+  missed it and the command replied "no links found". The handler now falls back to
+  `parse_entities(types=["text_link", "url"])` when the regex returns nothing.
+
+### Tests
+- **`test_process_text_two_tracking_variants_same_canonical`** — verifies that two
+  `utm_id=` variants in one message are both stripped from the output text.
+
 ## [1.29.0] - 2026-06-16
 
 ### Changed
