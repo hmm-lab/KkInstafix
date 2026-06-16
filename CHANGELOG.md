@@ -5,6 +5,21 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] - 2026-06-16
+
+### Added
+- **Pinterest regional domain coverage** — `PINTEREST_DOMAINS` expanded from
+  12 to 24 entries, adding `.nl`, `.be`, `.in`, `.jp`, `.ru`, `.mx`, `.nz`,
+  `.ie`, `.sg`, `.cz`, `.gr`, `.br`. Tracking strip now works on all
+  major regional Pinterest sites.
+- **LinkedIn tracking params** — `sessionRedirect`, `liuid`, and `midMgmt`
+  added to `LINKEDIN_TRACKING`. These are seen on LinkedIn mobile share links.
+
+### Changed
+- **Welcome message and `/help` updated** — `WELCOME_TEXT` now mentions
+  tracking strip for Amazon, eBay, AliExpress, and LinkedIn. The `/clean`
+  help line notes that it expands short links before cleaning.
+
 ## [1.25.0] - 2026-06-16
 
 ### Added

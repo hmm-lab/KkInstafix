@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.25.0"
+__version__ = "1.26.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -294,12 +294,16 @@ ALIEXPRESS_TRACKING = {
 LINKEDIN_TRACKING = {
     "trackingId", "lipi", "src", "trk", "rcm", "refId",
     "midToken", "midSig", "trkInfo", "original_referer",
+    "sessionRedirect", "liuid", "midMgmt",
 }
 
 PINTEREST_DOMAINS = {
     "pinterest.com", "pinterest.co.uk", "pinterest.de", "pinterest.fr",
     "pinterest.es", "pinterest.it", "pinterest.com.au", "pinterest.ca",
     "pinterest.at", "pinterest.ch", "pinterest.se", "pinterest.pt",
+    "pinterest.nl", "pinterest.be", "pinterest.in", "pinterest.jp",
+    "pinterest.ru", "pinterest.mx", "pinterest.nz", "pinterest.ie",
+    "pinterest.sg", "pinterest.cz", "pinterest.gr", "pinterest.br",
 }
 PINTEREST_TRACKING = {"rs", "amp"}
 
@@ -412,8 +416,8 @@ ABOUT_TEXT = (
 
 WELCOME_TEXT = (
     "👋 <b>Hi! I'm KkInstafix.</b>\n\n"
-    "I automatically rewrite Instagram, Twitter/X, TikTok, Reddit and other social media links "
-    "so Telegram shows proper previews.\n\n"
+    "I automatically rewrite social media links so Telegram shows proper previews, "
+    "and strip tracking from Amazon, eBay, AliExpress, LinkedIn, and other sites.\n\n"
     "<b>Just send or post a link and I'll fix it automatically.</b>\n\n"
     "Admins: use /menu to configure providers, /help for all commands."
 )
@@ -1480,7 +1484,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/status — current chat settings\n"
         "/stats — link-fix counts and top senders\n"
         "/undo — reply to a bot message to reveal the original link\n"
-        "/clean — strip tracking from a replied link (or /clean &lt;url&gt;)\n"
+        "/clean — strip tracking from a replied link (or /clean &lt;url&gt;); expands short links\n"
         "/about — credits\n"
         "/version — show the bot version\n"
         "/mehrab · /genius — custom image / video\n\n"

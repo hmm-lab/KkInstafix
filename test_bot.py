@@ -794,11 +794,13 @@ def test_amazon_tlds_coverage():
 
 
 def test_strip_linkedin_tracking():
-    url = "https://linkedin.com/feed/update/test?trackingId=xxx&lipi=yyy&src=zzz"
+    url = "https://linkedin.com/feed/update/test?trackingId=xxx&lipi=yyy&src=zzz&sessionRedirect=abc&liuid=u1"
     out = bot.strip_generic_tracking(url)
     assert "trackingId=" not in out
     assert "lipi=" not in out
     assert "src=" not in out
+    assert "sessionRedirect=" not in out
+    assert "liuid=" not in out
     assert "/feed/update/test" in out
 
 
@@ -841,6 +843,14 @@ def test_strip_pinterest_tracking():
     out = bot.strip_generic_tracking(url)
     assert "rs=" not in out
     assert "amp=" not in out or "amp_campaign" not in out
+
+
+def test_pinterest_regional_tlds_coverage():
+    for domain in ("pinterest.nl", "pinterest.be", "pinterest.in", "pinterest.jp",
+                   "pinterest.ru", "pinterest.mx", "pinterest.br"):
+        url = f"https://{domain}/pin/12345/?rs=ac"
+        out = bot.strip_generic_tracking(url)
+        assert "rs=" not in out, f"rs= survived for {domain}"
 
 
 def test_strip_apple_music_tracking():
