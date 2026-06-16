@@ -775,6 +775,37 @@ def test_platform_short_links_in_short_link_domains():
         assert domain in bot.SHORT_LINK_DOMAINS, f"{domain} missing from SHORT_LINK_DOMAINS"
 
 
+def test_host_tracking_map_consistency():
+    # Every domain set must be fully covered by HOST_TRACKING_MAP.
+    for h in bot.YOUTUBE_HOSTS:
+        assert bot.HOST_TRACKING_MAP.get(h) == bot.YOUTUBE_TRACKING, h
+    for h in bot.AMAZON_TLDS:
+        assert bot.HOST_TRACKING_MAP.get(h) == bot.AMAZON_TRACKING, h
+    for h in bot.EBAY_TLDS:
+        assert bot.HOST_TRACKING_MAP.get(h) == bot.EBAY_TRACKING, h
+    for h in bot.ALIEXPRESS_DOMAINS:
+        assert bot.HOST_TRACKING_MAP.get(h) == bot.ALIEXPRESS_TRACKING, h
+    assert bot.HOST_TRACKING_MAP.get("linkedin.com") == bot.LINKEDIN_TRACKING
+    for h in bot.PINTEREST_DOMAINS:
+        assert bot.HOST_TRACKING_MAP.get(h) == bot.PINTEREST_TRACKING, h
+    assert bot.HOST_TRACKING_MAP.get("music.apple.com") == bot.APPLE_MUSIC_TRACKING
+    assert bot.HOST_TRACKING_MAP.get("vimeo.com") == bot.VIMEO_TRACKING
+    assert bot.HOST_TRACKING_MAP.get("soundcloud.com") == bot.SOUNDCLOUD_TRACKING
+
+
+def test_clean_url_expanded_tco_twitter_strips_share_params():
+    import asyncio
+    short = "https://t.co/twittertest1"
+    bot._expand_cache[short] = "https://twitter.com/user/status/123456789?s=20&t=sharetoken"
+    try:
+        result = asyncio.run(bot.clean_url_expanded(short))
+        assert "s=20" not in result
+        assert "t=sharetoken" not in result
+        assert "twitter.com/user/status/123456789" in result
+    finally:
+        bot._expand_cache.pop(short, None)
+
+
 # ── Platform-specific tracking stripping ─────────────────────────────────────
 
 def test_strip_amazon_tracking():

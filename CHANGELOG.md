@@ -5,6 +5,23 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-06-16
+
+### Changed
+- **Dead code removed from `youtube_watch` branch in `fix_url`** — `get_platform`
+  already verifies `YOUTUBE_PATH_RE` matches before returning `"youtube_watch"`, so
+  the inner `if m:` guard and its unreachable `return raw` fallback were dead.
+  Removed the redundant check; added a clarifying comment.
+
+### Tests
+- **`test_host_tracking_map_consistency`** — verifies every domain set
+  (`YOUTUBE_HOSTS`, `AMAZON_TLDS`, `EBAY_TLDS`, `ALIEXPRESS_DOMAINS`, `LINKEDIN`,
+  `PINTEREST_DOMAINS`, `APPLE_MUSIC`, `VIMEO`, `SOUNDCLOUD`) is fully covered by
+  `HOST_TRACKING_MAP` with the correct tracking set value.
+- **`test_clean_url_expanded_tco_twitter_strips_share_params`** — verifies that
+  `clean_url_expanded` on a `t.co` short link that resolves to a Twitter URL
+  strips both the global `?s=` param and the Twitter-specific `?t=` share token.
+
 ## [1.28.0] - 2026-06-16
 
 ### Changed

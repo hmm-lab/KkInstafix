@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.28.0"
+__version__ = "1.29.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1144,17 +1144,17 @@ async def fix_url(raw, chat_id, chat_settings):
     if platform == "instagram" and not INSTAGRAM_CONTENT_RE.match(parsed.path):
         return raw, None, None, None
     if platform == "youtube_watch":
+        # get_platform already verified YOUTUBE_PATH_RE matches before returning
+        # "youtube_watch", so m is always truthy here.
         m = YOUTUBE_PATH_RE.match(parsed.path)
-        if m:
-            watch = "https://www.youtube.com/watch?v=" + m.group(1)
-            # Preserve a start-time param (t / start) if the original had one.
-            q = parse_qs(parsed.query)
-            for tkey in ("t", "start"):
-                if q.get(tkey):
-                    watch += f"&{tkey}=" + q[tkey][0]
-                    break
-            return watch + tail, None, None, None
-        return raw, None, None, None
+        watch = "https://www.youtube.com/watch?v=" + m.group(1)
+        # Preserve a start-time param (t / start) if the original had one.
+        q = parse_qs(parsed.query)
+        for tkey in ("t", "start"):
+            if q.get(tkey):
+                watch += f"&{tkey}=" + q[tkey][0]
+                break
+        return watch + tail, None, None, None
     preferred = get_choice(chat_id, platform)
     allow_fallback = bool(chat_settings.get("provider_fallback", 1))
     noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
