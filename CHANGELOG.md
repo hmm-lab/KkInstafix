@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-06-16
+
+### Fixed
+- **`seen_recent` memory hard-cap restored** — a refactor in v1.3.0 moved
+  in-memory dedup pruning to the hourly `cleanup_db` job, silently removing
+  the self-contained size guard. If the job-queue was unavailable or slow,
+  `_recent_mem` could grow without bound. A `_RECENT_MEM_HARD_CAP` constant
+  (200 000 entries) is now checked on every write; when reached the cache is
+  cleared wholesale and the triggering key is reinserted. The guard is O(1)
+  per call and only fires far above normal operating size.
+
 ## [1.16.0] - 2026-06-15
 
 ### Added

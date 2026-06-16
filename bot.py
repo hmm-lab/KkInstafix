@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.16.0"
+__version__ = "1.17.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -271,6 +271,9 @@ _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
+# Hard cap so the dedup cache stays bounded even if the periodic cleanup job is
+# never scheduled (e.g. job-queue extra missing) or hasn't run yet.
+_RECENT_MEM_HARD_CAP = 200_000
 _file_id_cache: dict = {}    # filename -> telegram file_id
 _admin_cache: dict = {}      # (chat_id, user_id) -> (is_admin, expiry_ts)
 _user_names: dict = {}       # user_id -> first_name (from messages)
@@ -714,6 +717,12 @@ def seen_recent(kind, chat_id, event_key, window):
     if ts and now - ts < window:
         return True
     _recent_mem[key] = now
+    # Self-contained safety valve: age-based pruning lives in the hourly
+    # cleanup_db job, but if that never runs, hard-cap memory by clearing
+    # wholesale. O(1) per call; the O(n) clear only fires far above steady state.
+    if len(_recent_mem) > _RECENT_MEM_HARD_CAP:
+        _recent_mem.clear()
+        _recent_mem[key] = now
     return False
 
 

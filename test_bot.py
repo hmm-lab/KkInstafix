@@ -249,6 +249,19 @@ def test_seen_recent_different_kinds():
     assert bot.seen_recent("text", 1, "url", 60) is False
 
 
+def test_seen_recent_hard_cap_clears_and_reinserts():
+    bot._recent_mem.clear()
+    cap = bot._RECENT_MEM_HARD_CAP
+    # Fill the cache to just below the cap
+    for i in range(cap):
+        bot._recent_mem[("test", 0, f"k{i}")] = 0.0
+    # One more call should trigger the clear and reinsert the new key
+    result = bot.seen_recent("test", 1, "trigger", 60)
+    assert result is False
+    assert len(bot._recent_mem) == 1
+    assert ("test", 1, "trigger") in bot._recent_mem
+
+
 # ── check_rate (in-memory) ───────────────────────────────────────────────────
 
 def test_check_rate_allows_up_to_limit():
