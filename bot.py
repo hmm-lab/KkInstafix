@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.37.0"
+__version__ = "1.38.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1394,8 +1394,13 @@ def parse_on_off(value):
 def target_user_id_from_command(msg, parts):
     if msg.reply_to_message and msg.reply_to_message.from_user:
         return msg.reply_to_message.from_user.id
-    if len(parts) > 1 and parts[1].lstrip("-").isdigit():
-        return int(parts[1])
+    if len(parts) > 1:
+        try:
+            uid = int(parts[1])
+            if uid > 0:  # Telegram user IDs are always positive integers
+                return uid
+        except ValueError:
+            pass
     return None
 
 
@@ -1774,9 +1779,11 @@ async def _cmd_listmuted(msg, parts, context, chat_id):
     for uid in muted:
         try:
             member = await context.bot.get_chat_member(chat_id, uid)
-            name = member.user.first_name or member.user.username or f"User {uid}"
+            u = member.user
+            name = (u and (u.first_name or u.username)) or f"User {uid}"
             lines.append(f"• {_html.escape(name)} — <code>{uid}</code>")
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not fetch member info for user %s in chat %s: %s", uid, chat_id, exc)
             lines.append(f"• <code>{uid}</code>")
     await msg.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -1850,16 +1857,17 @@ async def _cmd_setsendermode(msg, parts, context, chat_id):
         "full_name": "full name (e.g. Mehrab Khan)",
         "none": "no label — just the link",
     }
-    if len(parts) != 2 or parts[1] not in modes:
+    mode = parts[1].lower() if len(parts) == 2 else ""
+    if mode not in modes:
         opts = "\n".join(f"  <code>{k}</code> — {v}" for k, v in modes.items())
         await msg.reply_text(
             f"Usage: <code>/setsendermode &lt;mode&gt;</code>\n\nModes:\n{opts}",
             parse_mode="HTML",
         )
         return
-    update_chat_setting(chat_id, "sender_mode", parts[1])
+    update_chat_setting(chat_id, "sender_mode", mode)
     await msg.reply_text(
-        f"Sender label set to: <b>{modes[parts[1]]}</b>", parse_mode="HTML"
+        f"Sender label set to: <b>{modes[mode]}</b>", parse_mode="HTML"
     )
 
 

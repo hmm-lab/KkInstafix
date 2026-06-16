@@ -5,6 +5,25 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0] - 2026-06-16
+
+### Fixed
+- **`/muteuser` and `/unmuteuser` crashed on double-dash input** —
+  `target_user_id_from_command` used `.lstrip("-").isdigit()` to validate an ID
+  argument, but then passed the original string to `int()`. Input like `--123`
+  passed the digit check after stripping all leading dashes, but `int("--123")`
+  raises `ValueError`. Replaced with `try: uid = int(parts[1])` and an explicit
+  `uid > 0` guard (Telegram user IDs are always positive; negative IDs belong to
+  channels/groups, not users).
+- **`/listmuted` hid member-info fetch errors** — the `except Exception:` block
+  was silent, making it impossible to distinguish "user left the chat" from an
+  actual API or logic error. Now logs at DEBUG level and guards against a
+  theoretically-None `member.user`.
+- **`/setsendermode` rejected mixed-case input** — `First_Name` was rejected
+  even though `first_name` worked, because the membership check was
+  case-sensitive. Now normalizes the argument with `.lower()` before validating
+  and storing, consistent with how `/setprovider` handles its arguments.
+
 ## [1.37.0] - 2026-06-16
 
 ### Fixed
