@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.36.0"
+__version__ = "1.37.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -379,6 +379,7 @@ DEFAULT_CHAT_SETTINGS = {
     "rate_window": 30,
     "ignore_forwards": 1,
     "provider_fallback": 1,
+    "caption_style": "reply",
     "text_spam": 1,
 }
 
@@ -780,6 +781,7 @@ def import_chat_data(chat_id, data):
     _INT_BOOL_SETTINGS = {"enabled", "ignore_forwards", "provider_fallback", "text_spam"}
     _INT_POS_SETTINGS = {"dedup_window", "rate_limit", "rate_window"}
     _SENDER_MODES = {"first_name", "username", "full_name", "none"}
+    _CAPTION_STYLES = {"reply"}
     ensure_chat_settings(chat_id)
     conn = db_connect()
     for key, value in settings.items():
@@ -793,6 +795,9 @@ def import_chat_data(chat_id, data):
                 continue
         elif key == "sender_mode":
             if value not in _SENDER_MODES:
+                continue
+        elif key == "caption_style":
+            if value not in _CAPTION_STYLES:
                 continue
         conn.execute(
             f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",

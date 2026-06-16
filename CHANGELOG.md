@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0] - 2026-06-16
+
+### Fixed
+- **`caption_style` missing from `DEFAULT_CHAT_SETTINGS`** — the DB schema
+  defined `caption_style TEXT NOT NULL DEFAULT 'reply'` but the constant was
+  absent from `DEFAULT_CHAT_SETTINGS`, causing a mismatch: new rows got the
+  SQL default but the key was excluded from `/export` and `/import` validation.
+  Added `"caption_style": "reply"` to `DEFAULT_CHAT_SETTINGS` so the dict is
+  the single source of truth for all settings, and updated `import_chat_data`
+  with a `_CAPTION_STYLES` allowlist to validate the field on import.
+
 ## [1.36.0] - 2026-06-16
 
 ### Fixed
