@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.19.0"
+__version__ = "1.20.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1054,10 +1054,10 @@ async def fix_url(raw, chat_id, chat_settings):
             asin = m.group(1).upper()
             canon = f"{parsed.scheme}://{parsed.netloc}/dp/{asin}"
             if canon != original_url:
-                return canon + tail, None, canon, None
+                return canon + tail, None, canon, canon
         # No ASIN in path — fall through to generic tracking strip
     # Expand short-link and share-link redirects before platform detection.
-    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, t.co,
+    # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, t.co, amzn.to,
     # plus path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and
     # Instagram /share/<id> — that all redirect to the canonical post URL. A
     # t.co link unwraps to its target, which is then fixed (if it's a known
@@ -1071,6 +1071,15 @@ async def fix_url(raw, chat_id, chat_settings):
     ):
         url = await expand_short_url(url)
         parsed = urlparse(url)
+        host = parsed.netloc.lower().removeprefix("www.")
+        # amzn.to expands to a full amazon.* URL — run ASIN extraction now.
+        if host in AMAZON_TLDS:
+            m = AMAZON_PATH_RE.search(parsed.path)
+            if m:
+                asin = m.group(1).upper()
+                canon = f"{parsed.scheme}://{parsed.netloc}/dp/{asin}"
+                if canon != original_url:
+                    return canon + tail, None, canon, canon
     platform = get_platform(parsed.netloc, parsed.path)
     if not platform:
         # Not a rewritable platform, but still strip tracking junk

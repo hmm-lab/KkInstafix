@@ -809,5 +809,26 @@ def test_fix_url_amazon_asin_extraction():
             settings,
         )
     )
-    fixed = result[0]
+    fixed, platform, original, preview = result
     assert fixed == "https://www.amazon.com/dp/B0ABCDE123"
+    # preview must be set so Telegram can generate a link preview
+    assert preview == "https://www.amazon.com/dp/B0ABCDE123"
+
+
+def test_fix_url_amazon_asin_extraction_after_amznto_expansion():
+    # amzn.to short links expand to full amazon.com URLs — ASIN extraction must
+    # fire on the expanded URL, not be skipped because the original host was amzn.to.
+    import asyncio
+    bot.init_db()
+    settings = bot.get_chat_settings(-100_808_003)
+    # Pre-seed the expand cache so no real HTTP call is made.
+    amzn_short = "https://amzn.to/3ABCDEF"
+    bot._expand_cache[amzn_short] = \
+        "https://www.amazon.com/Product-Title/dp/B0XYZ12345/ref=sr_1_1?tag=aff&keywords=test"
+    try:
+        result = asyncio.run(bot.fix_url(amzn_short, -100_808_003, settings))
+        fixed, platform, original, preview = result
+        assert fixed == "https://www.amazon.com/dp/B0XYZ12345"
+        assert preview == "https://www.amazon.com/dp/B0XYZ12345"
+    finally:
+        bot._expand_cache.pop(amzn_short, None)

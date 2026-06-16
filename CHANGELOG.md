@@ -5,6 +5,20 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] - 2026-06-16
+
+### Fixed
+- **Amazon ASIN extraction after `amzn.to` expansion** — `amzn.to` short links
+  are expanded via HTTP redirect before processing, but the ASIN extraction
+  block checked the *original* host (`amzn.to`), which is not in `AMAZON_TLDS`,
+  so it silently skipped canonicalization on expanded links. The host is now
+  re-evaluated after expansion and ASIN extraction fires correctly on the
+  resulting `amazon.*` URL.
+- **Amazon canonical URL carries a preview URL** — the ASIN extraction return
+  had `None` as the preview value, so Telegram would not generate a link
+  preview for cleaned Amazon links. Now returns the canonical `/dp/ASIN` URL
+  as the preview, consistent with how other non-platform URL changes work.
+
 ## [1.19.0] - 2026-06-16
 
 ### Added
