@@ -5,6 +5,14 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-06-16
+
+### Added
+- **Amazon regional store coverage** — `AMAZON_TLDS` now includes
+  `amazon.com.tr` (Turkey), `amazon.com.be` (Belgium), `amazon.pl` (Poland),
+  `amazon.eg` (Egypt), and `amazon.co.za` (South Africa). Tracking strip and
+  ASIN extraction previously silently skipped these stores.
+
 ## [1.22.0] - 2026-06-16
 
 ### Fixed

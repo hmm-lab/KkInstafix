@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.22.0"
+__version__ = "1.23.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -257,6 +257,8 @@ AMAZON_TLDS = {
     "amazon.ca", "amazon.com.au", "amazon.in", "amazon.it", "amazon.es",
     "amazon.com.br", "amazon.com.mx", "amazon.nl", "amazon.se", "amazon.sg",
     "amazon.ae", "amazon.sa",
+    # Additional regional stores
+    "amazon.com.tr", "amazon.com.be", "amazon.pl", "amazon.eg", "amazon.co.za",
 }
 AMAZON_TRACKING = {
     "tag", "ref", "linkCode", "camp", "creative", "creativeASIN",

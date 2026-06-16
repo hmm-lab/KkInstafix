@@ -785,6 +785,14 @@ def test_strip_amazon_tracking():
     assert "/dp/B0ABCDE123" in out
 
 
+def test_amazon_tlds_coverage():
+    # Spot-check that regional stores are recognised for tracking strip.
+    for domain in ("amazon.com.tr", "amazon.com.be", "amazon.pl", "amazon.eg", "amazon.co.za"):
+        url = f"https://{domain}/dp/B0ABCDE123?tag=affiliate"
+        out = bot.strip_generic_tracking(url)
+        assert "tag=" not in out, f"tag= survived for {domain}"
+
+
 def test_strip_linkedin_tracking():
     url = "https://linkedin.com/feed/update/test?trackingId=xxx&lipi=yyy&src=zzz"
     out = bot.strip_generic_tracking(url)
