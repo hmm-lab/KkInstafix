@@ -5,6 +5,18 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2026-06-16
+
+### Added
+- **eBay regional TLD coverage** — `EBAY_TLDS` now includes `ebay.at`, `ebay.pl`,
+  `ebay.nl`, `ebay.ch`, `ebay.se`, and `ebay.be`. Tracking strip previously
+  silently skipped these European stores.
+
+### Changed
+- **Inline mode shows destination domain** — the `🧹 Clean link` inline result
+  title now reads `🧹 Clean link → youtube.com` (or whatever the destination
+  domain is), so users can verify where a short link resolves before sending it.
+
 ## [1.23.0] - 2026-06-16
 
 ### Added

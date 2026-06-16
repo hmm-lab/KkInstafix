@@ -811,6 +811,14 @@ def test_strip_ebay_tracking():
     assert "/itm/123456" in out
 
 
+def test_ebay_tlds_coverage():
+    for domain in ("ebay.at", "ebay.pl", "ebay.nl", "ebay.ch", "ebay.se", "ebay.be"):
+        url = f"https://{domain}/itm/123?mkcid=1&mkrid=xxx"
+        out = bot.strip_generic_tracking(url)
+        assert "mkcid=" not in out, f"mkcid= survived for {domain}"
+        assert "mkrid=" not in out, f"mkrid= survived for {domain}"
+
+
 def test_strip_aliexpress_tracking():
     url = "https://aliexpress.com/item/12345.html?spm=a2g0o.xxx&aff_platform=link"
     out = bot.strip_generic_tracking(url)

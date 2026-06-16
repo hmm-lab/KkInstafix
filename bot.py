@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.23.0"
+__version__ = "1.24.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -273,6 +273,7 @@ AMAZON_PATH_RE = re.compile(
 EBAY_TLDS = {
     "ebay.com", "ebay.co.uk", "ebay.de", "ebay.com.au", "ebay.fr",
     "ebay.it", "ebay.es", "ebay.ca", "ebay.com.sg",
+    "ebay.at", "ebay.pl", "ebay.nl", "ebay.ch", "ebay.se", "ebay.be",
 }
 EBAY_TRACKING = {
     "hash", "mkrid", "siteid", "campid", "toolid", "customid",
@@ -2296,10 +2297,10 @@ async def handle_inline_query(update, context):
         if platform:
             title = f"{PLATFORM_EMOJI.get(platform, '🔗')} Fix {platform} link"
         else:
-            # Non-platform but changed: tracking stripped (e.g. YouTube ?si=) or a
-            # short link normalized. Offer it as a clean-link result so inline mode
-            # is as capable as in-chat cleaning.
-            title = "🧹 Clean link (tracking removed)"
+            # Non-platform but changed: tracking stripped or short link expanded.
+            # Show the destination domain so users can verify before sending.
+            dest = urlparse(fixed).netloc.lower().removeprefix("www.") or fixed
+            title = f"🧹 Clean link → {dest}"
         results.append(
             InlineQueryResultArticle(
                 id=str(uuid.uuid4()),
