@@ -5,6 +5,25 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0] - 2026-06-16
+
+### Fixed
+- **`handle_message` inflated stats on send failure** — `increment_stat` was
+  called unconditionally after all send attempts, even when every attempt
+  failed and `sent_msg` was `None`. `handle_caption` and `handle_edited` both
+  guard the stat increment inside the successful-send path; `handle_message` was
+  inconsistent. The increment is now inside an `if sent_msg:` guard, consistent
+  with the other handlers.
+- **Thread-unsafe short-URL expansion cache** — `_expand_short_url_sync` is
+  called via `asyncio.get_event_loop().run_in_executor` (thread pool). The
+  global `_expand_cache` `OrderedDict` was read and written without
+  synchronisation, causing potential cache corruption and duplicate network
+  requests under concurrent expansion calls for the same URL. Added a
+  `threading.Lock` (`_expand_cache_lock`) that is held for the read-hit path
+  (check + move_to_end) and for the write path (insert + eviction). The network
+  request itself runs outside the lock so parallel expansions of *different*
+  URLs are not serialised.
+
 ## [1.39.0] - 2026-06-16
 
 ### Fixed

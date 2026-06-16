@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -33,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.39.0"
+__version__ = "1.40.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -353,6 +354,7 @@ SHORT_LINK_DOMAINS = {
     "rb.gy", "buff.ly", "goo.gl",
 }
 _expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
+_expand_cache_lock = threading.Lock()
 _EXPAND_CACHE_MAX = 2000
 HEALTH_CACHE: dict = {}
 HEALTH_TTL = 600
@@ -1052,9 +1054,10 @@ async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str
 
 
 def _expand_short_url_sync(url: str) -> str:
-    if url in _expand_cache:
-        _expand_cache.move_to_end(url)
-        return _expand_cache[url]
+    with _expand_cache_lock:
+        if url in _expand_cache:
+            _expand_cache.move_to_end(url)
+            return _expand_cache[url]
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -1064,9 +1067,10 @@ def _expand_short_url_sync(url: str) -> str:
     except Exception as exc:
         logger.debug("Short-link expansion failed for %s: %s", url, exc)
         result = url
-    _expand_cache[url] = result
-    if len(_expand_cache) > _EXPAND_CACHE_MAX:
-        _expand_cache.popitem(last=False)
+    with _expand_cache_lock:
+        _expand_cache[url] = result
+        if len(_expand_cache) > _EXPAND_CACHE_MAX:
+            _expand_cache.popitem(last=False)
     return result
 
 
@@ -2162,10 +2166,11 @@ async def handle_message(update, context):
         except Exception:
             logger.exception("reply_text fallback failed in chat %s", chat_id)
 
-    for plat in fixed_platforms:
-        increment_stat(chat_id, plat, user_id)
-    if sent_msg and first_raw_url:
-        store_rewrite(chat_id, sent_msg.message_id, first_raw_url, sender_name)
+    if sent_msg:
+        for plat in fixed_platforms:
+            increment_stat(chat_id, plat, user_id)
+        if first_raw_url:
+            store_rewrite(chat_id, sent_msg.message_id, first_raw_url, sender_name)
 
     # Background restriction check: if the embed provider returns a restriction
     # page, edit the message to explain why the preview looks broken.
