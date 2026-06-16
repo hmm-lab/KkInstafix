@@ -5,6 +5,25 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-06-16
+
+### Fixed
+- **`/clean` now path-rewrites `youtu.be` links** — `clean_url_expanded` had
+  the short-link expansion and Amazon ASIN logic but missed the `youtu.be`
+  path rewrite, so `/clean https://youtu.be/abc?si=x` returned the raw
+  `youtu.be` URL (tracking stripped) instead of the canonical
+  `youtube.com/watch?v=abc`. The same path-rewrite logic used in `fix_url`
+  is now applied first, before falling back to `clean_url`.
+- **`SOUNDCLOUD_TRACKING` cleaned up** — `"si"` was redundant (already in
+  `GENERIC_TRACKING`). `"ref"` is correctly kept platform-scoped because it
+  is intentionally *not* in `GENERIC_TRACKING` (too ambiguous to strip from
+  arbitrary sites).
+
+### Added
+- **Handler tests for `/clean` command** — two new tests in `test_handlers.py`
+  exercise the `/clean` command end-to-end: youtu.be path rewriting and inline
+  URL argument cleaning with platform share-token removal.
+
 ## [1.21.0] - 2026-06-16
 
 ### Fixed

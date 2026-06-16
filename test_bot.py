@@ -581,6 +581,18 @@ def test_clean_url_generic_keeps_fragment_and_ambiguous_params():
     assert "s=hello" in bot.clean_url("https://blog.example.com/?s=hello")
 
 
+def test_clean_url_expanded_youtu_be_path_rewrite():
+    import asyncio
+    result = asyncio.run(bot.clean_url_expanded("https://youtu.be/SIYjCMpsDXI?si=track&is=tok"))
+    assert result == "https://www.youtube.com/watch?v=SIYjCMpsDXI"
+
+
+def test_clean_url_expanded_youtu_be_preserves_timestamp():
+    import asyncio
+    result = asyncio.run(bot.clean_url_expanded("https://youtu.be/abc123?t=42&si=x"))
+    assert result == "https://www.youtube.com/watch?v=abc123&t=42"
+
+
 def test_clean_url_expanded_expands_short_link():
     import asyncio
     # Seed the expand cache so no real HTTP call is made.

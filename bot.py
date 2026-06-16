@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.21.0"
+__version__ = "1.22.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -299,7 +299,7 @@ APPLE_MUSIC_TRACKING = {"itsct", "itscg", "ls", "app", "at", "ct", "itm_campaign
 
 VIMEO_TRACKING = {"app_id", "referrer", "from", "badge"}
 
-SOUNDCLOUD_TRACKING = {"ref", "in", "si"}
+SOUNDCLOUD_TRACKING = {"ref", "in"}  # "si" already in GENERIC_TRACKING; "ref" is not (ambiguous globally)
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
@@ -911,14 +911,26 @@ def clean_url(url):
 
 
 async def clean_url_expanded(url):
-    """Like clean_url but expands short links first.
+    """Like clean_url but expands short links and applies path rewrites first.
 
-    Powers /clean so that `/clean bit.ly/xyz` returns the expanded,
-    tracking-stripped destination rather than the short URL unchanged.
-    Also handles Amazon ASIN canonicalisation after expansion.
+    Powers /clean so that e.g. `/clean bit.ly/xyz` or `/clean youtu.be/abc?si=x`
+    returns the expanded, tracking-stripped destination rather than the short URL
+    unchanged. Mirrors the transformations fix_url applies before platform detection.
     """
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
+    # youtu.be: pure path rewrite, no network (same reason as fix_url avoids HTTP).
+    if host == "youtu.be":
+        m = YOUTU_BE_PATH_RE.match(parsed.path)
+        if m:
+            watch = "https://www.youtube.com/watch?v=" + m.group(1)
+            q = parse_qs(parsed.query)
+            for tkey in ("t", "start"):
+                if q.get(tkey):
+                    watch += f"&{tkey}=" + q[tkey][0]
+                    break
+            return watch
+        return url
     if host in SHORT_LINK_DOMAINS:
         url = await expand_short_url(url)
         parsed = urlparse(url)

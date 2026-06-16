@@ -391,3 +391,43 @@ def test_handle_message_replies_when_delete_not_permitted():
     assert msg.replies
     assert "vxtwitter.com" in msg.replies[0].text
     assert not fb.sent
+
+
+# ── /clean command handler ────────────────────────────────────────────────────
+
+def test_cmd_clean_expands_youtu_be():
+    # /clean on a youtu.be link must return the canonical watch URL, not the
+    # short URL. This exercises the clean_url_expanded path through _cmd_clean.
+    fb = FakeBot()
+    bot.init_db()
+    chat = FakeChat(-1305)
+    msg = FakeMessage(
+        text="/clean https://youtu.be/SIYjCMpsDXI?si=track",
+        user=FakeUser(1, "Alice"),
+        chat=chat,
+        bot=fb,
+    )
+    run(bot.handle_message(FakeUpdate(msg, update_id=305), FakeContext(fb)))
+    assert msg.replies, "/clean should reply with cleaned URL"
+    reply_text = msg.replies[0].text
+    assert "youtube.com/watch" in reply_text
+    assert "youtu.be" not in reply_text
+    assert "si=" not in reply_text
+
+
+def test_cmd_clean_inline_url():
+    # /clean <url> passed as argument (no reply-to).
+    fb = FakeBot()
+    bot.init_db()
+    chat = FakeChat(-1306)
+    msg = FakeMessage(
+        text="/clean https://twitter.com/u/status/1?s=20&t=tok",
+        user=FakeUser(1, "Alice"),
+        chat=chat,
+        bot=fb,
+    )
+    run(bot.handle_message(FakeUpdate(msg, update_id=306), FakeContext(fb)))
+    assert msg.replies
+    reply_text = msg.replies[0].text
+    assert "twitter.com/u/status/1" in reply_text
+    assert "t=tok" not in reply_text
