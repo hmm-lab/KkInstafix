@@ -713,3 +713,101 @@ def test_expand_cache_lru_evicts_oldest():
     finally:
         bot._EXPAND_CACHE_MAX = original_max
         bot._expand_cache.clear()
+
+
+# ── SHORT_LINK_DOMAINS new entries ───────────────────────────────────────────
+
+def test_generic_shorteners_in_short_link_domains():
+    for domain in ("bit.ly", "tinyurl.com", "is.gd"):
+        assert domain in bot.SHORT_LINK_DOMAINS, f"{domain} missing from SHORT_LINK_DOMAINS"
+
+
+def test_platform_short_links_in_short_link_domains():
+    for domain in ("amzn.to", "maps.app.goo.gl", "pin.it"):
+        assert domain in bot.SHORT_LINK_DOMAINS, f"{domain} missing from SHORT_LINK_DOMAINS"
+
+
+# ── Platform-specific tracking stripping ─────────────────────────────────────
+
+def test_strip_amazon_tracking():
+    url = "https://amazon.com/dp/B0ABCDE123?tag=affiliate&ref=sr_1_1"
+    out = bot.strip_generic_tracking(url)
+    assert "tag=" not in out
+    assert "ref=" not in out
+    assert "/dp/B0ABCDE123" in out
+
+
+def test_strip_linkedin_tracking():
+    url = "https://linkedin.com/feed/update/test?trackingId=xxx&lipi=yyy&src=zzz"
+    out = bot.strip_generic_tracking(url)
+    assert "trackingId=" not in out
+    assert "lipi=" not in out
+    assert "src=" not in out
+    assert "/feed/update/test" in out
+
+
+def test_strip_ebay_tracking():
+    url = "https://ebay.com/itm/123456?hash=item123&mkrid=xxx&campid=yyy"
+    out = bot.strip_generic_tracking(url)
+    assert "hash=" not in out
+    assert "mkrid=" not in out
+    assert "campid=" not in out
+    assert "/itm/123456" in out
+
+
+def test_strip_aliexpress_tracking():
+    url = "https://aliexpress.com/item/12345.html?spm=a2g0o.xxx&aff_platform=link"
+    out = bot.strip_generic_tracking(url)
+    assert "spm=" not in out
+    assert "aff_platform=" not in out
+    assert "/item/12345.html" in out
+
+
+def test_strip_pinterest_tracking():
+    url = "https://pinterest.com/pin/12345/?rs=ac&amp_campaign=1"
+    out = bot.strip_generic_tracking(url)
+    assert "rs=" not in out
+    assert "amp=" not in out or "amp_campaign" not in out
+
+
+def test_strip_apple_music_tracking():
+    url = "https://music.apple.com/us/album/test?itsct=music_box&itscg=30200"
+    out = bot.strip_generic_tracking(url)
+    assert "itsct=" not in out
+    assert "itscg=" not in out
+    assert out == "https://music.apple.com/us/album/test"
+
+
+def test_strip_vimeo_tracking():
+    url = "https://vimeo.com/123456789?app_id=58479&referrer=x"
+    out = bot.strip_generic_tracking(url)
+    assert "app_id=" not in out
+    assert "referrer=" not in out
+    assert out == "https://vimeo.com/123456789"
+
+
+def test_strip_soundcloud_tracking():
+    url = "https://soundcloud.com/artist/track?ref=clipboard&in=test&si=xxx"
+    out = bot.strip_generic_tracking(url)
+    assert "ref=" not in out
+    assert "in=" not in out
+    assert "si=" not in out
+    assert out == "https://soundcloud.com/artist/track"
+
+
+# ── Amazon ASIN extraction ────────────────────────────────────────────────────
+
+def test_fix_url_amazon_asin_extraction():
+    import asyncio
+    bot.init_db()
+    settings = bot.get_chat_settings(-100_808_003)
+
+    result = asyncio.run(
+        bot.fix_url(
+            "https://www.amazon.com/Some-Product-Name/dp/B0ABCDE123/ref=nosim",
+            -100_808_003,
+            settings,
+        )
+    )
+    fixed = result[0]
+    assert fixed == "https://www.amazon.com/dp/B0ABCDE123"

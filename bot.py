@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.18.0"
+__version__ = "1.19.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -251,6 +251,55 @@ GENERIC_TRACKING = {
 YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
 YOUTUBE_TRACKING = {"si", "is", "feature", "pp"}
 
+# Amazon operates under many country TLDs; track all of them by this set.
+AMAZON_TLDS = {
+    "amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.co.jp",
+    "amazon.ca", "amazon.com.au", "amazon.in", "amazon.it", "amazon.es",
+    "amazon.com.br", "amazon.com.mx", "amazon.nl", "amazon.se", "amazon.sg",
+    "amazon.ae", "amazon.sa",
+}
+AMAZON_TRACKING = {
+    "tag", "ref", "linkCode", "camp", "creative", "creativeASIN",
+    "linkId", "th", "psc", "sprefix", "crid", "qid", "sr", "keywords",
+    "ie", "hvadid", "hvpos", "hvnetw", "hvrand", "hvdev", "hvtargid",
+}
+AMAZON_PATH_RE = re.compile(
+    r"/(?:dp|gp/product|exec/obidos/ASIN|o/ASIN)/([A-Z0-9]{10})", re.IGNORECASE
+)
+
+EBAY_TLDS = {
+    "ebay.com", "ebay.co.uk", "ebay.de", "ebay.com.au", "ebay.fr",
+    "ebay.it", "ebay.es", "ebay.ca", "ebay.com.sg",
+}
+EBAY_TRACKING = {
+    "hash", "mkrid", "siteid", "campid", "toolid", "customid",
+    "mkcid", "mkevt", "mkpid", "epid", "nma", "ch", "var", "widget_ver",
+}
+
+ALIEXPRESS_DOMAINS = {"aliexpress.com", "aliexpress.us", "aliexpress.ru"}
+ALIEXPRESS_TRACKING = {
+    "spm", "aff_platform", "aff_trace_key", "algo_expid", "algo_pvid",
+    "btsid", "ws_ab_test", "pvid", "pdp_npi", "gatewayAdapt",
+}
+
+LINKEDIN_TRACKING = {
+    "trackingId", "lipi", "src", "trk", "rcm", "refId",
+    "midToken", "midSig", "trkInfo", "original_referer",
+}
+
+PINTEREST_DOMAINS = {
+    "pinterest.com", "pinterest.co.uk", "pinterest.de", "pinterest.fr",
+    "pinterest.es", "pinterest.it", "pinterest.com.au", "pinterest.ca",
+    "pinterest.at", "pinterest.ch", "pinterest.se", "pinterest.pt",
+}
+PINTEREST_TRACKING = {"rs", "amp"}
+
+APPLE_MUSIC_TRACKING = {"itsct", "itscg", "ls", "app", "at", "ct", "itm_campaign", "itm_content"}
+
+VIMEO_TRACKING = {"app_id", "referrer", "from", "badge"}
+
+SOUNDCLOUD_TRACKING = {"ref", "in", "si"}
+
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
 # which previews more reliably than the original path form.
@@ -261,7 +310,16 @@ YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Short-link domains that redirect to the real URL before we can fix them
-SHORT_LINK_DOMAINS = {"vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "t.co"}
+SHORT_LINK_DOMAINS = {
+    # Platform-specific short/share links (expanded before rewriting)
+    "vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "t.co",
+    "amzn.to",          # Amazon short links
+    "maps.app.goo.gl",  # Google Maps
+    "pin.it",           # Pinterest
+    # Generic URL shorteners (expand to real URL, then apply tracking strip / rewrite)
+    "bit.ly", "tinyurl.com", "t.ly", "ow.ly", "is.gd",
+    "rb.gy", "buff.ly", "goo.gl",
+}
 _expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
 _EXPAND_CACHE_MAX = 2000
 HEALTH_CACHE: dict = {}
@@ -778,11 +836,30 @@ def strip_generic_tracking(url):
     if not parsed.query:
         return url
     host = parsed.netloc.lower().removeprefix("www.")
-    drop = GENERIC_TRACKING | YOUTUBE_TRACKING if host in YOUTUBE_HOSTS else GENERIC_TRACKING
+    drop = set(GENERIC_TRACKING)
+    if host in YOUTUBE_HOSTS:
+        drop |= YOUTUBE_TRACKING
+    if host in AMAZON_TLDS:
+        drop |= AMAZON_TRACKING
+    if host in EBAY_TLDS:
+        drop |= EBAY_TRACKING
+    if host in ALIEXPRESS_DOMAINS:
+        drop |= ALIEXPRESS_TRACKING
+    if host == "linkedin.com":
+        drop |= LINKEDIN_TRACKING
+    if host in PINTEREST_DOMAINS:
+        drop |= PINTEREST_TRACKING
+    if host == "music.apple.com":
+        drop |= APPLE_MUSIC_TRACKING
+    if host == "vimeo.com":
+        drop |= VIMEO_TRACKING
+    if host == "soundcloud.com":
+        drop |= SOUNDCLOUD_TRACKING
+    drop_lower = {d.lower() for d in drop}
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
-        if k.lower() not in drop
+        if k.lower() not in drop_lower
     }
     return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params,
@@ -969,6 +1046,16 @@ async def fix_url(raw, chat_id, chat_settings):
                     break
             return watch + tail, None, None, None
         return raw, None, None, None
+    # Amazon: extract canonical /dp/ASIN path, stripping all referral/affiliate
+    # junk. Works for any amazon TLD and for amzn.to links (already expanded).
+    if host in AMAZON_TLDS:
+        m = AMAZON_PATH_RE.search(parsed.path)
+        if m:
+            asin = m.group(1).upper()
+            canon = f"{parsed.scheme}://{parsed.netloc}/dp/{asin}"
+            if canon != original_url:
+                return canon + tail, None, canon, None
+        # No ASIN in path — fall through to generic tracking strip
     # Expand short-link and share-link redirects before platform detection.
     # Covers: redd.it/ID, vm.tiktok.com, vt.tiktok.com, b23.tv, youtu.be, t.co,
     # plus path-based share links — Reddit /r/<sub>/s/<id>, TikTok /t/<id>, and

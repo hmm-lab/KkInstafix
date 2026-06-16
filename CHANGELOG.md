@@ -5,6 +5,26 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-06-16
+
+### Added
+- **Generic URL shortener expansion** — `bit.ly`, `tinyurl.com`, `t.ly`, `ow.ly`,
+  `is.gd`, `rb.gy`, `buff.ly`, and `goo.gl` are now followed to their destination
+  before tracking is stripped or a provider rewrite is applied.
+- **Platform short links** — `amzn.to` (Amazon), `maps.app.goo.gl` (Google Maps),
+  and `pin.it` (Pinterest) are expanded before processing, alongside the existing
+  `vm.tiktok.com`, `redd.it`, `b23.tv`, and `t.co`.
+- **Platform-specific tracking removal** — `strip_generic_tracking` is now
+  host-aware for Amazon (all country TLDs), eBay, AliExpress, LinkedIn, Pinterest,
+  Apple Music (`music.apple.com`), Vimeo, and SoundCloud. Each platform has its
+  own set of known tracking/affiliate parameters that are dropped when the URL
+  host matches.
+- **Amazon canonical URL extraction** — for any `amazon.*` TLD, the bot strips
+  the URL down to its canonical `/dp/ASIN` form (e.g.
+  `amazon.com/Some-Product/dp/B0ABCDE123/ref=nosim?tag=aff` →
+  `amazon.com/dp/B0ABCDE123`), removing all referral, affiliate, and search
+  tracking from both the path and query string.
+
 ## [1.18.0] - 2026-06-16
 
 ### Fixed

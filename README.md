@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.18.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.19.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -16,7 +16,7 @@ Current version: **1.18.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - Multi-link support: messages with more than one link get all links fixed.
 - Supports captioned media posts with links.
 - Short-link expansion: `vm.tiktok.com`, `redd.it`, `b23.tv`, etc. are followed to the real URL first (`youtu.be` and YouTube Shorts/Live are rewritten by path, no network).
-- Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone.
+- Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone. Platform-specific tracking is also stripped for Amazon, eBay, AliExpress, LinkedIn, Pinterest, Apple Music, Vimeo, and SoundCloud.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
 - Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
@@ -131,6 +131,10 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `b23.tv/...` → expanded to full `bilibili.com/video/...`
 - `instagram.com/share/<id>` → expanded to the real post URL before provider rewriting
 - `t.co/<id>` → Twitter's link wrapper, unwrapped to its target (then fixed or tracking-stripped)
+- `amzn.to/...` → expanded to full Amazon product URL
+- `maps.app.goo.gl/...` → expanded to Google Maps URL
+- `pin.it/...` → expanded to Pinterest URL
+- `bit.ly`, `tinyurl.com`, `t.ly`, `ow.ly`, `is.gd`, `rb.gy`, `buff.ly`, `goo.gl` → expanded to their destination before tracking is stripped
 
 YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on `youtube.com` and `m.youtube.com`) are normalized to a canonical `youtube.com/watch?v=<id>` link — a `t`/`start` timestamp is kept, share/tracking params (`?si=`, `?is=`, `?feature=`) are dropped. This is a path rewrite, **not** a redirect, so it works without network access — important because following a `youtu.be` redirect from a server IP can hit a Google CAPTCHA page instead of the video.
 
