@@ -5,6 +5,18 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0] - 2026-06-16
+
+### Fixed
+- **`_check_url_sync` treated 5xx errors as healthy providers** — the health
+  checker returned `True` for all `urllib.error.HTTPError`, including 503
+  Service Unavailable and 500 Internal Server Error. A provider that is down
+  but still responding would therefore be selected for provider fallback even
+  though it cannot serve embeds. Changed to `return e.code < 500`: a 4xx
+  response means the server is reachable and answered normally (content may
+  just be restricted), while a 5xx response means the provider itself is
+  broken and should be skipped.
+
 ## [1.41.0] - 2026-06-16
 
 ### Fixed

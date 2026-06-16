@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.41.0"
+__version__ = "1.42.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -997,8 +997,10 @@ def _check_url_sync(url: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=4):
             return True
-    except urllib.error.HTTPError:
-        return True
+    except urllib.error.HTTPError as e:
+        # 4xx means the server responded normally (content may be restricted);
+        # 5xx means the provider itself is broken/overloaded → treat as down.
+        return e.code < 500
     except Exception:
         return False
 
