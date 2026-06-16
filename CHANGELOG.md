@@ -5,6 +5,20 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-06-16
+
+### Fixed
+- **`/undo` stored wrong original URL when dedup skipped the first link** —
+  all three `store_rewrite` call sites (regular message, edited message, channel
+  post) were using `URL_RE.search(text).group(0)` to find the "original" URL,
+  which always returned the first URL token in the message text. When the first
+  URL was recently seen and dedup-skipped while a later URL in the same message
+  was actually fixed, `/undo` would show the wrong (dedup'd) URL. Fixed by
+  tracking `first_raw_url` — the exact raw token from the message that produced
+  the first fix — inside `process_text` and returning it as a new 8th element.
+  All `store_rewrite` calls now use `first_raw_url` instead of a fresh regex
+  search, so `/undo` always shows the URL that was genuinely replaced.
+
 ## [1.32.0] - 2026-06-16
 
 ### Fixed

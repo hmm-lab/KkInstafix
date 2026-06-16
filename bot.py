@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.32.0"
+__version__ = "1.33.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1221,6 +1221,7 @@ async def process_text(text, chat_id, chat_settings):
     changed = False
     fixed_count = 0
     first_fixed_url = None
+    first_raw_url = None   # raw token in the user's message that maps to first_fixed_url
     first_preview_url = None
     first_platform = None
     fixed_platforms = []
@@ -1244,6 +1245,7 @@ async def process_text(text, chat_id, chat_settings):
             fixed_platforms.append(platform)
         if not first_fixed_url:
             first_fixed_url = fixed.split()[0]
+            first_raw_url = raw
             first_preview_url = preview
             first_platform = platform
 
@@ -1255,7 +1257,7 @@ async def process_text(text, chat_id, chat_settings):
         new_text = URL_RE.sub(lambda m: replacements.get(m.group(0), m.group(0)), text)
     else:
         new_text = text
-    return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count, fixed_platforms
+    return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url
 
 
 def sender_label(user, mode):
@@ -2098,7 +2100,7 @@ async def handle_message(update, context):
                 pass
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms = await process_text(text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await process_text(text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2144,10 +2146,8 @@ async def handle_message(update, context):
 
     for plat in fixed_platforms:
         increment_stat(chat_id, plat, user_id)
-    if sent_msg and text:
-        original = URL_RE.search(text)
-        if original:
-            store_rewrite(chat_id, sent_msg.message_id, original.group(0), sender_name)
+    if sent_msg and first_raw_url:
+        store_rewrite(chat_id, sent_msg.message_id, first_raw_url, sender_name)
 
     # Background restriction check: if the embed provider returns a restriction
     # page, edit the message to explain why the preview looks broken.
@@ -2180,7 +2180,7 @@ async def handle_caption(update, context):
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
 
-    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.caption, chat_id, chat_settings)
+    new_caption, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, *_ = await process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2225,7 +2225,7 @@ async def handle_edit(update, context):
     if not URL_RE.search(msg.text):
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2242,11 +2242,9 @@ async def handle_edit(update, context):
         sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode="HTML")
         for plat in fixed_platforms:
             increment_stat(chat_id, plat, user_id)
-        if sent_msg:
-            original = URL_RE.search(msg.text)
-            if original:
-                store_rewrite(chat_id, sent_msg.message_id, original.group(0),
-                              sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
+        if sent_msg and first_raw_url:
+            store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
+                          sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
     except Exception:
         logger.exception("Edit handler reply failed in chat %s", chat_id)
 
@@ -2293,7 +2291,7 @@ async def handle_channel_post(update, context):
     if not chat_settings["enabled"]:
         return
 
-    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms = await process_text(msg.text, chat_id, chat_settings)
+    new_text, changed, first_fixed_url, platform, first_preview_url, _, fixed_platforms, first_raw_url = await process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
 
@@ -2314,10 +2312,8 @@ async def handle_channel_post(update, context):
         )
         for plat in fixed_platforms:
             increment_stat(chat_id, plat, 0)
-        if sent:
-            original = URL_RE.search(msg.text)
-            if original:
-                store_rewrite(chat_id, sent.message_id, original.group(0), "")
+        if sent and first_raw_url:
+            store_rewrite(chat_id, sent.message_id, first_raw_url, "")
     except Exception:
         logger.exception("Channel post reply failed in chat %s", chat_id)
 

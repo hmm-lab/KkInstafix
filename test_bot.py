@@ -675,7 +675,7 @@ def test_process_text_multi_distinct_links():
     cid = -100_778_002
     settings = bot.get_chat_settings(cid)
     text = "a https://example.com/x?utm_source=z b https://other.example/y?fbclid=1 c"
-    new_text, changed, _, _, _, count, _ = asyncio.run(bot.process_text(text, cid, settings))
+    new_text, changed, _, _, _, count, *_ = asyncio.run(bot.process_text(text, cid, settings))
     assert changed
     assert count == 2
     assert "utm_source" not in new_text and "fbclid" not in new_text
