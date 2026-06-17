@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.47.0"
+__version__ = "1.48.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1583,6 +1583,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/stats — link-fix counts and top senders\n"
         "/undo — reply to a bot message to reveal the original link\n"
         "/clean — strip tracking from a replied link (or /clean &lt;url&gt;); expands short links\n"
+        "/preview — show what a link would become (rewrite + clean) without reposting it\n"
         "/about — credits\n"
         "/version — show the bot version\n"
         "/mehrab · /genius — custom image / video\n\n"
@@ -1665,6 +1666,69 @@ async def _cmd_clean(msg, parts, context, chat_id):
     header = "🧹 Cleaned:" if changed_any else "✅ Already clean:"
     body = "\n".join(cleaned)
     await msg.reply_text(f"{header}\n{body}", link_preview_options=preview)
+
+
+async def _cmd_preview(msg, parts, context, chat_id):
+    """Show what a link WOULD become without reposting it publicly.
+
+    For each link it reports the rewritten link (the bot's repost), the chosen
+    provider, and the tracking-cleaned version. Reuses fix_url / clean_url_expanded
+    so it always reflects the real behaviour for this chat.
+    """
+    source = ""
+    if msg.reply_to_message:
+        source = msg.reply_to_message.text or msg.reply_to_message.caption or ""
+    if not source and len(parts) > 1:
+        source = " ".join(parts[1:])
+
+    urls = URL_RE.findall(source)
+    if not urls and msg.reply_to_message:
+        reply = msg.reply_to_message
+        try:
+            entity_map = reply.parse_entities(types=["text_link", "url"]) or {}
+            for ent, etxt in entity_map.items():
+                url = getattr(ent, "url", None) or etxt
+                if url and url not in urls:
+                    urls.append(url)
+        except Exception:
+            pass
+    if not urls:
+        await msg.reply_text(
+            "Reply to a message with a link, or use <code>/preview &lt;url&gt;</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    chat_settings = get_chat_settings(chat_id)
+    blocks = []
+    seen = set()
+    for raw in urls[:3]:
+        url, _tail = trim(raw)
+        if url in seen:
+            continue
+        seen.add(url)
+        fixed, platform, _original, _preview = await fix_url(url, chat_id, chat_settings)
+        cleaned = await clean_url_expanded(url)
+        lines = [f"🔗 <b>Input:</b> {_html.escape(url)}"]
+        if platform:
+            provider = get_choice(chat_id, platform)
+            lines.append(
+                f"📺 <b>Platform:</b> {_html.escape(platform)} → "
+                f"<code>{_html.escape(provider)}</code>"
+            )
+        if fixed != url:
+            lines.append(f"✨ <b>Rewritten:</b> {_html.escape(fixed)}")
+        else:
+            lines.append("✨ <b>Rewritten:</b> <i>left as-is</i>")
+        if cleaned != url and cleaned != fixed:
+            lines.append(f"🧹 <b>Cleaned:</b> {_html.escape(cleaned)}")
+        blocks.append("\n".join(lines))
+
+    await msg.reply_text(
+        "\n\n".join(blocks),
+        parse_mode="HTML",
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 async def _cmd_testcb(msg, parts, context, chat_id):
@@ -2077,6 +2141,7 @@ PUBLIC_CMDS = {
     "/stats": _cmd_stats,
     "/undo": _cmd_undo,
     "/clean": _cmd_clean,
+    "/preview": _cmd_preview,
     "/version": _cmd_version,
 }
 

@@ -5,6 +5,17 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0] - 2026-06-17
+
+### Added
+- **`/preview` command** — reply to a message with a link (or `/preview <url>`)
+  and the bot shows what the link *would* become without reposting it publicly:
+  the rewritten link, the platform and chosen provider, and the tracking-cleaned
+  version. Handles up to three links per call, reuses `fix_url` /
+  `clean_url_expanded` so it always reflects the chat's real behaviour, and posts
+  with the link preview disabled so it stays a compact inspection tool. Useful
+  for checking which provider a link will use before relying on it.
+
 ## [1.47.0] - 2026-06-17
 
 ### Changed

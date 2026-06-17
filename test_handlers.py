@@ -443,6 +443,51 @@ def test_cmd_clean_inline_url():
     assert "t=tok" not in reply_text
 
 
+# ── /preview ──────────────────────────────────────────────────────────────────
+
+def test_cmd_preview_platform_link_shows_rewrite_and_provider():
+    fb = FakeBot()
+    chat = FakeChat(-1320)
+    msg = FakeMessage(
+        text="/preview https://twitter.com/u/status/1?t=tok",
+        user=FakeUser(1, "Alice"), chat=chat, bot=fb,
+    )
+    run(bot.handle_message(FakeUpdate(msg, update_id=320), FakeContext(fb)))
+    assert msg.replies, "/preview should reply"
+    out = msg.replies[0].text
+    # The rewritten line carries the clean vxtwitter URL with the share token gone.
+    assert "vxtwitter.com/u/status/1" in out
+    assert "vxtwitter.com/u/status/1?t=tok" not in out
+    assert "twitter" in out.lower()             # platform line
+    assert "vx" in out                          # chosen provider key shown
+    # /preview must NOT repost publicly (no delete, no bot.send_message).
+    assert not msg.deleted
+    assert not fb.sent
+
+
+def test_cmd_preview_no_link_explains_usage():
+    fb = FakeBot()
+    msg = FakeMessage(text="/preview", user=FakeUser(1, "Alice"),
+                      chat=FakeChat(-1321), bot=fb)
+    run(bot.handle_message(FakeUpdate(msg, update_id=321), FakeContext(fb)))
+    assert msg.replies
+    assert "/preview" in msg.replies[0].text
+
+
+def test_cmd_preview_youtube_short_link_no_network():
+    # youtu.be is a pure path rewrite — exercises /preview with zero network.
+    fb = FakeBot()
+    msg = FakeMessage(text="/preview https://youtu.be/SIYjCMpsDXI?si=track",
+                      user=FakeUser(1, "Alice"), chat=FakeChat(-1322), bot=fb)
+    run(bot.handle_message(FakeUpdate(msg, update_id=322), FakeContext(fb)))
+    assert msg.replies
+    out = msg.replies[0].text
+    # The rewritten line is the canonical watch URL with no share param.
+    assert "watch?v=SIYjCMpsDXI" in out
+    assert "watch?v=SIYjCMpsDXI&si" not in out
+    assert "watch?v=SIYjCMpsDXI?si" not in out
+
+
 # ── /undo store_rewrite integration ──────────────────────────────────────────
 
 def test_handle_message_stores_rewrite_for_undo():
