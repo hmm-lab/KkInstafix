@@ -1075,6 +1075,61 @@ def test_migrate_chat_settings_is_idempotent():
     assert cols == set(bot.DEFAULT_CHAT_SETTINGS) | {"chat_id"}
 
 
+# ── settings single-source-of-truth guard ────────────────────────────────────
+
+def test_settings_sources_stay_in_sync():
+    """The chat-settings definition lives in four places that must agree:
+    DEFAULT_CHAT_SETTINGS, the CREATE TABLE schema, the migration list
+    (_CHAT_SETTINGS_COLUMNS), and the import-validation rules. Drift between
+    any two has shipped real crashes (v1.37.0: schema vs defaults;
+    v1.45.0: defaults vs migration). This test fails loudly the moment they
+    diverge, so a new setting can't be added to some-but-not-all of them.
+    """
+    default_keys = set(bot.DEFAULT_CHAT_SETTINGS)
+
+    # (1) Migration list covers exactly the default keys.
+    migration_names = {name for name, _ddl in bot._CHAT_SETTINGS_COLUMNS}
+    assert migration_names == default_keys, (
+        f"_CHAT_SETTINGS_COLUMNS vs DEFAULT_CHAT_SETTINGS mismatch: "
+        f"{migration_names ^ default_keys}"
+    )
+
+    # (2) The live DB schema columns match exactly the default keys.
+    bot.init_db()
+    conn = bot.db_connect()
+    schema_cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_settings)")} - {"chat_id"}
+    assert schema_cols == default_keys, (
+        f"CREATE TABLE vs DEFAULT_CHAT_SETTINGS mismatch: {schema_cols ^ default_keys}"
+    )
+
+    # (3) Each column's SQL DEFAULT equals the Python default. Insert a row
+    #     populated only by the schema defaults and read it back.
+    probe = -10_000_001
+    conn.execute("DELETE FROM chat_settings WHERE chat_id = ?", (probe,))
+    conn.execute("INSERT INTO chat_settings(chat_id) VALUES (?)", (probe,))
+    conn.commit()
+    row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (probe,)).fetchone()
+    for key, default in bot.DEFAULT_CHAT_SETTINGS.items():
+        assert row[key] == default, (
+            f"schema DEFAULT for {key} ({row[key]!r}) != "
+            f"DEFAULT_CHAT_SETTINGS ({default!r})"
+        )
+    conn.execute("DELETE FROM chat_settings WHERE chat_id = ?", (probe,))
+    conn.commit()
+
+    # (4) Every setting has exactly one import-validation rule.
+    bool_keys = set(bot._SETTING_INT_BOOL)
+    bound_keys = set(bot._SETTING_INT_BOUNDS)
+    enum_keys = set(bot._SETTING_ENUMS)
+    assert bool_keys | bound_keys | enum_keys == default_keys, (
+        "import-validation rules do not cover exactly DEFAULT_CHAT_SETTINGS: "
+        f"{(bool_keys | bound_keys | enum_keys) ^ default_keys}"
+    )
+    assert bool_keys.isdisjoint(bound_keys)
+    assert bool_keys.isdisjoint(enum_keys)
+    assert bound_keys.isdisjoint(enum_keys)
+
+
 # ── cleanup_db ───────────────────────────────────────────────────────────────
 
 def test_cleanup_db_deletes_undo_records_past_retention():

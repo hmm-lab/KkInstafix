@@ -5,6 +5,29 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0] - 2026-06-17
+
+### Changed
+- **Settings validation is now defined once at module scope.** The
+  import-validation rules that were local variables inside `import_chat_data`
+  (`_INT_BOOL_SETTINGS`, `_INT_POS_BOUNDS`, `_SENDER_MODES`, `_CAPTION_STYLES`)
+  are now module-level constants (`_SETTING_INT_BOOL`, `_SETTING_INT_BOUNDS`,
+  `_SETTING_ENUMS`). `import_chat_data` consumes them via a single generic
+  enum check instead of per-key `elif` branches. Behaviour is unchanged.
+
+### Tests
+- **Added a single-source-of-truth guard for chat settings.** The settings
+  definition is duplicated across four places that must agree: the
+  `CREATE TABLE chat_settings` schema, `DEFAULT_CHAT_SETTINGS`, the migration
+  list `_CHAT_SETTINGS_COLUMNS`, and the import-validation rules. Drift between
+  any two of these has shipped real bugs — v1.37.0 (`caption_style` in the
+  schema but not the defaults dict) and v1.45.0 (a column in defaults/schema but
+  missing from the migration path, crashing upgrades). `test_settings_sources_stay_in_sync`
+  now asserts all four agree on column names, that each column's SQL `DEFAULT`
+  equals its Python default, and that every setting has exactly one
+  (non-overlapping) validation rule. A new setting added to some-but-not-all of
+  the four sources now fails CI instead of shipping. 145 tests total.
+
 ## [1.46.0] - 2026-06-17
 
 ### Fixed

@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.46.0"
+__version__ = "1.47.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -383,6 +383,22 @@ DEFAULT_CHAT_SETTINGS = {
     "provider_fallback": 1,
     "caption_style": "reply",
     "text_spam": 1,
+}
+
+# Import-validation rules for chat settings. Every key in DEFAULT_CHAT_SETTINGS
+# must be covered by exactly one of these so import_chat_data can validate an
+# untrusted backup. test_settings_sources_stay_in_sync guards that this holds —
+# along with the DB schema and the migration list — to prevent the parallel-list
+# drift that caused the v1.37.0 (schema/defaults) and v1.45.0 (migration) bugs.
+_SETTING_INT_BOOL = frozenset({"enabled", "ignore_forwards", "provider_fallback", "text_spam"})
+_SETTING_INT_BOUNDS = {
+    "dedup_window": (5, 3600),
+    "rate_limit": (1, 100),
+    "rate_window": (5, 3600),
+}
+_SETTING_ENUMS = {
+    "sender_mode": frozenset({"first_name", "username", "full_name", "none"}),
+    "caption_style": frozenset({"reply"}),
 }
 
 RATE_LIMIT = 5       # links per user per window
@@ -821,31 +837,20 @@ def import_chat_data(chat_id, data):
     settings = data.get("settings", {})
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
-    _INT_BOOL_SETTINGS = {"enabled", "ignore_forwards", "provider_fallback", "text_spam"}
-    _INT_POS_BOUNDS = {
-        "dedup_window": (5, 3600),
-        "rate_limit": (1, 100),
-        "rate_window": (5, 3600),
-    }
-    _SENDER_MODES = {"first_name", "username", "full_name", "none"}
-    _CAPTION_STYLES = {"reply"}
     ensure_chat_settings(chat_id)
     conn = db_connect()
     for key, value in settings.items():
         if key not in DEFAULT_CHAT_SETTINGS:
             continue
-        if key in _INT_BOOL_SETTINGS:
+        if key in _SETTING_INT_BOOL:
             if not isinstance(value, int) or value not in (0, 1):
                 continue
-        elif key in _INT_POS_BOUNDS:
-            lo, hi = _INT_POS_BOUNDS[key]
+        elif key in _SETTING_INT_BOUNDS:
+            lo, hi = _SETTING_INT_BOUNDS[key]
             if not isinstance(value, int) or not (lo <= value <= hi):
                 continue
-        elif key == "sender_mode":
-            if value not in _SENDER_MODES:
-                continue
-        elif key == "caption_style":
-            if value not in _CAPTION_STYLES:
+        elif key in _SETTING_ENUMS:
+            if value not in _SETTING_ENUMS[key]:
                 continue
         conn.execute(
             f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",
