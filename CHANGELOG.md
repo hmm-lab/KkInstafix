@@ -5,6 +5,24 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0] - 2026-06-17
+
+### Added
+- **Four new platforms: Kick, Pinterest, Weibo, and Xiaohongshu (RED).** Each is
+  wired with its domain(s), an EmbedEZ-convention embed host, an emoji, and a
+  sample URL for `/testall`. Xiaohongshu `xhslink.com` share links are added to
+  the short-link expander so they resolve to the real post before rewriting
+  (Pinterest `pin.it` was already expanded).
+  - Kick: `kick.com` → `kickez.com`
+  - Pinterest: `pinterest.com` → `pinterestez.com`
+  - Weibo: `weibo.com` / `weibo.cn` → `weiboez.com`
+  - Xiaohongshu: `xiaohongshu.com` (+ `xhslink.com` short links) → `xiaohongshuez.com`
+  - **Verify the hosts before relying on them.** They follow the same
+    `<platform>ez.com` convention as the existing `tiktokez` / `redditez`
+    entries but could not be reached from the build environment. Run
+    `/testall kick` (etc.) after deploy; if a host is down, switch it with
+    `/setprovider` or turn the platform off with `/platform <name> off`.
+
 ## [1.50.0] - 2026-06-17
 
 ### Added

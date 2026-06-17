@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.50.0"
+__version__ = "1.51.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -205,6 +205,30 @@ PROVIDERS = {
         "domains": ["dribbble.com"],
         "options": {"tv": "dribbbletv.com"},
     },
+    # NOTE: the four platforms below use EmbedEZ-convention hosts (<name>ez.com,
+    # matching the existing tiktokez/redditez entries). They could not be reached
+    # to confirm from the build environment — verify each with /testall <platform>
+    # after deploy, and switch the host or /platform <name> off if it's down.
+    "kick": {
+        "default": "ez",
+        "domains": ["kick.com"],
+        "options": {"ez": "kickez.com"},
+    },
+    "pinterest": {
+        "default": "ez",
+        "domains": ["pinterest.com"],
+        "options": {"ez": "pinterestez.com"},
+    },
+    "weibo": {
+        "default": "ez",
+        "domains": ["weibo.com", "weibo.cn"],
+        "options": {"ez": "weiboez.com"},
+    },
+    "xiaohongshu": {
+        "default": "ez",
+        "domains": ["xiaohongshu.com"],
+        "options": {"ez": "xiaohongshuez.com"},
+    },
 }
 
 TRACKING = [
@@ -349,6 +373,7 @@ SHORT_LINK_DOMAINS = {
     "amzn.to",          # Amazon short links
     "maps.app.goo.gl",  # Google Maps
     "pin.it",           # Pinterest
+    "xhslink.com",      # Xiaohongshu (RED) share links
     # Generic URL shorteners (expand to real URL, then apply tracking strip / rewrite)
     "bit.ly", "tinyurl.com", "t.ly", "ow.ly", "is.gd",
     "rb.gy", "buff.ly", "goo.gl",
@@ -424,6 +449,10 @@ PLATFORM_EMOJI = {
     "furaffinity": "🐾",
     "deviantart": "🖌",
     "dribbble": "🏀",
+    "kick": "🟢",
+    "pinterest": "📌",
+    "weibo": "🔴",
+    "xiaohongshu": "📕",
 }
 
 SAMPLE_URLS = {
@@ -444,6 +473,10 @@ SAMPLE_URLS = {
     "furaffinity": "https://www.furaffinity.net/view/12345678/",
     "deviantart": "https://www.deviantart.com/test/art/test-12345",
     "dribbble": "https://dribbble.com/shots/12345678-Example-Shot",
+    "kick": "https://kick.com/xqc/clips/clip_01EXAMPLE",
+    "pinterest": "https://www.pinterest.com/pin/1234567890123456/",
+    "weibo": "https://weibo.com/1234567890/ABcdEFghij",
+    "xiaohongshu": "https://www.xiaohongshu.com/explore/abc123def456",
 }
 
 ABOUT_TEXT = (

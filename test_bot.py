@@ -567,6 +567,39 @@ def test_b23_tv_is_short_link():
     assert "b23.tv" in bot.SHORT_LINK_DOMAINS
 
 
+# ── new platforms: kick / pinterest / weibo / xiaohongshu ─────────────────────
+
+def test_new_platforms_detected():
+    assert bot.get_platform("kick.com", "/xqc/clips/clip_1") == "kick"
+    assert bot.get_platform("www.kick.com", "/xqc") == "kick"
+    assert bot.get_platform("pinterest.com", "/pin/123/") == "pinterest"
+    assert bot.get_platform("www.pinterest.com", "/pin/123/") == "pinterest"
+    assert bot.get_platform("weibo.com", "/1234/abcd") == "weibo"
+    assert bot.get_platform("m.weibo.cn", "/status/123") == "weibo"
+    assert bot.get_platform("www.xiaohongshu.com", "/explore/abc") == "xiaohongshu"
+
+
+def test_new_platforms_host_swap():
+    assert "kickez.com" in bot.apply_provider(
+        "https://kick.com/xqc/clips/clip_1", "kick", "ez")
+    assert "pinterestez.com" in bot.apply_provider(
+        "https://www.pinterest.com/pin/123/", "pinterest", "ez")
+    assert "weiboez.com" in bot.apply_provider(
+        "https://weibo.com/1234/abcd", "weibo", "ez")
+    assert "xiaohongshuez.com" in bot.apply_provider(
+        "https://www.xiaohongshu.com/explore/abc", "xiaohongshu", "ez")
+
+
+def test_xhslink_is_short_link():
+    assert "xhslink.com" in bot.SHORT_LINK_DOMAINS
+
+
+def test_new_platforms_have_emoji_and_sample():
+    for plat in ("kick", "pinterest", "weibo", "xiaohongshu"):
+        assert plat in bot.PLATFORM_EMOJI, f"{plat} missing emoji"
+        assert plat in bot.SAMPLE_URLS, f"{plat} missing sample URL"
+
+
 def test_toggle_commands_registered():
     for cmd in ("/setratelimit", "/ignoreforwards", "/fallback", "/textspam", "/resetstats"):
         assert cmd in bot.ADMIN_CMDS, f"{cmd} missing from ADMIN_CMDS"
