@@ -1002,6 +1002,62 @@ def test_fix_url_amazon_asin_extraction_after_amznto_expansion():
         bot._expand_cache.pop(amzn_short, None)
 
 
+# ── schema migration ─────────────────────────────────────────────────────────
+
+def test_migrate_chat_settings_adds_missing_columns():
+    import sqlite3
+    # Simulate an OLD database whose chat_settings predates caption_style and
+    # text_spam (and provider_fallback / ignore_forwards).
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE chat_settings (
+            chat_id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sender_mode TEXT NOT NULL DEFAULT 'first_name',
+            dedup_window INTEGER NOT NULL DEFAULT 60,
+            rate_limit INTEGER NOT NULL DEFAULT 5,
+            rate_window INTEGER NOT NULL DEFAULT 30
+        )
+        """
+    )
+    conn.execute("INSERT INTO chat_settings(chat_id) VALUES (-1)")
+    conn.commit()
+
+    bot._migrate_chat_settings_columns(conn)
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_settings)")}
+    for key in bot.DEFAULT_CHAT_SETTINGS:
+        assert key in cols, f"migration did not add column {key}"
+
+    # The INSERT that ensure_chat_settings runs (names every default column)
+    # must now succeed on the migrated table.
+    cols_csv = ", ".join(bot.DEFAULT_CHAT_SETTINGS.keys())
+    qs = ", ".join(["?"] * len(bot.DEFAULT_CHAT_SETTINGS))
+    conn.execute(
+        f"INSERT OR IGNORE INTO chat_settings(chat_id, {cols_csv}) VALUES (?, {qs})",
+        [-2, *bot.DEFAULT_CHAT_SETTINGS.values()],
+    )
+    # Pre-existing row gets the new columns at their declared defaults.
+    row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = -1").fetchone()
+    assert row["caption_style"] == "reply"
+    assert row["text_spam"] == 1
+
+
+def test_migrate_chat_settings_is_idempotent():
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE chat_settings (chat_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1)")
+    conn.commit()
+    bot._migrate_chat_settings_columns(conn)
+    # Second run must not raise (all columns already present).
+    bot._migrate_chat_settings_columns(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_settings)")}
+    assert cols == set(bot.DEFAULT_CHAT_SETTINGS) | {"chat_id"}
+
+
 # ── cleanup_db ───────────────────────────────────────────────────────────────
 
 def test_cleanup_db_deletes_undo_records_past_retention():

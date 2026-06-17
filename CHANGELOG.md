@@ -5,6 +5,36 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0] - 2026-06-17
+
+### Fixed
+- **Missing schema migration crashed upgrades on an existing database** —
+  `init_db` only ran `CREATE TABLE IF NOT EXISTS`, which never alters a table
+  that already exists. A database created by a version predating a settings
+  column (e.g. `caption_style`, added in v1.37.0, or `text_spam`) kept the old
+  table shape after upgrade. On the first chat interaction, `ensure_chat_settings`
+  ran `INSERT OR IGNORE INTO chat_settings(chat_id, caption_style, text_spam, …)`
+  naming every column, raising `sqlite3.OperationalError: table chat_settings
+  has no column named caption_style`. This made the bot unusable on any
+  persistent-volume deployment upgrading across schema versions.
+  - Added `_migrate_chat_settings_columns`, called from `init_db` before the
+    cache warm-up. It reads `PRAGMA table_info(chat_settings)` and issues
+    `ALTER TABLE … ADD COLUMN` for any column in the canonical
+    `_CHAT_SETTINGS_COLUMNS` list that is missing. Idempotent and runs every
+    startup.
+  - Made `get_chat_settings` defensive (belt-and-suspenders): it now merges the
+    DB row over a `DEFAULT_CHAT_SETTINGS` base, so any still-missing key falls
+    back to its default instead of yielding an incomplete dict that would
+    `KeyError` on direct subscript in the handlers — the same pattern
+    `export_chat_data` already uses.
+
+### Tests
+- Added two migration tests: one builds an old-schema `chat_settings` table
+  (5 columns) and asserts every `DEFAULT_CHAT_SETTINGS` column is added with
+  correct defaults and that the `ensure_chat_settings` INSERT then succeeds;
+  the other asserts the migration is idempotent and produces exactly the
+  expected column set. 142 tests total.
+
 ## [1.44.0] - 2026-06-17
 
 ### Fixed

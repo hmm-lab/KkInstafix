@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.44.0"
+__version__ = "1.45.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -532,9 +532,43 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_rewritten_ts ON rewritten_messages(ts);
         """
     )
+    _migrate_chat_settings_columns(conn)
     _warm_chat_cache()
     _warm_providers_cache()
     _warm_muted_cache()
+
+
+# Canonical column DDL for chat_settings, mirroring the CREATE TABLE above.
+# Used to ADD COLUMN any column missing from a database created by an older
+# version (CREATE TABLE IF NOT EXISTS never alters an existing table). Keep this
+# in lock-step with the CREATE TABLE statement and DEFAULT_CHAT_SETTINGS.
+_CHAT_SETTINGS_COLUMNS = [
+    ("enabled", "INTEGER NOT NULL DEFAULT 1"),
+    ("sender_mode", "TEXT NOT NULL DEFAULT 'first_name'"),
+    ("dedup_window", "INTEGER NOT NULL DEFAULT 60"),
+    ("rate_limit", "INTEGER NOT NULL DEFAULT 5"),
+    ("rate_window", "INTEGER NOT NULL DEFAULT 30"),
+    ("ignore_forwards", "INTEGER NOT NULL DEFAULT 1"),
+    ("provider_fallback", "INTEGER NOT NULL DEFAULT 1"),
+    ("caption_style", "TEXT NOT NULL DEFAULT 'reply'"),
+    ("text_spam", "INTEGER NOT NULL DEFAULT 1"),
+]
+
+
+def _migrate_chat_settings_columns(conn):
+    """Add any chat_settings column missing from an older database.
+
+    An upgrade from a version that predates a setting (e.g. caption_style added
+    in v1.37.0, text_spam earlier) leaves the existing table without that column.
+    Without this, ensure_chat_settings' INSERT — which names every column —
+    raises sqlite3.OperationalError on the first chat interaction.
+    """
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(chat_settings)")}
+    for name, ddl in _CHAT_SETTINGS_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE chat_settings ADD COLUMN {name} {ddl}")
+            logger.info("Migrated chat_settings: added missing column %s", name)
+    conn.commit()
 
 
 def ensure_chat_settings(chat_id):
@@ -559,7 +593,12 @@ def get_chat_settings(chat_id):
     ensure_chat_settings(chat_id)
     conn = db_connect()
     row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)).fetchone()
-    s = dict(row) if row else DEFAULT_CHAT_SETTINGS.copy()
+    # Merge over defaults so a column missing from an older, un-migrated row
+    # falls back to its default rather than producing an incomplete dict that
+    # would KeyError on direct subscript in the handlers.
+    s = DEFAULT_CHAT_SETTINGS.copy()
+    if row:
+        s.update({k: row[k] for k in row.keys()})
     _settings_cache[chat_id] = s
     return s.copy()
 
