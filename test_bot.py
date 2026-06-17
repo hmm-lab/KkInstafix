@@ -104,6 +104,16 @@ def test_apply_provider_keeps_meaningful_query():
     assert "context=3" in out
 
 
+def test_apply_provider_preserves_fragment():
+    # The fragment must survive a host swap + tracking strip, consistent with the
+    # generic /clean path (strip_generic_tracking already preserves fragments).
+    out = bot.apply_provider(
+        "https://www.reddit.com/r/x/comments/1/y?utm_source=z#t1_abc", "reddit", "vx"
+    )
+    assert out.endswith("#t1_abc")
+    assert "utm_source" not in out
+
+
 def test_platform_tracking_keys_are_lowercase():
     for platform, keys in bot.PLATFORM_TRACKING.items():
         assert platform in bot.PROVIDERS, f"{platform} not a real platform"
@@ -617,6 +627,13 @@ def test_clean_url_generic_keeps_fragment_and_ambiguous_params():
     assert bot.clean_url("https://docs.example.com/g?utm_id=1#sec") == \
         "https://docs.example.com/g#sec"
     assert "s=hello" in bot.clean_url("https://blog.example.com/?s=hello")
+
+
+def test_clean_url_platform_keeps_fragment():
+    # The platform /clean path (strip_tracking) must keep fragments too, matching
+    # the generic path — a Reddit comment anchor survives tracking removal.
+    assert bot.clean_url("https://www.reddit.com/r/x/comments/1/y?s=tok#t1_abc") == \
+        "https://www.reddit.com/r/x/comments/1/y#t1_abc"
 
 
 def test_clean_url_expanded_youtu_be_path_rewrite():

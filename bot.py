@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.45.0"
+__version__ = "1.46.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -930,7 +930,8 @@ def strip_tracking(url, extra=None):
         if k.lower() not in drop
     }
     return urlunparse(
-        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(kept, doseq=True), "")
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params,
+         urlencode(kept, doseq=True), parsed.fragment)
     )
 
 
@@ -981,7 +982,7 @@ def get_platform(netloc, path):
 def apply_provider(url, platform, provider_key):
     host = PROVIDERS[platform]["options"][provider_key]
     parsed = urlparse(url)
-    fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, ""))
+    fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, parsed.fragment))
     return strip_tracking(fixed, extra=PLATFORM_TRACKING.get(platform))
 
 

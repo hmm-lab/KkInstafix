@@ -5,6 +5,23 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0] - 2026-06-17
+
+### Fixed
+- **URL fragments were dropped when rewriting platform links** — `apply_provider`
+  and `strip_tracking` both reassembled the URL with an empty fragment, while
+  the generic `/clean` path (`strip_generic_tracking`) deliberately preserves
+  it (per its docstring). That inconsistency meant a rewritten or platform-cleaned
+  link silently lost its `#…` anchor (e.g. a Reddit comment anchor
+  `#t1_abc`), even though the same anchor survived on non-platform links. Both
+  `apply_provider` and `strip_tracking` now carry `parsed.fragment` through, so
+  fragment handling is uniform across every rewrite path. Fixer hosts ignore
+  unknown fragments, so this is safe for the host-swap case.
+
+### Tests
+- Added `test_apply_provider_preserves_fragment` and
+  `test_clean_url_platform_keeps_fragment`. 144 tests total.
+
 ## [1.45.0] - 2026-06-17
 
 ### Fixed
