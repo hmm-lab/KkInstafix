@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.48.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.49.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -24,6 +24,7 @@ Current version: **1.48.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - Per-user rate limiting.
 - Inline mode: use `@KkInstaFixBot <link>` in any chat without adding the bot.
 - Interactive `/menu` for admins to change providers with inline buttons.
+- Per-platform control: admins can disable rewriting for individual platforms (e.g. leave Spotify links alone) while keeping the rest on.
 - Commands are intentionally hidden from the Telegram "/" autocomplete menu to keep the UI uncluttered — they still work when typed.
 - Admin-only moderation and config commands.
 - SQLite storage so settings survive restarts.
@@ -82,6 +83,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 - `/disable` — disable bot features in this chat.
 - `/setprovider <platform> <provider>` — set provider for a platform.
 - `/resetproviders` — reset all providers to defaults (shows what changed).
+- `/platform` — list per-platform rewrite state; `/platform <name> on|off` enables or disables rewriting for one platform (disabled links are left fully untouched).
 - `/muteuser` — mute a user by replying to them or by user ID.
 - `/unmuteuser` — unmute a user by replying to them or by user ID.
 - `/listmuted` — list all muted users with names.
@@ -155,8 +157,8 @@ YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (119 tests). Run with `pytest test_bot.py`.
-- `test_handlers.py` — async handler tests with lightweight fakes (29 tests covering every update handler). Run the whole suite with `pytest`.
+- `test_bot.py` — pure-function tests (124 tests). Run with `pytest test_bot.py`.
+- `test_handlers.py` — async handler tests with lightweight fakes (31 tests covering every update handler). Run the whole suite with `pytest`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

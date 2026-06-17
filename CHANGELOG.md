@@ -5,6 +5,20 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0] - 2026-06-17
+
+### Added
+- **Per-platform enable/disable (`/platform`).** Rewriting used to be all-or-nothing
+  (`/enable` / `/disable`). Admins can now turn rewriting off for individual
+  platforms while leaving the rest on:
+  - `/platform` — list every platform with its on/off state.
+  - `/platform <name> on|off` — toggle one platform (e.g. `/platform spotify off`).
+  - A disabled platform's links are left completely untouched (no host swap, no
+    tracking strip); `/clean` and `/preview` still work on them on demand.
+  - State is stored in a new `disabled_platforms` table with an in-memory cache
+    (same pattern as muted users), shown in `/status`, and included in
+    `/export` / `/import` backups (unknown platform names are ignored on import).
+
 ## [1.48.0] - 2026-06-17
 
 ### Added

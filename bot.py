@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.48.0"
+__version__ = "1.49.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -364,6 +364,7 @@ _known_chats: set = set()
 _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
+_disabled_cache: dict = {}   # chat_id -> set of platforms with rewriting disabled
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 # Hard cap so the dedup cache stays bounded even if the periodic cleanup job is
 # never scheduled (e.g. job-queue extra missing) or hasn't run yet.
@@ -498,6 +499,12 @@ def _warm_muted_cache():
         _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
+def _warm_disabled_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id, platform FROM disabled_platforms").fetchall():
+        _disabled_cache.setdefault(row["chat_id"], set()).add(row["platform"])
+
+
 def init_db():
     conn = db_connect()
     conn.executescript(
@@ -528,6 +535,12 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS disabled_platforms (
+            chat_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            PRIMARY KEY (chat_id, platform)
+        );
+
         CREATE TABLE IF NOT EXISTS chat_stats (
             chat_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
@@ -552,6 +565,7 @@ def init_db():
     _warm_chat_cache()
     _warm_providers_cache()
     _warm_muted_cache()
+    _warm_disabled_cache()
 
 
 # Canonical column DDL for chat_settings, mirroring the CREATE TABLE above.
@@ -710,6 +724,42 @@ def blocked_user_count(chat_id):
     return len(_muted_set(chat_id))
 
 
+def _disabled_set(chat_id) -> set:
+    if chat_id not in _disabled_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT platform FROM disabled_platforms WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _disabled_cache[chat_id] = {r["platform"] for r in rows}
+    return _disabled_cache[chat_id]
+
+
+def set_platform_enabled(chat_id, platform, enabled):
+    """Enable or disable automatic rewriting of one platform in a chat."""
+    conn = db_connect()
+    if enabled:
+        conn.execute(
+            "DELETE FROM disabled_platforms WHERE chat_id = ? AND platform = ?",
+            (chat_id, platform),
+        )
+        _disabled_set(chat_id).discard(platform)
+    else:
+        conn.execute(
+            "INSERT OR IGNORE INTO disabled_platforms(chat_id, platform) VALUES(?, ?)",
+            (chat_id, platform),
+        )
+        _disabled_set(chat_id).add(platform)
+    conn.commit()
+
+
+def is_platform_disabled(chat_id, platform):
+    return platform in _disabled_set(chat_id)
+
+
+def get_disabled_platforms(chat_id) -> set:
+    return set(_disabled_set(chat_id))
+
+
 def cleanup_db():
     now = int(time.time())
     conn = db_connect()
@@ -821,12 +871,19 @@ def export_chat_data(chat_id):
             "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
         )
     ]
+    disabled = [
+        row["platform"]
+        for row in conn.execute(
+            "SELECT platform FROM disabled_platforms WHERE chat_id = ?", (chat_id,)
+        )
+    ]
     return {
         "version": 1,
         "chat_id": chat_id,
         "settings": settings,
         "providers": providers,
         "muted_users": muted,
+        "disabled_platforms": disabled,
     }
 
 
@@ -837,6 +894,7 @@ def import_chat_data(chat_id, data):
     settings = data.get("settings", {})
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
+    disabled = data.get("disabled_platforms", [])
     ensure_chat_settings(chat_id)
     conn = db_connect()
     for key, value in settings.items():
@@ -870,12 +928,21 @@ def import_chat_data(chat_id, data):
                 (chat_id, user_id),
             )
             imported_mutes += 1
+    imported_disabled = 0
+    for platform in disabled:
+        if platform in PROVIDERS:
+            conn.execute(
+                "INSERT OR IGNORE INTO disabled_platforms(chat_id, platform) VALUES(?, ?)",
+                (chat_id, platform),
+            )
+            imported_disabled += 1
     conn.commit()
     # Invalidate in-memory caches so changes take effect immediately
     _settings_cache.pop(chat_id, None)
     _providers_cache.pop(chat_id, None)
     _muted_cache.pop(chat_id, None)
-    msg = f"imported {len(providers)} providers, {imported_mutes} mutes"
+    _disabled_cache.pop(chat_id, None)
+    msg = f"imported {len(providers)} providers, {imported_mutes} mutes, {imported_disabled} disabled platforms"
     if source_chat and source_chat != chat_id:
         msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
     return True, msg
@@ -1238,6 +1305,10 @@ async def fix_url(raw, chat_id, chat_settings):
                 watch += f"&{tkey}=" + q[tkey][0]
                 break
         return watch + tail, None, None, None
+    if is_platform_disabled(chat_id, platform):
+        # Admin turned off rewriting for this platform in this chat — leave the
+        # link untouched (no host swap, no tracking strip). /clean still works.
+        return raw, None, None, None
     preferred = get_choice(chat_id, platform)
     allow_fallback = bool(chat_settings.get("provider_fallback", 1))
     noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
@@ -1384,7 +1455,12 @@ def status_text(chat_id):
     }
     mode = mode_labels.get(s["sender_mode"], s["sender_mode"])
     muted = blocked_user_count(chat_id)
+    disabled = get_disabled_platforms(chat_id)
     enabled_line = "✅ <b>Bot is ON</b>" if s["enabled"] else "❌ <b>Bot is OFF</b> — /enable to turn on"
+    disabled_line = (
+        f"Disabled platforms: <code>{', '.join(sorted(disabled))}</code>"
+        if disabled else "Disabled platforms: <code>none</code>"
+    )
     return "\n".join([
         "<b>Chat status</b>",
         "",
@@ -1395,6 +1471,7 @@ def status_text(chat_id):
         f"Ignore forwards: {on_off(s.get('ignore_forwards', 1))}",
         f"Provider fallback: {on_off(s.get('provider_fallback', 1))}",
         f"Text spam deletion: {on_off(s.get('text_spam', 1))}",
+        disabled_line,
         f"Muted users: <code>{muted}</code>",
     ])
 
@@ -1596,6 +1673,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/enable · /disable — turn the bot on or off\n"
         "<code>/setprovider &lt;platform&gt; &lt;key&gt;</code> — change a provider\n"
         "/resetproviders — restore all defaults\n"
+        "<code>/platform &lt;name&gt; on|off</code> — enable/disable rewriting per platform\n"
         "/muteuser · /unmuteuser · /listmuted — mute management\n"
         "<code>/setsendermode first_name|username|full_name|none</code>\n"
         "<code>/setdedup &lt;seconds&gt;</code> — dedup window\n"
@@ -1971,6 +2049,49 @@ async def _cmd_setprovider(msg, parts, context, chat_id):
     await msg.reply_text(f"{emoji} {plat} provider set to <b>{prov}</b>.", parse_mode="HTML")
 
 
+async def _cmd_platform(msg, parts, context, chat_id):
+    """Enable/disable automatic rewriting per platform.
+
+    /platform                  → list every platform with its on/off state
+    /platform <name> on|off    → toggle rewriting for one platform
+    """
+    disabled = get_disabled_platforms(chat_id)
+    if len(parts) == 1:
+        lines = ["<b>Per-platform rewriting</b>", ""]
+        for plat in sorted(PROVIDERS):
+            emoji = PLATFORM_EMOJI.get(plat, "")
+            state = "❌ off" if plat in disabled else "✅ on"
+            lines.append(f"{emoji} {plat} — {state}")
+        lines.append("")
+        lines.append("Toggle with <code>/platform &lt;name&gt; on|off</code>.")
+        await msg.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+
+    plat = parts[1].lower()
+    value = parse_on_off(parts[2]) if len(parts) == 3 else None
+    if plat not in PROVIDERS or value is None:
+        plats = ", ".join(sorted(PROVIDERS))
+        await msg.reply_text(
+            "Usage: <code>/platform &lt;name&gt; on|off</code>\n"
+            "Example: <code>/platform spotify off</code> — stop rewriting Spotify links here.\n\n"
+            f"Platforms: {plats}\n"
+            "Run <code>/platform</code> with no arguments to see current state.",
+            parse_mode="HTML",
+        )
+        return
+
+    set_platform_enabled(chat_id, plat, bool(value))
+    emoji = PLATFORM_EMOJI.get(plat, "")
+    if value:
+        await msg.reply_text(f"{emoji} <b>{plat}</b> links will be rewritten again.", parse_mode="HTML")
+    else:
+        await msg.reply_text(
+            f"{emoji} <b>{plat}</b> links will no longer be rewritten in this chat "
+            "(tracking is left intact too — use /clean to strip it manually).",
+            parse_mode="HTML",
+        )
+
+
 async def _cmd_setsendermode(msg, parts, context, chat_id):
     modes = {
         "first_name": "first name (e.g. Mehrab)",
@@ -2155,6 +2276,7 @@ ADMIN_CMDS = {
     "/listmuted": _cmd_listmuted,
     "/resetproviders": _cmd_resetproviders,
     "/setprovider": _cmd_setprovider,
+    "/platform": _cmd_platform,
     "/setsendermode": _cmd_setsendermode,
     "/setdedup": _cmd_setdedup,
     "/setratelimit": _cmd_setratelimit,

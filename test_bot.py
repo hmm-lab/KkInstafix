@@ -418,6 +418,69 @@ def test_import_rejects_bad_format():
     assert "unsupported" in msg
 
 
+# ── per-platform enable/disable ───────────────────────────────────────────────
+
+def test_platform_disable_roundtrip():
+    bot.init_db()
+    cid = -100_555_001
+    assert not bot.is_platform_disabled(cid, "spotify")
+    bot.set_platform_enabled(cid, "spotify", False)
+    assert bot.is_platform_disabled(cid, "spotify")
+    assert "spotify" in bot.get_disabled_platforms(cid)
+    # other platforms unaffected
+    assert not bot.is_platform_disabled(cid, "twitter")
+    # re-enable
+    bot.set_platform_enabled(cid, "spotify", True)
+    assert not bot.is_platform_disabled(cid, "spotify")
+    assert bot.get_disabled_platforms(cid) == set()
+
+
+def test_disabled_platform_survives_cache_reload():
+    bot.init_db()
+    cid = -100_555_002
+    bot.set_platform_enabled(cid, "twitch", False)
+    # Drop the in-memory cache; the DB must still report it disabled.
+    bot._disabled_cache.pop(cid, None)
+    assert bot.is_platform_disabled(cid, "twitch")
+
+
+def test_status_text_lists_disabled_platforms():
+    bot.init_db()
+    cid = -100_555_003
+    bot.set_platform_enabled(cid, "twitch", False)
+    text = bot.status_text(cid)
+    assert "twitch" in text
+    assert "Disabled platforms" in text
+
+
+def test_export_import_includes_disabled_platforms():
+    bot.init_db()
+    cid = -100_555_010
+    bot.set_platform_enabled(cid, "spotify", False)
+    bot.set_platform_enabled(cid, "twitch", False)
+    data = bot.export_chat_data(cid)
+    assert set(data["disabled_platforms"]) == {"spotify", "twitch"}
+    cid2 = -100_555_011
+    ok, msg = bot.import_chat_data(cid2, data)
+    assert ok is True
+    assert "disabled platforms" in msg
+    assert bot.is_platform_disabled(cid2, "spotify")
+    assert bot.is_platform_disabled(cid2, "twitch")
+
+
+def test_import_ignores_unknown_disabled_platform():
+    bot.init_db()
+    cid = -100_555_012
+    data = {
+        "version": 1, "chat_id": cid, "settings": {}, "providers": {},
+        "muted_users": [], "disabled_platforms": ["spotify", "notareal_platform"],
+    }
+    ok, _ = bot.import_chat_data(cid, data)
+    assert ok is True
+    assert bot.is_platform_disabled(cid, "spotify")
+    assert not bot.is_platform_disabled(cid, "notareal_platform")
+
+
 def test_import_rejects_out_of_range_int_settings():
     bot.init_db()
     cid = -100_777_001

@@ -443,6 +443,41 @@ def test_cmd_clean_inline_url():
     assert "t=tok" not in reply_text
 
 
+# ── per-platform disable ──────────────────────────────────────────────────────
+
+def test_disabled_platform_link_not_rewritten():
+    fb = FakeBot()
+    cid = -1340
+    bot.set_platform_enabled(cid, "twitter", False)
+    msg = FakeMessage(text="look https://twitter.com/u/status/1",
+                      user=FakeUser(5, "Bob"), chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=340), FakeContext(fb)))
+    assert not msg.deleted, "disabled platform link must be left untouched"
+    assert not fb.sent
+    # Re-enabling restores rewriting.
+    bot.set_platform_enabled(cid, "twitter", True)
+    msg2 = FakeMessage(text="look https://twitter.com/u/status/2",
+                       user=FakeUser(5, "Bob"), chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=341), FakeContext(fb)))
+    assert fb.sent and "vxtwitter.com" in fb.sent[0].text
+
+
+def test_cmd_platform_toggle_and_list():
+    fb = FakeBot(admin=True)
+    cid = -1341
+    # Disable via command.
+    msg = FakeMessage(text="/platform spotify off", user=FakeUser(1, "Admin"),
+                      chat=FakeChat(cid), bot=fb)
+    run(bot.handle_message(FakeUpdate(msg, update_id=342), FakeContext(fb)))
+    assert msg.replies and "spotify" in msg.replies[0].text.lower()
+    assert bot.is_platform_disabled(cid, "spotify")
+    # List shows state.
+    msg2 = FakeMessage(text="/platform", user=FakeUser(1, "Admin"),
+                       chat=FakeChat(cid), bot=fb)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=343), FakeContext(fb)))
+    assert msg2.replies and "spotify" in msg2.replies[0].text.lower()
+
+
 # ── /preview ──────────────────────────────────────────────────────────────────
 
 def test_cmd_preview_platform_link_shows_rewrite_and_provider():
