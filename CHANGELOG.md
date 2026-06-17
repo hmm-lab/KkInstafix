@@ -5,6 +5,18 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0] - 2026-06-17
+
+### Added
+- **Per-user opt-out (`/optout` / `/optin`).** Any user can run `/optout` so the
+  bot stops rewriting and reposting *their own* links in that chat, and `/optin`
+  to resume — no admin rights needed. Opted-out users' links are left fully
+  untouched across all three rewrite paths (messages, captions, edits) and don't
+  consume their link rate budget; plain-text spam dedup and muting still apply.
+  Stored per chat in a new `optout_users` table with an in-memory cache (same
+  pattern as muted users). It is intentionally **not** part of `/export` /
+  `/import`, since opt-out is a personal preference rather than chat config.
+
 ## [1.49.0] - 2026-06-17
 
 ### Added

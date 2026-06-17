@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.49.0"
+__version__ = "1.50.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -365,6 +365,7 @@ _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
 _disabled_cache: dict = {}   # chat_id -> set of platforms with rewriting disabled
+_optout_cache: dict = {}     # chat_id -> set of user_ids who opted out of rewriting
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 # Hard cap so the dedup cache stays bounded even if the periodic cleanup job is
 # never scheduled (e.g. job-queue extra missing) or hasn't run yet.
@@ -505,6 +506,12 @@ def _warm_disabled_cache():
         _disabled_cache.setdefault(row["chat_id"], set()).add(row["platform"])
 
 
+def _warm_optout_cache():
+    conn = db_connect()
+    for row in conn.execute("SELECT chat_id, user_id FROM optout_users").fetchall():
+        _optout_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
+
+
 def init_db():
     conn = db_connect()
     conn.executescript(
@@ -541,6 +548,12 @@ def init_db():
             PRIMARY KEY (chat_id, platform)
         );
 
+        CREATE TABLE IF NOT EXISTS optout_users (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
+        );
+
         CREATE TABLE IF NOT EXISTS chat_stats (
             chat_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
@@ -566,6 +579,7 @@ def init_db():
     _warm_providers_cache()
     _warm_muted_cache()
     _warm_disabled_cache()
+    _warm_optout_cache()
 
 
 # Canonical column DDL for chat_settings, mirroring the CREATE TABLE above.
@@ -758,6 +772,38 @@ def is_platform_disabled(chat_id, platform):
 
 def get_disabled_platforms(chat_id) -> set:
     return set(_disabled_set(chat_id))
+
+
+def _optout_set(chat_id) -> set:
+    if chat_id not in _optout_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT user_id FROM optout_users WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _optout_cache[chat_id] = {r["user_id"] for r in rows}
+    return _optout_cache[chat_id]
+
+
+def set_user_optout(chat_id, user_id, opted_out):
+    """Opt a user in or out of having their own links rewritten in a chat."""
+    conn = db_connect()
+    if opted_out:
+        conn.execute(
+            "INSERT OR IGNORE INTO optout_users(chat_id, user_id) VALUES(?, ?)",
+            (chat_id, user_id),
+        )
+        _optout_set(chat_id).add(user_id)
+    else:
+        conn.execute(
+            "DELETE FROM optout_users WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        _optout_set(chat_id).discard(user_id)
+    conn.commit()
+
+
+def is_user_optout(chat_id, user_id):
+    return user_id in _optout_set(chat_id)
 
 
 def cleanup_db():
@@ -1661,6 +1707,7 @@ async def _cmd_help(msg, parts, context, chat_id):
         "/undo — reply to a bot message to reveal the original link\n"
         "/clean — strip tracking from a replied link (or /clean &lt;url&gt;); expands short links\n"
         "/preview — show what a link would become (rewrite + clean) without reposting it\n"
+        "/optout · /optin — stop / resume having your own links rewritten here\n"
         "/about — credits\n"
         "/version — show the bot version\n"
         "/mehrab · /genius — custom image / video\n\n"
@@ -1807,6 +1854,30 @@ async def _cmd_preview(msg, parts, context, chat_id):
         parse_mode="HTML",
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
+
+
+async def _cmd_optout(msg, parts, context, chat_id):
+    user_id = msg.from_user.id if msg.from_user else 0
+    if not user_id:
+        return
+    if is_user_optout(chat_id, user_id):
+        await msg.reply_text("You're already opted out here — I leave your links alone. /optin to undo.")
+        return
+    set_user_optout(chat_id, user_id, True)
+    await msg.reply_text(
+        "Got it — I'll leave your links alone in this chat. Use /optin to switch back."
+    )
+
+
+async def _cmd_optin(msg, parts, context, chat_id):
+    user_id = msg.from_user.id if msg.from_user else 0
+    if not user_id:
+        return
+    if not is_user_optout(chat_id, user_id):
+        await msg.reply_text("You're already opted in — I fix your links normally.")
+        return
+    set_user_optout(chat_id, user_id, False)
+    await msg.reply_text("Welcome back — I'll fix your links again in this chat.")
 
 
 async def _cmd_testcb(msg, parts, context, chat_id):
@@ -2263,6 +2334,8 @@ PUBLIC_CMDS = {
     "/undo": _cmd_undo,
     "/clean": _cmd_clean,
     "/preview": _cmd_preview,
+    "/optout": _cmd_optout,
+    "/optin": _cmd_optin,
     "/version": _cmd_version,
 }
 
@@ -2341,6 +2414,9 @@ async def handle_message(update, context):
             if seen_recent("text", chat_id, text.lower(), int(chat_settings["dedup_window"])):
                 await safe_delete(msg, "duplicate-text")
         return
+
+    if is_user_optout(chat_id, user_id):
+        return   # user asked not to have their links rewritten in this chat
 
     rate_limit = int(chat_settings.get("rate_limit", RATE_LIMIT))
     rate_window = int(chat_settings.get("rate_window", RATE_WINDOW))
@@ -2435,6 +2511,8 @@ async def handle_caption(update, context):
         return
     if chat_settings.get("ignore_forwards", 1) and is_forwarded(msg):
         return
+    if is_user_optout(chat_id, user_id):
+        return   # user opted out of link rewriting
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
 
@@ -2486,6 +2564,8 @@ async def handle_edit(update, context):
         return
     if is_user_muted(chat_id, user_id):
         return
+    if is_user_optout(chat_id, user_id):
+        return   # user opted out of link rewriting
     if not check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", RATE_LIMIT)), int(chat_settings.get("rate_window", RATE_WINDOW))):
         return
     if not URL_RE.search(msg.text):

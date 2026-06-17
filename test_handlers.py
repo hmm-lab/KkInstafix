@@ -443,6 +443,49 @@ def test_cmd_clean_inline_url():
     assert "t=tok" not in reply_text
 
 
+# ── per-user opt-out ──────────────────────────────────────────────────────────
+
+def test_optout_user_link_not_rewritten():
+    fb = FakeBot()
+    cid = -1350
+    uid = 71
+    bot.set_user_optout(cid, uid, True)
+    msg = FakeMessage(text="look https://twitter.com/u/status/1",
+                      user=FakeUser(uid, "Opt"), chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=350), FakeContext(fb)))
+    assert not msg.deleted, "opted-out user's link must be left untouched"
+    assert not fb.sent
+    # A different user in the same chat is still rewritten.
+    msg2 = FakeMessage(text="look https://twitter.com/u/status/2",
+                       user=FakeUser(72, "Other"), chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=351), FakeContext(fb)))
+    assert fb.sent and "vxtwitter.com" in fb.sent[0].text
+
+
+def test_optout_then_optin_restores_rewrite():
+    fb = FakeBot()
+    cid = -1351
+    uid = 73
+    # /optout via command
+    m1 = FakeMessage(text="/optout", user=FakeUser(uid, "U"), chat=FakeChat(cid), bot=fb)
+    run(bot.handle_message(FakeUpdate(m1, update_id=352), FakeContext(fb)))
+    assert m1.replies and bot.is_user_optout(cid, uid)
+    # link left alone
+    m2 = FakeMessage(text="https://twitter.com/u/status/1", user=FakeUser(uid, "U"),
+                     chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(m2, update_id=353), FakeContext(fb)))
+    assert not fb.sent
+    # /optin via command
+    m3 = FakeMessage(text="/optin", user=FakeUser(uid, "U"), chat=FakeChat(cid), bot=fb)
+    run(bot.handle_message(FakeUpdate(m3, update_id=354), FakeContext(fb)))
+    assert m3.replies and not bot.is_user_optout(cid, uid)
+    # now rewritten again
+    m4 = FakeMessage(text="https://twitter.com/u/status/2", user=FakeUser(uid, "U"),
+                     chat=FakeChat(cid), bot=fb, message_id=4)
+    run(bot.handle_message(FakeUpdate(m4, update_id=355), FakeContext(fb)))
+    assert fb.sent and "vxtwitter.com" in fb.sent[0].text
+
+
 # ── per-platform disable ──────────────────────────────────────────────────────
 
 def test_disabled_platform_link_not_rewritten():

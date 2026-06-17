@@ -481,6 +481,28 @@ def test_import_ignores_unknown_disabled_platform():
     assert not bot.is_platform_disabled(cid, "notareal_platform")
 
 
+# ── per-user opt-out ──────────────────────────────────────────────────────────
+
+def test_user_optout_roundtrip():
+    bot.init_db()
+    cid = -100_666_001
+    assert not bot.is_user_optout(cid, 5)
+    bot.set_user_optout(cid, 5, True)
+    assert bot.is_user_optout(cid, 5)
+    assert not bot.is_user_optout(cid, 6)        # other user unaffected
+    assert not bot.is_user_optout(-100_666_002, 5)  # other chat unaffected
+    bot.set_user_optout(cid, 5, False)
+    assert not bot.is_user_optout(cid, 5)
+
+
+def test_user_optout_survives_cache_reload():
+    bot.init_db()
+    cid = -100_666_003
+    bot.set_user_optout(cid, 9, True)
+    bot._optout_cache.pop(cid, None)   # force reload from DB
+    assert bot.is_user_optout(cid, 9)
+
+
 def test_import_rejects_out_of_range_int_settings():
     bot.init_db()
     cid = -100_777_001

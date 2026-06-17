@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.49.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.50.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -67,6 +67,7 @@ Current version: **1.49.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
 - `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
 - `/preview` — reply to a message (or pass a URL) to see what the link would become (rewritten link, platform/provider, and cleaned version) without reposting it publicly.
+- `/optout` — stop the bot from rewriting/reposting your own links in this chat (no admin needed). `/optin` resumes.
 - `/version` — show the running bot version.
 - `/about`, `/credits`, `/me` — about / credits message.
 - `/mehrab`, `/mo` — send the custom image.
@@ -157,8 +158,8 @@ YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (124 tests). Run with `pytest test_bot.py`.
-- `test_handlers.py` — async handler tests with lightweight fakes (31 tests covering every update handler). Run the whole suite with `pytest`.
+- `test_bot.py` — pure-function tests (126 tests). Run with `pytest test_bot.py`.
+- `test_handlers.py` — async handler tests with lightweight fakes (33 tests covering every update handler). Run the whole suite with `pytest`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 
