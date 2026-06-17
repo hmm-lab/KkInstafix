@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.43.0"
+__version__ = "1.44.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -666,8 +666,10 @@ def cleanup_db():
         del _rate_mem[key]
     for key in [k for k, v in _recent_mem.items() if v < cutoff]:
         del _recent_mem[key]
-    if len(_recent_mem) > 500_000:
-        _recent_mem.clear()
+    # No size-based clear here: seen_recent() already hard-caps _recent_mem at
+    # _RECENT_MEM_HARD_CAP on every insert, so the dict can never reach a higher
+    # threshold by the time this hourly job runs. Age-based pruning above is this
+    # job's contribution.
     for key in [k for k, (_, exp) in _admin_cache.items() if exp < now]:
         del _admin_cache[key]
     if len(_user_names) > 50_000:

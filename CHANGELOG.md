@@ -5,6 +5,24 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0] - 2026-06-17
+
+### Fixed
+- **Unreachable cache-clear in `cleanup_db`** — the hourly cleanup job had a
+  `if len(_recent_mem) > 500_000: _recent_mem.clear()` safety net, but
+  `seen_recent` already hard-caps `_recent_mem` at `_RECENT_MEM_HARD_CAP`
+  (200,000) on every insert, so the dict can never reach 500,000 by the time
+  the job runs. The branch was dead code that misled readers into thinking
+  `cleanup_db` was responsible for bounding that cache. Removed it and left a
+  comment clarifying that the size cap lives in `seen_recent` while the hourly
+  job handles age-based pruning.
+
+### Tests
+- Added three tests for `cleanup_db` (previously untested): 7-day undo-record
+  retention (deletes 8-day-old, keeps 6-day-old), and in-memory cache pruning
+  for `_recent_mem`, `_rate_mem` (including empty deques), and `_admin_cache`.
+  140 tests total.
+
 ## [1.43.0] - 2026-06-16
 
 ### Fixed

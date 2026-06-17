@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, and Dribbble.
 
-Current version: **1.43.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.44.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -154,8 +154,8 @@ YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (82 tests). Run with `pytest test_bot.py`.
-- `test_handlers.py` — async handler tests with lightweight fakes (21 tests covering every update handler). Run the whole suite with `pytest`.
+- `test_bot.py` — pure-function tests (114 tests). Run with `pytest test_bot.py`.
+- `test_handlers.py` — async handler tests with lightweight fakes (26 tests covering every update handler). Run the whole suite with `pytest`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

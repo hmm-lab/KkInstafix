@@ -1000,3 +1000,67 @@ def test_fix_url_amazon_asin_extraction_after_amznto_expansion():
         assert preview == "https://www.amazon.com/dp/B0XYZ12345"
     finally:
         bot._expand_cache.pop(amzn_short, None)
+
+
+# ── cleanup_db ───────────────────────────────────────────────────────────────
+
+def test_cleanup_db_deletes_undo_records_past_retention():
+    import time
+    bot.init_db()
+    cid = -100_900_001
+    # Fresh record (kept) and an 8-day-old record (deleted; retention is 7 days).
+    bot.store_rewrite(cid, 1, "https://example.com/fresh", "alice")
+    bot.store_rewrite(cid, 2, "https://example.com/stale", "bob")
+    old_ts = int(time.time()) - 8 * 86400
+    conn = bot.db_connect()
+    conn.execute(
+        "UPDATE rewritten_messages SET ts = ? WHERE chat_id = ? AND bot_msg_id = ?",
+        (old_ts, cid, 2),
+    )
+    conn.commit()
+    bot.cleanup_db()
+    assert bot.lookup_rewrite(cid, 1) == ("https://example.com/fresh", "alice")
+    assert bot.lookup_rewrite(cid, 2) == (None, None)
+
+
+def test_cleanup_db_keeps_record_just_inside_retention():
+    import time
+    bot.init_db()
+    cid = -100_900_002
+    bot.store_rewrite(cid, 5, "https://example.com/recent", "carol")
+    # 6 days old — still inside the 7-day window, must survive cleanup.
+    conn = bot.db_connect()
+    conn.execute(
+        "UPDATE rewritten_messages SET ts = ? WHERE chat_id = ? AND bot_msg_id = ?",
+        (int(time.time()) - 6 * 86400, cid, 5),
+    )
+    conn.commit()
+    bot.cleanup_db()
+    assert bot.lookup_rewrite(cid, 5) == ("https://example.com/recent", "carol")
+
+
+def test_cleanup_db_prunes_stale_inmemory_caches():
+    import time
+    from collections import deque
+    bot.init_db()
+    now = time.time()
+    stale = now - 7201   # older than the 2-hour (7200s) prune cutoff
+    fresh = now - 10
+    # _recent_mem: value is a float timestamp.
+    bot._recent_mem[("fix", -1, "stale")] = stale
+    bot._recent_mem[("fix", -1, "fresh")] = fresh
+    # _rate_mem: value is a deque of timestamps; pruned on last element.
+    bot._rate_mem[(-1, 111)] = deque([stale])
+    bot._rate_mem[(-1, 222)] = deque([fresh])
+    bot._rate_mem[(-1, 333)] = deque()   # empty deque must be pruned too
+    # _admin_cache: value is (is_admin, expiry_ts); pruned when expired.
+    bot._admin_cache[(-1, 444)] = (True, int(now) - 5)
+    bot._admin_cache[(-1, 555)] = (True, int(now) + 3600)
+    bot.cleanup_db()
+    assert ("fix", -1, "stale") not in bot._recent_mem
+    assert ("fix", -1, "fresh") in bot._recent_mem
+    assert (-1, 111) not in bot._rate_mem
+    assert (-1, 222) in bot._rate_mem
+    assert (-1, 333) not in bot._rate_mem
+    assert (-1, 444) not in bot._admin_cache
+    assert (-1, 555) in bot._admin_cache
