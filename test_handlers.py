@@ -443,6 +443,41 @@ def test_cmd_clean_inline_url():
     assert "t=tok" not in reply_text
 
 
+# ── new platforms (verified hosts) ────────────────────────────────────────────
+
+def test_kick_link_rewritten_to_clkick():
+    fb = FakeBot()
+    msg = FakeMessage(text="https://kick.com/xqc/clips/clip_01ABC",
+                      user=FakeUser(5, "Bob"), chat=FakeChat(-1360), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=360), FakeContext(fb)))
+    assert fb.sent and "clkick.com" in fb.sent[0].text
+
+
+def test_xhslink_rewritten_to_worker():
+    fb = FakeBot()
+    msg = FakeMessage(text="check https://xhslink.com/a/exampleID",
+                      user=FakeUser(5, "Bob"), chat=FakeChat(-1361), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=361), FakeContext(fb)))
+    assert fb.sent and "xhslink.xky.us" in fb.sent[0].text
+
+
+def test_weibo_off_by_default_then_enabled():
+    fb = FakeBot()
+    cid = -1362
+    # Default-off: weibo link is left untouched (no broken weiboez.com link).
+    msg = FakeMessage(text="https://weibo.com/123/ABcd", user=FakeUser(5, "Bob"),
+                      chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=362), FakeContext(fb)))
+    assert not fb.sent
+    # Once an admin enables it, it rewrites.
+    bot.set_platform_enabled(cid, "weibo", True)
+    msg2 = FakeMessage(text="https://weibo.com/123/EFgh", user=FakeUser(5, "Bob"),
+                       chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=363), FakeContext(fb)))
+    assert fb.sent and "weiboez.com" in fb.sent[0].text
+    bot.set_platform_enabled(cid, "weibo", False)   # restore for re-runs
+
+
 # ── per-user opt-out ──────────────────────────────────────────────────────────
 
 def test_optout_user_link_not_rewritten():

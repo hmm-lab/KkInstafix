@@ -427,21 +427,45 @@ def test_platform_disable_roundtrip():
     bot.set_platform_enabled(cid, "spotify", False)
     assert bot.is_platform_disabled(cid, "spotify")
     assert "spotify" in bot.get_disabled_platforms(cid)
-    # other platforms unaffected
+    # other (default-on) platforms unaffected
     assert not bot.is_platform_disabled(cid, "twitter")
-    # re-enable
+    # re-enable: spotify drops out of the effective-disabled set
     bot.set_platform_enabled(cid, "spotify", True)
     assert not bot.is_platform_disabled(cid, "spotify")
-    assert bot.get_disabled_platforms(cid) == set()
+    assert "spotify" not in bot.get_disabled_platforms(cid)
+
+
+def _clear_overrides(cid):
+    bot.db_connect().execute("DELETE FROM platform_overrides WHERE chat_id = ?", (cid,))
+    bot.db_connect().commit()
+    bot._platform_override_cache.pop(cid, None)
+
+
+def test_default_disabled_platform_off_until_enabled():
+    bot.init_db()
+    cid = -100_557_920
+    _clear_overrides(cid)   # persistent DB may carry prior-run rows
+    # weibo ships OFF by default (host "coming soon") with no explicit override.
+    assert "weibo" in bot.DEFAULT_DISABLED_PLATFORMS
+    assert bot.is_platform_disabled(cid, "weibo")
+    assert "weibo" in bot.get_disabled_platforms(cid)
+    # An admin can turn it on, and the explicit choice sticks.
+    bot.set_platform_enabled(cid, "weibo", True)
+    assert not bot.is_platform_disabled(cid, "weibo")
 
 
 def test_disabled_platform_survives_cache_reload():
     bot.init_db()
-    cid = -100_555_002
+    cid = -100_557_902
+    _clear_overrides(cid)
     bot.set_platform_enabled(cid, "twitch", False)
-    # Drop the in-memory cache; the DB must still report it disabled.
-    bot._disabled_cache.pop(cid, None)
+    # Drop the in-memory override cache; the DB must still report it disabled.
+    bot._platform_override_cache.pop(cid, None)
     assert bot.is_platform_disabled(cid, "twitch")
+    # An explicit enable also survives a reload.
+    bot.set_platform_enabled(cid, "weibo", True)
+    bot._platform_override_cache.pop(cid, None)
+    assert not bot.is_platform_disabled(cid, "weibo")
 
 
 def test_status_text_lists_disabled_platforms():
@@ -453,22 +477,27 @@ def test_status_text_lists_disabled_platforms():
     assert "Disabled platforms" in text
 
 
-def test_export_import_includes_disabled_platforms():
+def test_export_import_includes_platform_overrides():
     bot.init_db()
-    cid = -100_555_010
-    bot.set_platform_enabled(cid, "spotify", False)
-    bot.set_platform_enabled(cid, "twitch", False)
+    cid = -100_557_910
+    # Persistent on-disk DB may carry rows from earlier runs — start clean.
+    bot.db_connect().execute("DELETE FROM platform_overrides WHERE chat_id = ?", (cid,))
+    bot.db_connect().commit()
+    bot._platform_override_cache.pop(cid, None)
+    bot.set_platform_enabled(cid, "spotify", False)   # explicit off
+    bot.set_platform_enabled(cid, "weibo", True)      # explicit on (default-off)
     data = bot.export_chat_data(cid)
-    assert set(data["disabled_platforms"]) == {"spotify", "twitch"}
-    cid2 = -100_555_011
+    assert data["platform_overrides"] == {"spotify": 0, "weibo": 1}
+    cid2 = -100_557_911
     ok, msg = bot.import_chat_data(cid2, data)
     assert ok is True
-    assert "disabled platforms" in msg
+    assert "platform overrides" in msg
     assert bot.is_platform_disabled(cid2, "spotify")
-    assert bot.is_platform_disabled(cid2, "twitch")
+    assert not bot.is_platform_disabled(cid2, "weibo")
 
 
-def test_import_ignores_unknown_disabled_platform():
+def test_import_legacy_disabled_platforms_list():
+    # Older backups carried a plain "disabled_platforms" list — still honoured.
     bot.init_db()
     cid = -100_555_012
     data = {
@@ -567,35 +596,38 @@ def test_b23_tv_is_short_link():
     assert "b23.tv" in bot.SHORT_LINK_DOMAINS
 
 
-# ── new platforms: kick / pinterest / weibo / xiaohongshu ─────────────────────
+# ── new platforms: kick / weibo / xiaohongshu (verified hosts) ────────────────
 
 def test_new_platforms_detected():
     assert bot.get_platform("kick.com", "/xqc/clips/clip_1") == "kick"
     assert bot.get_platform("www.kick.com", "/xqc") == "kick"
-    assert bot.get_platform("pinterest.com", "/pin/123/") == "pinterest"
-    assert bot.get_platform("www.pinterest.com", "/pin/123/") == "pinterest"
     assert bot.get_platform("weibo.com", "/1234/abcd") == "weibo"
     assert bot.get_platform("m.weibo.cn", "/status/123") == "weibo"
-    assert bot.get_platform("www.xiaohongshu.com", "/explore/abc") == "xiaohongshu"
+    # Xiaohongshu is matched on its xhslink.com share-link host (the fixer
+    # rewrites that, not xiaohongshu.com pages).
+    assert bot.get_platform("xhslink.com", "/a/abc") == "xiaohongshu"
+    # Pinterest was dropped — no working fixer exists, so it must NOT classify.
+    assert bot.get_platform("pinterest.com", "/pin/123/") is None
+    assert "pinterest" not in bot.PROVIDERS
 
 
 def test_new_platforms_host_swap():
-    assert "kickez.com" in bot.apply_provider(
-        "https://kick.com/xqc/clips/clip_1", "kick", "ez")
-    assert "pinterestez.com" in bot.apply_provider(
-        "https://www.pinterest.com/pin/123/", "pinterest", "ez")
+    assert "clkick.com" in bot.apply_provider(
+        "https://kick.com/xqc/clips/clip_1", "kick", "cl")
     assert "weiboez.com" in bot.apply_provider(
         "https://weibo.com/1234/abcd", "weibo", "ez")
-    assert "xiaohongshuez.com" in bot.apply_provider(
-        "https://www.xiaohongshu.com/explore/abc", "xiaohongshu", "ez")
+    assert "xhslink.xky.us" in bot.apply_provider(
+        "https://xhslink.com/a/abc", "xiaohongshu", "xky")
 
 
-def test_xhslink_is_short_link():
-    assert "xhslink.com" in bot.SHORT_LINK_DOMAINS
+def test_xhslink_not_expanded_so_it_can_be_rewritten():
+    # xhslink.com must NOT be a short-link domain, or it'd be expanded to
+    # xiaohongshu.com before the fixer host-swap could run.
+    assert "xhslink.com" not in bot.SHORT_LINK_DOMAINS
 
 
 def test_new_platforms_have_emoji_and_sample():
-    for plat in ("kick", "pinterest", "weibo", "xiaohongshu"):
+    for plat in ("kick", "weibo", "xiaohongshu"):
         assert plat in bot.PLATFORM_EMOJI, f"{plat} missing emoji"
         assert plat in bot.SAMPLE_URLS, f"{plat} missing sample URL"
 

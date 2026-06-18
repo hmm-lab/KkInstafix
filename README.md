@@ -4,9 +4,9 @@
 
 Telegram bot that rewrites social media links so Telegram previews work better.
 
-It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Pinterest, Weibo, and Xiaohongshu (RED).
+It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current version: **1.51.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.52.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -54,10 +54,9 @@ Current version: **1.51.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - FurAffinity: `xfa`
 - DeviantArt: `fix`
 - Dribbble: `tv`
-- Kick: `ez`
-- Pinterest: `ez`
-- Weibo: `ez`
-- Xiaohongshu: `ez`
+- Kick: `cl`
+- Weibo: `ez` (off by default until its host is live — `/platform weibo on`)
+- Xiaohongshu: `xky`
 
 ## Commands
 
@@ -125,12 +124,18 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 | furaffinity | `xfa`, `fxr` |
 | deviantart | `fix`, `fx` |
 | dribbble | `tv` |
-| kick | `ez` |
-| pinterest | `ez` |
-| weibo | `ez` |
-| xiaohongshu | `ez` |
+| kick | `cl` (clkick.com) |
+| weibo | `ez` (weiboez.com) |
+| xiaohongshu | `xky` (xhslink.xky.us) |
 
-Kick, Pinterest, Weibo and Xiaohongshu use EmbedEZ-convention hosts that should be confirmed in your deployment with `/testall <platform>` — if a host is down, change it with `/setprovider` or disable the platform with `/platform <name> off`.
+Notes on the most recently added platforms:
+
+- **Kick** uses `clkick.com`, the community Kick→Discord/Telegram fixer (streams, clips, VODs).
+- **Weibo** uses EmbedEZ's `weiboez.com`, which is currently listed as "Coming Soon", so Weibo ships **disabled by default**. Enable it per chat with `/platform weibo on` once the host is live (and confirm with `/testall weibo`).
+- **Xiaohongshu (RED)** is matched on its `xhslink.com` share links and rewritten to the community Cloudflare Worker `xhslink.xky.us`. It fixes share links, not `xiaohongshu.com` pages directly, and depends on a volunteer-run instance — verify with `/testall xiaohongshu`.
+- **Pinterest** is not rewritten (no embed fixer exists for it); `pin.it` links are still expanded and tracking-stripped.
+
+If any host is down, switch it with `/setprovider` or turn the platform off with `/platform <name> off`.
 
 🌐 = **no-account frontend**. When selected, the Telegram preview still loads from the best embed provider, but the clickable link goes to a privacy-friendly frontend where users can view posts without logging in (e.g. xcancel for Twitter, redlib for Reddit, ProxiTok for TikTok).
 
@@ -144,7 +149,6 @@ The bot automatically follows redirects for short/mobile share URLs before apply
 - `tiktok.com/t/<id>` → TikTok share links, expanded to the full video URL
 - `b23.tv/...` → expanded to full `bilibili.com/video/...`
 - `instagram.com/share/<id>` → expanded to the real post URL before provider rewriting
-- `xhslink.com/...` → Xiaohongshu (RED) share links, expanded before provider rewriting
 - `t.co/<id>` → Twitter's link wrapper, unwrapped to its target (then fixed or tracking-stripped)
 - `amzn.to/...` → expanded to full Amazon product URL
 - `maps.app.goo.gl/...` → expanded to Google Maps URL
@@ -169,8 +173,8 @@ YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on
 - `Procfile` — start command.
 - `requirements.txt` — Python dependencies.
 - `requirements-dev.txt` — dev dependencies (pytest).
-- `test_bot.py` — pure-function tests (130 tests). Run with `pytest test_bot.py`.
-- `test_handlers.py` — async handler tests with lightweight fakes (33 tests covering every update handler). Run the whole suite with `pytest`.
+- `test_bot.py` — pure-function tests (131 tests). Run with `pytest test_bot.py`.
+- `test_handlers.py` — async handler tests with lightweight fakes (36 tests covering every update handler). Run the whole suite with `pytest`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
 

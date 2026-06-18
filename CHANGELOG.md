@@ -5,6 +5,32 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.0] - 2026-06-17
+
+### Fixed
+- **Corrected the v1.51.0 platform hosts after verifying each against its source.**
+  Three of the four guessed EmbedEZ hosts were wrong:
+  - **Kick** now uses `clkick.com` (the real community fixer, covering streams,
+    clips and VODs) instead of the non-existent `kickez.com`.
+  - **Pinterest was removed** — no embed fixer exists for it anywhere (not
+    EmbedEZ, not the community master list, not FixEmbed). `pin.it` links are
+    still expanded and tracking-stripped, which is the best available.
+  - **Xiaohongshu** now rewrites the `xhslink.com` share-link host to the
+    community Cloudflare Worker `xhslink.xky.us` (the actual fixer), instead of
+    the non-existent `xiaohongshuez.com`. `xhslink.com` was removed from the
+    short-link expander so the host-swap can run.
+  - **Weibo** keeps `weiboez.com` but EmbedEZ lists it as "Coming Soon", so it
+    now ships **disabled by default** (see below) — no broken links until it's live.
+
+### Added
+- **Default-disabled platforms.** Platforms in the new `DEFAULT_DISABLED_PLATFORMS`
+  set (currently just `weibo`) are off until an admin runs `/platform <name> on`.
+  The per-platform store was generalised from a disabled-only list to a
+  `platform_overrides` table recording explicit on/off choices, so an admin's
+  decision persists across restarts and wins over the default. The old
+  `disabled_platforms` table is migrated automatically; `/export` now carries a
+  `platform_overrides` map (and still reads the legacy `disabled_platforms` list).
+
 ## [1.51.0] - 2026-06-17
 
 ### Added

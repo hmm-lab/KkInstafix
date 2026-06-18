@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.51.0"
+__version__ = "1.52.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -205,29 +205,28 @@ PROVIDERS = {
         "domains": ["dribbble.com"],
         "options": {"tv": "dribbbletv.com"},
     },
-    # NOTE: the four platforms below use EmbedEZ-convention hosts (<name>ez.com,
-    # matching the existing tiktokez/redditez entries). They could not be reached
-    # to confirm from the build environment — verify each with /testall <platform>
-    # after deploy, and switch the host or /platform <name> off if it's down.
+    # Kick: clkick.com is the community fixer (kick.com -> clkick.com), covering
+    # streams, clips and VODs. (Not EmbedEZ — EmbedEZ has no Kick support.)
     "kick": {
-        "default": "ez",
+        "default": "cl",
         "domains": ["kick.com"],
-        "options": {"ez": "kickez.com"},
+        "options": {"cl": "clkick.com"},
     },
-    "pinterest": {
-        "default": "ez",
-        "domains": ["pinterest.com"],
-        "options": {"ez": "pinterestez.com"},
-    },
+    # Weibo: weiboez.com is EmbedEZ's host but listed "Coming Soon" — so weibo is
+    # in DEFAULT_DISABLED_PLATFORMS and ships OFF until an admin enables it.
     "weibo": {
         "default": "ez",
         "domains": ["weibo.com", "weibo.cn"],
         "options": {"ez": "weiboez.com"},
     },
+    # Xiaohongshu (RED): the fixer is a community Cloudflare Worker that rewrites
+    # the xhslink.com share-link host to xhslink.xky.us. It operates on the share
+    # link itself, so we match xhslink.com (kept OUT of SHORT_LINK_DOMAINS so it
+    # isn't expanded first) rather than xiaohongshu.com pages.
     "xiaohongshu": {
-        "default": "ez",
-        "domains": ["xiaohongshu.com"],
-        "options": {"ez": "xiaohongshuez.com"},
+        "default": "xky",
+        "domains": ["xhslink.com"],
+        "options": {"xky": "xhslink.xky.us"},
     },
 }
 
@@ -366,14 +365,18 @@ YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com"}
 YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
 TAIL = ".,!?)]>}"
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
+# Platforms that default to OFF (no auto-rewrite) until their fixer host is
+# confirmed live — e.g. EmbedEZ lists weiboez.com as "Coming Soon". Admins can
+# turn one on per chat with /platform <name> on; that explicit choice is stored
+# and sticks. Remove a platform from this set once its host is reliably up.
+DEFAULT_DISABLED_PLATFORMS = frozenset({"weibo"})
 # Short-link domains that redirect to the real URL before we can fix them
 SHORT_LINK_DOMAINS = {
     # Platform-specific short/share links (expanded before rewriting)
     "vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "t.co",
     "amzn.to",          # Amazon short links
     "maps.app.goo.gl",  # Google Maps
-    "pin.it",           # Pinterest
-    "xhslink.com",      # Xiaohongshu (RED) share links
+    "pin.it",           # Pinterest (expanded + tracking-stripped; no rewrite host)
     # Generic URL shorteners (expand to real URL, then apply tracking strip / rewrite)
     "bit.ly", "tinyurl.com", "t.ly", "ow.ly", "is.gd",
     "rb.gy", "buff.ly", "goo.gl",
@@ -389,7 +392,7 @@ _known_chats: set = set()
 _settings_cache: dict = {}   # chat_id -> settings dict
 _providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
 _muted_cache: dict = {}      # chat_id -> set of muted user_ids
-_disabled_cache: dict = {}   # chat_id -> set of platforms with rewriting disabled
+_platform_override_cache: dict = {}  # chat_id -> {platform: 1|0} explicit choices
 _optout_cache: dict = {}     # chat_id -> set of user_ids who opted out of rewriting
 _recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
 # Hard cap so the dedup cache stays bounded even if the periodic cleanup job is
@@ -450,7 +453,6 @@ PLATFORM_EMOJI = {
     "deviantart": "🖌",
     "dribbble": "🏀",
     "kick": "🟢",
-    "pinterest": "📌",
     "weibo": "🔴",
     "xiaohongshu": "📕",
 }
@@ -474,9 +476,8 @@ SAMPLE_URLS = {
     "deviantart": "https://www.deviantart.com/test/art/test-12345",
     "dribbble": "https://dribbble.com/shots/12345678-Example-Shot",
     "kick": "https://kick.com/xqc/clips/clip_01EXAMPLE",
-    "pinterest": "https://www.pinterest.com/pin/1234567890123456/",
     "weibo": "https://weibo.com/1234567890/ABcdEFghij",
-    "xiaohongshu": "https://www.xiaohongshu.com/explore/abc123def456",
+    "xiaohongshu": "https://xhslink.com/a/exampleID",
 }
 
 ABOUT_TEXT = (
@@ -533,10 +534,10 @@ def _warm_muted_cache():
         _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
-def _warm_disabled_cache():
+def _warm_platform_overrides_cache():
     conn = db_connect()
-    for row in conn.execute("SELECT chat_id, platform FROM disabled_platforms").fetchall():
-        _disabled_cache.setdefault(row["chat_id"], set()).add(row["platform"])
+    for row in conn.execute("SELECT chat_id, platform, enabled FROM platform_overrides").fetchall():
+        _platform_override_cache.setdefault(row["chat_id"], {})[row["platform"]] = row["enabled"]
 
 
 def _warm_optout_cache():
@@ -581,6 +582,13 @@ def init_db():
             PRIMARY KEY (chat_id, platform)
         );
 
+        CREATE TABLE IF NOT EXISTS platform_overrides (
+            chat_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, platform)
+        );
+
         CREATE TABLE IF NOT EXISTS optout_users (
             chat_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
@@ -608,10 +616,17 @@ def init_db():
         """
     )
     _migrate_chat_settings_columns(conn)
+    # Migrate the old disabled_platforms table (v1.49–v1.51) into the newer
+    # platform_overrides model as explicit "disabled" entries. Idempotent.
+    conn.execute(
+        "INSERT OR IGNORE INTO platform_overrides(chat_id, platform, enabled) "
+        "SELECT chat_id, platform, 0 FROM disabled_platforms"
+    )
+    conn.commit()
     _warm_chat_cache()
     _warm_providers_cache()
     _warm_muted_cache()
-    _warm_disabled_cache()
+    _warm_platform_overrides_cache()
     _warm_optout_cache()
 
 
@@ -771,40 +786,44 @@ def blocked_user_count(chat_id):
     return len(_muted_set(chat_id))
 
 
-def _disabled_set(chat_id) -> set:
-    if chat_id not in _disabled_cache:
+def _override_map(chat_id) -> dict:
+    """chat_id -> {platform: 1|0} of EXPLICIT admin enable/disable choices."""
+    if chat_id not in _platform_override_cache:
         conn = db_connect()
         rows = conn.execute(
-            "SELECT platform FROM disabled_platforms WHERE chat_id = ?", (chat_id,)
+            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
         ).fetchall()
-        _disabled_cache[chat_id] = {r["platform"] for r in rows}
-    return _disabled_cache[chat_id]
+        _platform_override_cache[chat_id] = {r["platform"]: r["enabled"] for r in rows}
+    return _platform_override_cache[chat_id]
 
 
 def set_platform_enabled(chat_id, platform, enabled):
-    """Enable or disable automatic rewriting of one platform in a chat."""
+    """Record an explicit enable/disable choice for one platform in a chat.
+
+    Stored as an override so it persists across restarts and wins over the
+    platform's default (most platforms default ON; entries in
+    DEFAULT_DISABLED_PLATFORMS default OFF until their fixer host is live).
+    """
+    val = 1 if enabled else 0
     conn = db_connect()
-    if enabled:
-        conn.execute(
-            "DELETE FROM disabled_platforms WHERE chat_id = ? AND platform = ?",
-            (chat_id, platform),
-        )
-        _disabled_set(chat_id).discard(platform)
-    else:
-        conn.execute(
-            "INSERT OR IGNORE INTO disabled_platforms(chat_id, platform) VALUES(?, ?)",
-            (chat_id, platform),
-        )
-        _disabled_set(chat_id).add(platform)
+    conn.execute(
+        "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
+        (chat_id, platform, val),
+    )
     conn.commit()
+    _override_map(chat_id)[platform] = val
 
 
 def is_platform_disabled(chat_id, platform):
-    return platform in _disabled_set(chat_id)
+    override = _override_map(chat_id).get(platform)
+    if override is not None:
+        return override == 0
+    return platform in DEFAULT_DISABLED_PLATFORMS
 
 
 def get_disabled_platforms(chat_id) -> set:
-    return set(_disabled_set(chat_id))
+    """Effective set of platforms whose rewriting is currently off in this chat."""
+    return {p for p in PROVIDERS if is_platform_disabled(chat_id, p)}
 
 
 def _optout_set(chat_id) -> set:
@@ -950,19 +969,19 @@ def export_chat_data(chat_id):
             "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
         )
     ]
-    disabled = [
-        row["platform"]
+    overrides = {
+        row["platform"]: row["enabled"]
         for row in conn.execute(
-            "SELECT platform FROM disabled_platforms WHERE chat_id = ?", (chat_id,)
+            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
         )
-    ]
+    }
     return {
         "version": 1,
         "chat_id": chat_id,
         "settings": settings,
         "providers": providers,
         "muted_users": muted,
-        "disabled_platforms": disabled,
+        "platform_overrides": overrides,
     }
 
 
@@ -973,7 +992,10 @@ def import_chat_data(chat_id, data):
     settings = data.get("settings", {})
     providers = data.get("providers", {})
     muted = data.get("muted_users", [])
-    disabled = data.get("disabled_platforms", [])
+    overrides = data.get("platform_overrides", {})
+    # Backward-compat: older backups carried a plain "disabled_platforms" list.
+    if not overrides and isinstance(data.get("disabled_platforms"), list):
+        overrides = {p: 0 for p in data["disabled_platforms"]}
     ensure_chat_settings(chat_id)
     conn = db_connect()
     for key, value in settings.items():
@@ -1007,21 +1029,22 @@ def import_chat_data(chat_id, data):
                 (chat_id, user_id),
             )
             imported_mutes += 1
-    imported_disabled = 0
-    for platform in disabled:
-        if platform in PROVIDERS:
-            conn.execute(
-                "INSERT OR IGNORE INTO disabled_platforms(chat_id, platform) VALUES(?, ?)",
-                (chat_id, platform),
-            )
-            imported_disabled += 1
+    imported_overrides = 0
+    if isinstance(overrides, dict):
+        for platform, enabled in overrides.items():
+            if platform in PROVIDERS and enabled in (0, 1):
+                conn.execute(
+                    "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
+                    (chat_id, platform, enabled),
+                )
+                imported_overrides += 1
     conn.commit()
     # Invalidate in-memory caches so changes take effect immediately
     _settings_cache.pop(chat_id, None)
     _providers_cache.pop(chat_id, None)
     _muted_cache.pop(chat_id, None)
-    _disabled_cache.pop(chat_id, None)
-    msg = f"imported {len(providers)} providers, {imported_mutes} mutes, {imported_disabled} disabled platforms"
+    _platform_override_cache.pop(chat_id, None)
+    msg = f"imported {len(providers)} providers, {imported_mutes} mutes, {imported_overrides} platform overrides"
     if source_chat and source_chat != chat_id:
         msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
     return True, msg
