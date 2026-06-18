@@ -5,6 +5,28 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.0] - 2026-06-17
+
+### Changed
+- **`/testall` now uses real, live sample URLs.** The previous `SAMPLE_URLS`
+  were placeholders (`status/1`, `/test`, `clip_01EXAMPLE`), so `/testall` and
+  `tools/check_providers.py` were testing against content that doesn't exist —
+  every provider could look "down" regardless of its actual health. Replaced all
+  20 with real, stable URLs verified against each platform's source: permanent
+  posts where they exist (the first-ever tweet, "Never Gonna Give You Up" on
+  Spotify, a National Geographic Instagram post) and official accounts/channels
+  otherwise (NASA on TikTok/Twitch, People's Daily on Weibo, the DeviantArt
+  team account, the FurAffinity mascot, etc.) so a deleted sample can't cause a
+  false negative. A few (pixiv, iFunny, Xiaohongshu) use live landing/share
+  pages — pass a real content URL with `/testall <platform> <url>` for a richer
+  embed test.
+
+### Tests
+- Added `test_every_platform_has_sample_url` and
+  `test_sample_urls_classify_to_their_platform`, which assert each sample exists
+  and resolves to its own platform — guarding against a future sample pointing
+  at the wrong host or regressing to a placeholder. 169 tests total.
+
 ## [1.52.0] - 2026-06-17
 
 ### Fixed

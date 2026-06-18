@@ -34,7 +34,7 @@ from telegram.ext import (
     filters,
 )
 
-__version__ = "1.52.0"
+__version__ = "1.53.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -457,27 +457,35 @@ PLATFORM_EMOJI = {
     "xiaohongshu": "📕",
 }
 
+# Real, live sample URLs used by /testall and tools/check_providers.py to
+# health-check each provider. These are permanent posts or official accounts so
+# a deleted sample never produces a false "down". Items in the "best-effort"
+# group are guaranteed live but are landing/profile pages — pass a real content
+# URL for a richer embed test: /testall <platform> <url>.
 SAMPLE_URLS = {
-    "instagram": "https://www.instagram.com/p/C4example123/",
-    "twitter": "https://twitter.com/Twitter/status/1",
-    "tiktok": "https://www.tiktok.com/@tiktok/video/7106594312292453675",
-    "reddit": "https://www.reddit.com/r/funny/comments/1abc123/test/",
-    "facebook": "https://www.facebook.com/watch/?v=123456789",
-    "threads": "https://www.threads.net/@instagram/post/test",
-    "bluesky": "https://bsky.app/profile/bsky.app/post/test",
-    "pixiv": "https://www.pixiv.net/en/artworks/12345678",
-    "tumblr": "https://tumblr.com/blog/post/test",
-    "bilibili": "https://www.bilibili.com/video/BV1xx411c7mD",
-    "spotify": "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
-    "twitch": "https://clips.twitch.tv/test",
-    "snapchat": "https://www.snapchat.com/spotlight/test",
-    "ifunny": "https://ifunny.co/video/test",
-    "furaffinity": "https://www.furaffinity.net/view/12345678/",
-    "deviantart": "https://www.deviantart.com/test/art/test-12345",
-    "dribbble": "https://dribbble.com/shots/12345678-Example-Shot",
-    "kick": "https://kick.com/xqc/clips/clip_01EXAMPLE",
-    "weibo": "https://weibo.com/1234567890/ABcdEFghij",
-    "xiaohongshu": "https://xhslink.com/a/exampleID",
+    # Iconic permanent posts.
+    "instagram": "https://www.instagram.com/p/DBPVOg2TonD/",   # @natgeo post
+    "twitter": "https://twitter.com/jack/status/20",           # the first-ever tweet
+    "spotify": "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8",  # Never Gonna Give You Up
+    # Official accounts / channels (won't disappear).
+    "tiktok": "https://www.tiktok.com/@nasa",
+    "reddit": "https://www.reddit.com/r/announcements/",
+    "facebook": "https://www.facebook.com/NASA",
+    "threads": "https://www.threads.net/@zuck",
+    "bluesky": "https://bsky.app/profile/bsky.app",
+    "tumblr": "https://www.tumblr.com/staff",
+    "bilibili": "https://space.bilibili.com/546195",           # 老番茄, a top creator
+    "twitch": "https://www.twitch.tv/nasa",
+    "snapchat": "https://www.snapchat.com/add/team.snapchat",
+    "deviantart": "https://www.deviantart.com/team",           # official DeviantArt account
+    "furaffinity": "https://www.furaffinity.net/user/fender/",  # FA mascot account
+    "dribbble": "https://dribbble.com/dribbble",
+    "kick": "https://kick.com/xqc",
+    "weibo": "https://weibo.com/rmrb",                         # People's Daily (verified)
+    # Best-effort: live landing/share pages — pass a real content URL via /testall.
+    "pixiv": "https://www.pixiv.net/en",
+    "ifunny": "https://ifunny.co/",
+    "xiaohongshu": "https://xhslink.com/a/exampleID",          # needs a real RED share link
 }
 
 ABOUT_TEXT = (

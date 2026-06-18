@@ -306,6 +306,23 @@ def test_providers_all_have_default_and_options():
         assert cfg["options"], f"{name} has no options"
 
 
+def test_every_platform_has_sample_url():
+    for name in bot.PROVIDERS:
+        assert name in bot.SAMPLE_URLS, f"{name} missing a /testall sample URL"
+
+
+def test_sample_urls_classify_to_their_platform():
+    # Each sample must resolve to its own platform — guards against a sample
+    # pointing at the wrong host or a placeholder that no longer classifies.
+    from urllib.parse import urlparse
+    for plat, url in bot.SAMPLE_URLS.items():
+        p = urlparse(url)
+        assert bot.get_platform(p.netloc, p.path) == plat, (
+            f"sample for {plat} ({url}) classifies as "
+            f"{bot.get_platform(p.netloc, p.path)}"
+        )
+
+
 def test_noauth_embed_keys_are_valid():
     for name, cfg in bot.PROVIDERS.items():
         noauth = cfg.get("noauth_embed", {})
