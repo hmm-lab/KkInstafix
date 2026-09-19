@@ -59,7 +59,7 @@ _start_time = time.time()
 # ── Providers ──────────────────────────────────────────────────────────────────
 PROVIDERS = {
     "instagram": {
-        "default": "kkclip",
+        "default": "ee",
         "domains": ["instagram.com"],
         "options": {
             "kkclip": "kkclip.com",
@@ -111,7 +111,7 @@ PROVIDERS = {
         "noauth_embed": {"redlib": "vx"},
     },
     "facebook": {
-        "default": "ez",
+        "default": "bed",
         "domains": ["facebook.com", "fb.com", "fb.watch"],
         "options": {
             "ez": "facebookez.com",
@@ -162,7 +162,7 @@ PROVIDERS = {
         },
     },
     "snapchat": {
-        "default": "ez",
+        "default": "bed",
         "domains": ["snapchat.com"],
         "options": {"ez": "snapchatez.com"},
     },
@@ -180,7 +180,7 @@ PROVIDERS = {
         "options": {"fx": "fxtwitch.seria.moe"},
     },
     "ifunny": {
-        "default": "ez",
+        "default": "bed",
         "domains": ["ifunny.co"],
         "options": {"ez": "ifunnyez.co"},
     },
@@ -215,7 +215,7 @@ PROVIDERS = {
     # Weibo: weiboez.com is EmbedEZ's host but listed "Coming Soon" — so weibo is
     # in DEFAULT_DISABLED_PLATFORMS and ships OFF until an admin enables it.
     "weibo": {
-        "default": "ez",
+        "default": "bed",
         "domains": ["weibo.com", "weibo.cn"],
         "options": {"ez": "weiboez.com"},
     },
