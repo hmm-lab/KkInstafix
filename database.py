@@ -35,6 +35,8 @@ HEALTH_CACHE: Dict[str, Any] = {}
 HEALTH_TTL = 600
 SEEN_UPDATES: OrderedDict = OrderedDict()
 MAX_SEEN_UPDATES = 2000
+# User settings cache
+_user_settings_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}  # (user_id, chat_id) -> settings dict
 
 # These constants mirror those in bot.py
 DEFAULT_CHAT_SETTINGS = {
@@ -116,7 +118,15 @@ def _warm_optout_cache() -> None:
         _optout_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
-def init_db():
+def _warm_user_settings_cache() -> None:
+    """Load user settings into cache at startup."""
+    conn = db_connect()
+    for row in conn.execute("SELECT user_id, chat_id, key, value FROM user_settings").fetchall():
+        uid, cid, key, val = row["user_id"], row["chat_id"], row["key"], row["value"]
+        _user_settings_cache.setdefault((uid, cid), {})[key] = val
+
+
+def init_db() -> None:
     """Initialize the database schema and load caches."""
     conn = db_connect()
     conn.executescript(
@@ -184,6 +194,14 @@ def init_db():
             PRIMARY KEY (chat_id, bot_msg_id)
         );
         CREATE INDEX IF NOT EXISTS idx_rewritten_ts ON rewritten_messages(ts);
+
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (user_id, chat_id, key)
+        );
         """
     )
     _migrate_chat_settings_columns(conn)
@@ -199,6 +217,7 @@ def init_db():
     _warm_muted_cache()
     _warm_platform_overrides_cache()
     _warm_optout_cache()
+    _warm_user_settings_cache()
 
 
 # Canonical column DDL for chat_settings, mirroring the CREATE TABLE above.
@@ -215,7 +234,7 @@ _CHAT_SETTINGS_COLUMNS = [
 ]
 
 
-def _migrate_chat_settings_columns(conn):
+def _migrate_chat_settings_columns(conn: sqlite3.Connection) -> None:
     """Add any chat_settings column missing from an older database.
 
     An upgrade from a version that predates a setting (e.g. caption_style added
@@ -251,42 +270,181 @@ def ensure_chat_settings(chat_id: int) -> None:
         pass
 
 
-def get_chat_settings(chat_id: int) -> Dict[str, Any]:
-    """Get chat settings, using cache when possible."""
+def get_chat_settings(chat_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Get chat settings, using cache when possible, overridden by user-specific settings."""
+    # Get base chat settings
     if chat_id in _settings_cache:
-        return _settings_cache[chat_id].copy()
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)).fetchone()
-    # Merge over defaults so a column missing from an older, un-migrated row
-    # falls back to its default rather than producing an incomplete dict that
-    # would KeyError on direct subscript in the handlers.
-    s = DEFAULT_CHAT_SETTINGS.copy()
-    if row:
-        s.update({k: row[k] for k in row.keys()})
-    _settings_cache[chat_id] = s
-    return s.copy()
+        settings = _settings_cache[chat_id].copy()
+    else:
+        ensure_chat_settings(chat_id)
+        conn = db_connect()
+        row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)).fetchone()
+        # Merge over defaults so a column missing from an older, un-migrated row
+        # falls back to its default rather than producing an incomplete dict that
+        # would KeyError on direct subscript in the handlers.
+        settings = DEFAULT_CHAT_SETTINGS.copy()
+        if row:
+            settings.update({k: row[k] for k in row.keys()})
+        _settings_cache[chat_id] = settings.copy()
+
+    # Apply user-specific overrides if user_id is provided
+    if user_id is not None:
+        user_settings = get_user_settings(user_id, chat_id)
+        settings.update(user_settings)
+
+    return settings
 
 
 def update_chat_setting(chat_id: int, key: str, value: Any) -> None:
-    """Update a single chat setting."""
+    """Update a single chat setting.
+
+    Args:
+        chat_id: The Telegram chat ID
+        key: The setting key to update
+        value: The setting value to set
+
+    Raises:
+        ValueError: If the key is not a valid chat setting
+        RuntimeError: If the database operation fails
+    """
+    # Validate that this is a known chat setting
+    if key not in DEFAULT_CHAT_SETTINGS:
+        raise ValueError(f"'{key}' is not a valid chat setting. Valid settings: {list(DEFAULT_CHAT_SETTINGS.keys())}")
+
     ensure_chat_settings(chat_id)
     conn = db_connect()
-    conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
-    conn.commit()
-    if chat_id in _settings_cache:
-        _settings_cache[chat_id][key] = value
+    try:
+        conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
+        conn.commit()
+        if chat_id in _settings_cache:
+            _settings_cache[chat_id][key] = value
+    except Exception as e:
+        conn.rollback()
+        raise RuntimeError(f"Failed to update chat setting '{key}': {e}") from e
 
 
 def update_chat_settings_batch(chat_id: int, updates: Dict[str, Any]) -> None:
-    """Update multiple chat settings at once."""
+    """Update multiple chat settings at once.
+
+    Args:
+        chat_id: The Telegram chat ID
+        updates: Dictionary of setting keys and values to update
+
+    Raises:
+        ValueError: If any key is not a valid chat setting or if updates is not a dict
+        RuntimeError: If the database operation fails
+    """
+    if not isinstance(updates, dict):
+        raise ValueError("Updates must be a dictionary")
+
+    # Validate all keys before making any changes
+    invalid_keys = [key for key in updates.keys() if key not in DEFAULT_CHAT_SETTINGS]
+    if invalid_keys:
+        raise ValueError(f"Invalid chat settings: {invalid_keys}. Valid settings: {list(DEFAULT_CHAT_SETTINGS.keys())}")
+
     ensure_chat_settings(chat_id)
     conn = db_connect()
-    for key, value in updates.items():
-        conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
-    conn.commit()
-    if chat_id in _settings_cache:
-        _settings_cache[chat_id].update(updates)
+    try:
+        for key, value in updates.items():
+            conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
+        conn.commit()
+        if chat_id in _settings_cache:
+            _settings_cache[chat_id].update(updates)
+    except Exception as e:
+        conn.rollback()
+        raise RuntimeError(f"Failed to update chat settings: {e}") from e
+
+
+def get_user_settings(user_id: int, chat_id: int) -> Dict[str, Any]:
+    """Get user-specific settings for a user in a chat, using cache when possible.
+
+    Args:
+        user_id: The Telegram user ID
+        chat_id: The Telegram chat ID
+
+    Returns:
+        Dictionary of user-specific settings. Empty dict if no settings found.
+
+    Note:
+        Returns a copy of the cached settings to prevent accidental mutation of cache.
+    """
+    cache_key = (user_id, chat_id)
+    if cache_key in _user_settings_cache:
+        return _user_settings_cache[cache_key].copy()
+    conn = db_connect()
+    rows = conn.execute(
+        "SELECT key, value FROM user_settings WHERE user_id = ? AND chat_id = ?",
+        (user_id, chat_id),
+    ).fetchall()
+    settings = {k: v for k, v in rows}
+    _user_settings_cache[cache_key] = settings.copy()
+    return settings
+
+
+def set_user_setting(user_id: int, chat_id: int, key: str, value: Any) -> None:
+    """Set a user-specific setting for a user in a chat.
+
+    Args:
+        user_id: The Telegram user ID
+        chat_id: The Telegram chat ID
+        key: The setting key to set
+        value: The setting value (will be converted to string for storage)
+
+    Raises:
+        RuntimeError: If the database operation fails
+        ValueError: If the key is empty or invalid
+    """
+    if not key or not isinstance(key, str):
+        raise ValueError("Setting key must be a non-empty string")
+
+    conn = db_connect()
+    try:
+        str_value = str(value)
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings(user_id, chat_id, key, value) VALUES(?, ?, ?, ?)",
+            (user_id, chat_id, key, str_value),
+        )
+        conn.commit()
+        _user_settings_cache[(user_id, chat_id)][key] = str_value
+    except Exception as e:
+        conn.rollback()
+        raise RuntimeError(f"Failed to set user setting: {e}") from e
+
+
+def update_user_settings_batch(user_id: int, chat_id: int, updates: Dict[str, Any]) -> None:
+    """Update multiple user-specific settings at once.
+
+    Args:
+        user_id: The Telegram user ID
+        chat_id: The Telegram chat ID
+        updates: Dictionary of setting keys and values to update
+                 (values will be converted to strings for storage)
+
+    Raises:
+        RuntimeError: If the database operation fails
+        ValueError: If any key is empty or invalid, or if updates is not a dict
+    """
+    if not isinstance(updates, dict):
+        raise ValueError("Updates must be a dictionary")
+
+    # Validate all keys before making any changes
+    for key in updates.keys():
+        if not key or not isinstance(key, str):
+            raise ValueError(f"Setting key must be a non-empty string, got: {key}")
+
+    conn = db_connect()
+    try:
+        for key, value in updates.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings(user_id, chat_id, key, value) VALUES(?, ?, ?, ?)",
+                (user_id, chat_id, key, str(value)),
+            )
+        conn.commit()
+        if (user_id, chat_id) in _user_settings_cache:
+            _user_settings_cache[(user_id, chat_id)].update(updates)
+    except Exception as e:
+        conn.rollback()
+        raise RuntimeError(f"Failed to update user settings: {e}") from e
 
 
 def get_choice(chat_id: int, platform: str) -> str:

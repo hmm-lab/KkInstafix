@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from collections import OrderedDict, deque
 import typing
-from typing import Optional, Set, Dict, Any, List, Tuple, FrozenSet
+from typing import Optional, Set, Dict, Any, List, Tuple, FrozenSet, Callable, Awaitable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
@@ -26,6 +26,7 @@ from telegram import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     LinkPreviewOptions,
+    Message,
     Update,
 )
 from telegram.error import Conflict
@@ -38,7 +39,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-__version__ = "1.53.1"
+__version__ = "1.54.0"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -197,7 +198,7 @@ URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
 # which previews more reliably than the original path form.
 YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]+)", re.IGNORECASE)
-YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com"}
+YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com", "music.youtube.com"}
 # youtu.be/<id> is a pure path rewrite to the canonical watch URL — no network.
 YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
 TAIL = ".,!?)]>}"
@@ -357,7 +358,7 @@ from database import (
 )
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def is_duplicate_update(update_id):
+def is_duplicate_update(update_id: int) -> bool:
     if update_id in SEEN_UPDATES:
         return True
     SEEN_UPDATES[update_id] = None
@@ -923,7 +924,7 @@ def _build_platform_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _cycle_keyboard(platform, next_idx):
+def _cycle_keyboard(platform, next_idx) -> InlineKeyboardMarkup:
     """One-button keyboard that swaps a repost to the next provider.
 
     next_idx is the index in PROVIDERS[platform]["options"] to switch to on tap.
@@ -933,7 +934,7 @@ def _cycle_keyboard(platform, next_idx):
     )
 
 
-def _build_provider_keyboard(chat_id, platform):
+def _build_provider_keyboard(chat_id, platform) -> InlineKeyboardMarkup:
     current = get_choice(chat_id, platform)
     noauth_keys = set(PROVIDERS[platform].get("noauth_embed", {}).keys())
     rows = []
@@ -949,7 +950,7 @@ def _build_provider_keyboard(chat_id, platform):
     return InlineKeyboardMarkup(rows)
 
 
-def parse_on_off(value):
+def parse_on_off(value: str) -> Optional[int]:
     v = value.lower()
     if v in ("on", "true", "yes", "1"):
         return 1
@@ -958,7 +959,7 @@ def parse_on_off(value):
     return None
 
 
-def target_user_id_from_command(msg, parts):
+def target_user_id_from_command(msg: Message, parts: List[str]) -> Optional[int]:
     if msg.reply_to_message and msg.reply_to_message.from_user:
         return msg.reply_to_message.from_user.id
     if len(parts) > 1:
@@ -971,7 +972,7 @@ def target_user_id_from_command(msg, parts):
     return None
 
 
-def is_forwarded(msg):
+def is_forwarded(msg: Message) -> bool:
     return bool(getattr(msg, "forward_origin", None) or getattr(msg, "forward_date", None))
 
 # ── Permissions and messaging ──────────────────────────────────────────────────
@@ -1659,7 +1660,7 @@ async def _cmd_setratelimit(msg, parts: List[str], context: ContextTypes.DEFAULT
     )
 
 
-def _make_toggle_cmd(setting_key: str, on_text: str, off_text: str, usage: str):
+def _make_toggle_cmd(setting_key: str, on_text: str, off_text: str, usage: str) -> Callable[[Message, List[str], ContextTypes.DEFAULT_TYPE, int], Awaitable[None]]:
     async def _cmd(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
         value = parse_on_off(parts[1]) if len(parts) == 2 else None
         if value is None:
@@ -1763,7 +1764,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = msg.from_user.id if msg.from_user else 0
     if msg.from_user and msg.from_user.first_name:
         _user_names[user_id] = msg.from_user.first_name
-    chat_settings = get_chat_settings(chat_id)
+    chat_settings = get_chat_settings(chat_id, user_id)
     text = msg.text.strip()
 
     if is_user_muted(chat_id, user_id):
@@ -1889,7 +1890,7 @@ async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
-    chat_settings = get_chat_settings(chat_id)
+    chat_settings = get_chat_settings(chat_id, user_id)
 
     if not chat_settings["enabled"]:
         return
@@ -1943,7 +1944,7 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
-    chat_settings = get_chat_settings(chat_id)
+    chat_settings = get_chat_settings(chat_id, user_id)
 
     if not chat_settings["enabled"]:
         return
@@ -1997,7 +1998,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     chat_id = msg.chat_id
     user_id = msg.from_user.id if msg.from_user else 0
-    chat_settings = get_chat_settings(chat_id)
+    chat_settings = get_chat_settings(chat_id, user_id)
     if not chat_settings["enabled"]:
         return
     if is_user_muted(chat_id, user_id):
@@ -2408,7 +2409,7 @@ def main() -> None:
     else:
         app.run_polling(drop_pending_updates=True, allowed_updates=_allowed)
 
-def export_chat_data(chat_id):
+def export_chat_data(chat_id: int) -> Dict[Any, Any]:
     conn = db_connect()
     settings_row = conn.execute(
         "SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)
@@ -2448,7 +2449,7 @@ def export_chat_data(chat_id):
     }
 
 
-def import_chat_data(chat_id, data):
+def import_chat_data(chat_id: int, data: Dict[Any, Any]) -> Tuple[bool, str]:
     if not isinstance(data, dict) or data.get("version") != 1:
         return False, "unsupported format"
     source_chat = data.get("chat_id")
@@ -2514,7 +2515,7 @@ def import_chat_data(chat_id, data):
 
 
 
-def blocked_user_count(chat_id):
+def blocked_user_count(chat_id: int) -> int:
     return len(_muted_set(chat_id))
 
 
@@ -2529,7 +2530,7 @@ def _override_map(chat_id) -> dict:
     return _platform_override_cache[chat_id]
 
 
-def set_platform_enabled(chat_id, platform, enabled):
+def set_platform_enabled(chat_id: int, platform: str, enabled: bool) -> None:
     """Record an explicit enable/disable choice for one platform in a chat.
 
     Stored as an override so it persists across restarts and wins over the
@@ -2546,7 +2547,7 @@ def set_platform_enabled(chat_id, platform, enabled):
     _override_map(chat_id)[platform] = val
 
 
-def is_platform_disabled(chat_id, platform):
+def is_platform_disabled(chat_id: int, platform: str) -> bool:
     override = _override_map(chat_id).get(platform)
     if override is not None:
         return override == 0
@@ -2613,7 +2614,7 @@ def cleanup_db() -> None:
         _user_names.update(to_keep)
 
 
-def increment_stat(chat_id, platform, sender_id):
+def increment_stat(chat_id: int, platform: str, sender_id: int) -> None:
     now = int(time.time())
     conn = db_connect()
     conn.execute(
@@ -2629,7 +2630,7 @@ def increment_stat(chat_id, platform, sender_id):
     conn.commit()
 
 
-def get_stats(chat_id):
+def get_stats(chat_id: int) -> Tuple[int, List, List]:
     conn = db_connect()
     total = conn.execute(
         "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?",
@@ -2654,7 +2655,7 @@ def get_stats(chat_id):
     return total, by_platform, by_sender
 
 
-def store_rewrite(chat_id, bot_msg_id, original_url, sender_name):
+def store_rewrite(chat_id: int, bot_msg_id: int, original_url: str, sender_name: str) -> None:
     now = int(time.time())
     conn = db_connect()
     conn.execute(
@@ -2668,7 +2669,7 @@ def store_rewrite(chat_id, bot_msg_id, original_url, sender_name):
     conn.commit()
 
 
-def seen_recent(kind, chat_id, event_key, window):
+def seen_recent(kind: str, chat_id: int, event_key: str, window: int) -> bool:
     now = time.time()
     key = (kind, chat_id, event_key)
     ts = _recent_mem.get(key)
@@ -2687,7 +2688,7 @@ def seen_recent(kind, chat_id, event_key, window):
 _rate_mem: dict = {}  # (chat_id, user_id) -> deque of timestamps
 
 
-def check_rate(chat_id, user_id, limit_count, window):
+def check_rate(chat_id: int, user_id: int, limit_count: int, window: int) -> bool:
     now = time.time()
     key = (chat_id, user_id)
     timestamps = _rate_mem.get(key)
@@ -2704,7 +2705,7 @@ def check_rate(chat_id, user_id, limit_count, window):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def lookup_rewrite(chat_id, bot_msg_id):
+def lookup_rewrite(chat_id: int, bot_msg_id: int) -> Tuple[Optional[str], Optional[str]]:
     conn = db_connect()
     row = conn.execute(
         "SELECT original_url, sender_name FROM rewritten_messages WHERE chat_id = ? AND bot_msg_id = ?",

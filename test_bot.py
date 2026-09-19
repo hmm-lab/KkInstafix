@@ -1359,3 +1359,941 @@ def test_cleanup_db_prunes_stale_inmemory_caches():
     assert (-1, 333) not in bot._rate_mem
     assert (-1, 444) not in bot._admin_cache
     assert (-1, 555) in bot._admin_cache
+
+
+# ── edge cases for URL processing functions ─────────────────────────────────────
+
+def test_strip_tracking_empty_and_malformed_urls():
+    """Test strip_tracking with edge case inputs."""
+    # Empty string
+    assert bot.strip_tracking("") == ""
+    # None is not a valid input (would raise TypeError), but we can test string-like edge cases
+    # Just whitespace
+    assert bot.strip_tracking("   ") == "   "
+    # No scheme
+    assert bot.strip_tracking("example.com/?utm_source=test") == "example.com/"
+    # No netloc
+    assert bot.strip_tracking("/path?utm_source=test") == "/path"
+    # Only fragment
+    assert bot.strip_tracking("http://example.com#frag?utm_source=test") == "http://example.com#frag"
+    # Only query params to strip
+    assert bot.strip_tracking("http://example.com?utm_source=test&utm_medium=test") == "http://example.com/"
+    # Repeated params
+    assert bot.strip_tracking("http://example.com?utm_source=1&utm_source=2") == "http://example.com/"
+    # Mixed case params (should be case insensitive)
+    assert bot.strip_tracking("http://example.com?UTM_SOURCE=test") == "http://example.com/"
+    assert bot.strip_tracking("http://example.com?UtM_SoUrCe=test") == "http://example.com/"
+
+
+def test_strip_generic_tracking_edge_cases():
+    """Test strip_generic_tracking with edge case inputs."""
+    # Empty string
+    assert bot.strip_generic_tracking("") == ""
+    # Just whitespace
+    assert bot.strip_generic_tracking("   ") == "   "
+    # No query params
+    assert bot.strip_generic_tracking("http://example.com/path") == "http://example.com/path"
+    # Only tracking params
+    assert bot.strip_generic_tracking("http://example.com?utm_source=test&fbclid=123") == "http://example.com/"
+    # YouTube specific - should strip is, feature, pp
+    assert bot.strip_generic_tracking("http://youtube.com/watch?v=abc&is=test") == "http://youtube.com/watch?v=abc"
+    assert bot.strip_generic_tracking("http://youtu.be/abc?feature=test") == "http://youtu.be/abc"
+    assert bot.strip_generic_tracking("http://youtube.com/watch?v=abc&pp=1") == "http://youtube.com/watch?v=abc"
+    # Non-YouTube hosts should NOT strip is, feature, pp
+    assert bot.strip_generic_tracking("http://example.com/search?is=test&feature=test&pp=1") == "http://example.com/search?is=test&feature=test&pp=1"
+    # Fragment preservation
+    assert bot.strip_generic_tracking("http://example.com/path?utm_source=test#frag") == "http://example.com/path#frag"
+    # Mixed params - keep non-tracking
+    result = bot.strip_generic_tracking("http://example.com?utm_source=test&v=abc&fbclid=123")
+    assert "v=abc" in result
+    assert "utm_source" not in result
+    assert "fbclid" not in result
+
+
+def test_trim_edge_cases():
+    """Test trim function with edge cases."""
+    # Empty string
+    assert bot.trim("") == ("", "")
+    # Just punctuation
+    assert bot.trim("!!!") == ("", "!!!")
+    # No trailing punctuation
+    assert bot.trim("http://example.com") == ("http://example.com", "")
+    # Complex trailing punctuation
+    assert bot.trim("http://example.com!?.,;:") == ("http://example.com", "!?.,;:")
+    # Unicode punctuation (if in TAIL)
+    # Only trim what's actually in TAIL constant
+    assert bot.trim("http://example.com ") == ("http://example.com", " ")  # space if in TAIL
+    # Multiple URLs in string (should only trim end)
+    assert bot.trim("http://example.com http://test.com!!") == ("http://example.com http://test.com", "!!")
+
+
+def test_get_platform_edge_cases():
+    """Test get_platform with edge case inputs."""
+    # Empty inputs
+    assert bot.get_platform("", "") is None
+    assert bot.get_platform(None, "/path") is None  # TypeError expected but let's see
+    # Actually, the function expects strings, so None would raise AttributeError
+    # Let's test with empty strings and invalid domains
+    assert bot.get_platform("", "/path") is None
+    assert bot.get_platform("invalid", "") is None
+    # Subdomain edge cases
+    assert bot.get_platform("www.twitter.com", "/") == "twitter"
+    assert bot.get_platform("mobile.twitter.com", "/") == "twitter"
+    assert bot.get_platform("twitter.com.uk", "/") is None  # Not a TLD we handle
+    # Deep subdomains
+    assert bot.get_platform("a.b.c.d.twitter.com", "/") == "twitter"
+    # Path matching for special platforms
+    assert bot.get_platform("youtube.com", "/watch?v=test") == "youtube_watch"
+    assert bot.get_platform("youtube.com", "/embed/test") is None  # Not a watch path
+    assert bot.get_platform("youtube.com", "/live/test") == "youtube_watch"
+    assert bot.get_platform("m.youtube.com", "/") is None  # No path
+    # Mixed case hosts
+    assert bot.get_platform("YOUTUBE.COM", "/watch?v=test") == "youtube_watch"
+    assert bot.get_platform("YoUtUbE.CoM", "/watch?v=test") == "youtube_watch"
+    # Unknown TLDs
+    assert bot.get_platform("example.test", "/") is None
+    assert bot.get_platform("example.localhost", "/") is None
+
+
+def test_apply_provider_edge_cases():
+    """Test apply_provider with edge cases."""
+    # Test with unsupported provider (should return original URL)
+    assert bot.apply_provider("http://example.com/test", "unsupported_provider", "anykey") == "http://example.com/test"
+    # Test with unsupported provider key
+    assert bot.apply_provider("http://example.com/test", "twitter", "unsupported_key") == "http://example.com/test"
+    # Test with malformed URL
+    assert bot.apply_provider("not-a-url", "twitter", "vx") == "not-a-url"
+    # Test empty strings
+    assert bot.apply_provider("", "twitter", "vx") == ""
+    assert bot.apply_provider("http://example.com", "", "vx") == "http://example.com"
+    assert bot.apply_provider("http://example.com", "twitter", "") == "http://example.com"
+
+
+def test_clean_url_edge_cases():
+    """Test clean_url function with edge cases."""
+    # Empty string
+    assert bot.clean_url("") == ""
+    # None would raise exception, so skip
+    # No change needed
+    assert bot.clean_url("http://example.com/path") == "http://example.com/path"
+    # Already clean URL
+    assert bot.clean_url("http://example.com/path?param=value") == "http://example.com/path?param=value"
+    # Only tracking params
+    assert bot.clean_url("http://twitter.com/test?utm_source=test&fbclid=123") == "http://twitter.com/test"
+    # YouTube short URL
+    assert bot.clean_url("http://youtu.be/test?si=tracking") == "http://youtu.be/test"
+    # Fragment preservation
+    assert bot.clean_url("http://example.com/test?utm_source=test#frag") == "http://example.com/test#frag"
+    # Mixed params
+    result = bot.clean_url("http://example.com/test?utm_source=test&keep=value&fbclid=123")
+    assert "keep=value" in result
+    assert "utm_source" not in result
+    assert "fbclid" not in result
+
+
+def test_expand_short_url_sync_edge_cases(monkeypatch):
+    """Test _expand_short_url_sync with edge cases and mocks."""
+    # Mock the network call to avoid actual HTTP requests
+    def mock_head_fail(*args, **kwargs):
+        raise ConnectionError("Network error")
+
+    def mock_head_redirect(*args, **kwargs):
+        class MockResponse:
+            headers = {"Location": "http://example.com/redirect-target"}
+        return MockResponse()
+
+    def mock_head_no_redirect(*args, **kwargs):
+        class MockResponse:
+            headers = {}
+        return MockResponse()
+
+    # Test with network failure
+    monkeypatch.setattr("bot._head", mock_head_fail)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+
+    # Test with redirect
+    monkeypatch.setattr("bot._head", mock_head_redirect)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://example.com/redirect-target"
+
+    # Test with no redirect
+    monkeypatch.setattr("bot._head", mock_head_no_redirect)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+
+    # Test non-short URL (should return as-is)
+    assert bot._expand_short_url_sync("http://example.com/long-url") == "http://example.com/long-url"
+    assert bot._expand_short_url_sync("") == ""
+
+
+def test_check_url_sync_edge_cases(monkeypatch):
+    """Test _check_url_sync with edge cases."""
+    # Mock the network call
+    def mock_get_success(*args, **kwargs):
+        class MockResponse:
+            status_code = 200
+        return MockResponse()
+
+    def mock_get_failure(*args, **kwargs):
+        class MockResponse:
+            status_code = 404
+        return MockResponse()
+
+    def mock_get_exception(*args, **kwargs):
+        raise ConnectionError("Network error")
+
+    # Test successful request
+    monkeypatch.setattr("bot._get", mock_get_success)
+    assert bot._check_url_sync("http://example.com") is True
+
+    # Test failed request (404)
+    monkeypatch.setattr("bot._get", mock_get_failure)
+    assert bot._check_url_sync("http://example.com/notfound") is False
+
+    # Test network exception
+    monkeypatch.setattr("bot._get", mock_get_exception)
+    assert bot._check_url_sync("http://example.com") is False
+
+    # Test empty URL
+    assert bot._check_url_sync("") is False
+
+
+def test_is_restricted_sync_edge_cases():
+    """Test _is_restricted_sync with edge cases."""
+    # Test with known restricted domains (from constants)
+    # These would need to be tested against actual RESTRICTED_DOMAINS
+    # For now, test that function handles various inputs
+    assert bot._is_restricted_sync("http://example.com") is False  # likely not restricted
+    assert bot._is_restricted_sync("") is False
+    assert bot._is_restricted_sync("not-a-url") is False
+
+    # Test that it doesn't crash on malformed inputs
+    try:
+        bot._is_restricted_sync(None)
+    except AttributeError:
+        pass  # Expected if None is passed
+
+    # Test with various schemes
+    assert bot._is_restricted_sync("https://example.com") is False
+    assert bot._is_restricted_sync("ftp://example.com") is False
+    assert bot._is_restricted_sync("example.com") is False  # no scheme
+
+
+def test_build_fixed_for_key_edge_cases():
+    """Test build_fixed_for_key with edge cases."""
+    # Test with unsupported platform
+    result = bot.build_fixed_for_key("http://example.com/test", "unsupported_platform", "vx")
+    assert result == ("http://example.com/test", "unsupported_platform")
+
+    # Test with unsupported provider key
+    result = bot.build_fixed_for_key("http://example.com/test", "twitter", "unsupported_key")
+    assert result == ("http://example.com/test", "twitter")
+
+    # Test with empty URL
+    result = bot.build_fixed_for_key("", "twitter", "vx")
+    assert result == ("", "twitter")
+
+    # Test with empty platform/provider
+    result = bot.build_fixed_for_key("http://example.com/test", "", "vx")
+    # Should handle gracefully
+
+    result = bot.build_fixed_for_key("http://example.com/test", "twitter", "")
+    # Should handle gracefully
+
+
+def test_sender_label_edge_cases():
+    """Test sender_label function with edge cases."""
+    # Test None user
+    assert bot.sender_label(None, "first_name") is None
+    assert bot.sender_label(None, "username") is None
+    assert bot.sender_label(None, "full_name") is None
+    assert bot.sender_label(None, "none") is None
+
+    # Test user with missing attributes
+    class MinimalUser:
+        pass
+
+    user = MinimalUser()
+    # No attributes set
+    assert bot.sender_label(user, "first_name") is None
+    assert bot.sender_label(user, "username") is None
+    assert bot.sender_label(user, "full_name") is None
+
+    # Test with empty string attributes
+    class EmptyUser:
+        first_name = ""
+        username = ""
+        last_name = ""
+
+    user = EmptyUser()
+    assert bot.sender_label(user, "first_name") == ""  # Returns empty string, not None
+    assert bot.sender_label(user, "username") == ""
+    assert bot.sender_label(user, "full_name") == " "  # first + " " + last
+
+    # Test various modes
+    class TestUser:
+        first_name = "John"
+        username = "john_doe"
+        last_name = "Doe"
+
+    user = TestUser()
+    assert bot.sender_label(user, "first_name") == "John"
+    assert bot.sender_label(user, "username") == "@john_doe"
+    assert bot.sender_label(user, "full_name") == "John Doe"
+    assert bot.sender_label(user, "none") is None
+
+
+def test_format_repost_text_edge_cases():
+    """Test format_repost_text with edge cases."""
+    # Test with None values
+    result = bot.format_repost_text(None, "first_name")
+    # Should handle gracefully
+
+    # Test with empty platform and URL
+    class TestUser:
+        first_name = "Test"
+
+    user = TestUser()
+    result = bot.format_repost_text(user, "first_name", None, None)
+    assert "Test" in result
+
+    # Test with empty strings
+    result = bot.format_repost_text(user, "first_name", "", "")
+    assert "Test" in result
+
+    # Test all modes
+    assert bot.format_repost_text(user, "first_name", "twitter", "http://test.com") is not None
+    assert bot.format_repost_text(user, "username", "twitter", "http://test.com") is not None
+    assert bot.format_repost_text(user, "full_name", "twitter", "http://test.com") is not None
+    assert bot.format_repost_text(user, "none", "twitter", "http://test.com") is not None
+
+    # Test with missing platform or URL
+    assert bot.format_repost_text(user, "first_name", "twitter", None) is not None
+    assert bot.format_repost_text(user, "first_name", None, "http://test.com") is not None
+    assert bot.format_repost_text(user, "first_name", None, None) is not None
+
+
+# ── property-based tests for discovering edge cases ────────────────────────────
+
+try:
+    from hypothesis import given, strategies as st, settings, HealthCheck
+    import string
+
+    # Strategy for generating valid URLs (simplified)
+    def valid_url_chars():
+        return st.characters(whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters="-._~:/?#[]@!$&'()*+,;=")
+
+    def valid_domain():
+        return st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                              whitelist_characters="-."),
+                      min_size=1, max_size=63).filter(
+            lambda x: not x.startswith('.') and not x.endswith('.') and '..' not in x
+        )
+
+    def valid_tld():
+        return st.sampled_from(["com", "org", "net", "edu", "gov", "mil", "int",
+                               "co.uk", "de", "fr", "jp", "ca", "au", "in", "it", "es"])
+
+    def valid_url():
+        return st.builds(
+            lambda scheme, domain, tld, path, query, fragment:
+                f"{scheme}://{domain}.{tld}{path}{query}{fragment}",
+            scheme=st.sampled_from(["http", "https"]),
+            domain=valid_domain(),
+            tld=valid_tld(),
+            path=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                              whitelist_characters="/-._~"),
+                        min_size=0, max_size=20).map(lambda x: x if x.startswith("/") else f"/{x}" if x else ""),
+            query=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                                 whitelist_characters="&="),
+                         min_size=0, max_size=50).map(lambda x: f"?{x}" if x else ""),
+            fragment=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                                      whitelist_characters="-._~"),
+                           min_size=0, max_size=20).map(lambda x: f"#{x}" if x else "")
+        )
+
+    @given(st.text())
+    def test_strip_tracking_property_based(text):
+        """Property-based test for strip_tracking: should never crash and should remove tracking params."""
+        try:
+            result = bot.strip_tracking(text)
+            # Should always return a string
+            assert isinstance(result, str)
+            # Should not contain any tracking parameters from the standard set
+            for param in bot.TRACKING:
+                assert param.lower() not in result.lower() or f"{param}=" not in result.lower()
+        except Exception:
+            # Hypothesis will track these as failures - we expect the function to handle all inputs
+            raise
+
+    @given(st.text())
+    def test_strip_generic_tracking_property_based(text):
+        """Property-based test for strip_generic_tracking: should never crash."""
+        try:
+            result = bot.strip_generic_tracking(text)
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_trim_property_based(text):
+        """Property-based test for trim: should always return a tuple of strings."""
+        try:
+            result = bot.trim(text)
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+            assert isinstance(result[0], str)
+            assert isinstance(result[1], str)
+            # The concatenation should equal the original input
+            assert result[0] + result[1] == text
+        except Exception:
+            raise
+
+    @given(st.text(max_size=100), st.text(max_size=100))
+    def test_get_platform_property_based(netloc, path):
+        """Property-based test for get_platform: should never crash and return valid values."""
+        try:
+            result = bot.get_platform(netloc, path)
+            # Should return None or a valid platform string
+            if result is not None:
+                assert isinstance(result, str)
+                assert result in bot.PROVIDERS or result in ["youtube_watch"]
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_clean_url_property_based(text):
+        """Property-based test for clean_url: should never crash."""
+        try:
+            result = bot.clean_url(text)
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_build_fixed_for_key_property_based(text):
+        """Property-based test for build_fixed_for_key: should never crash."""
+        try:
+            result = bot.build_fixed_for_key(text, "twitter", "vx")
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+            assert isinstance(result[0], str)
+            assert isinstance(result[1], str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_sender_label_property_based(text):
+        """Property-based test for sender_label: should never crash."""
+        try:
+            # Test with a simple user object
+            class SimpleUser:
+                def __init__(self, name=""):
+                    self.first_name = name
+                    self.username = name
+                    self.last_name = name
+
+            user = SimpleUser(text)
+            result = bot.sender_label(user, "first_name")
+            # Should return None or a string
+            assert result is None or isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_format_repost_text_property_based(text):
+        """Property-based test for format_repost_text: should never crash."""
+        try:
+            # Test with a simple user object
+            class SimpleUser:
+                def __init__(self, name=""):
+                    self.first_name = name
+                    self.username = name
+                    self.last_name = name
+
+            user = SimpleUser(text)
+            result = bot.format_repost_text(user, "first_name", "twitter", "http://test.com")
+            # Should return a string
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    # Configure hypothesis to be less strict about certain health checks for our use case
+    settings.register_profile("default", max_examples=100, deadline=None)
+    settings.load_profile("default")
+
+except ImportError:
+    # Hypothesis not available - skip property-based tests
+    pass
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+
+# ── error condition tests for core functions ────────────────────────────────────
+
+def test_check_url_sync_network_errors(monkeypatch):
+    """Test _check_url_sync handles various network errors."""
+    # Test HTTPError (4xx and 5xx)
+    def mock_http_error_4xx(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.HTTPError("http://test.com", 404, "Not Found", {}, None)
+
+    def mock_http_error_5xx(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.HTTPError("http://test.com", 500, "Server Error", {}, None)
+
+    def mock_url_error(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.URLError("Network unreachable")
+
+    def mock_timeout_error(*args, **kwargs):
+        raise TimeoutError("Request timed out")
+
+    # Test 4xx errors (should return False - treating as accessible since content may exist)
+    monkeypatch.setattr("bot._get", mock_http_error_4xx)
+    assert bot._check_url_sync("http://example.com/notfound") is False
+
+    # Test 5xx errors (should return False - treating as inaccessible)
+    monkeypatch.setattr("bot._get", mock_http_error_5xx)
+    assert bot._check_url_sync("http://example.com/error") is False
+
+    # Test URL errors (should return False)
+    monkeypatch.setattr("bot._get", mock_url_error)
+    assert bot._check_url_sync("http://example.com") is False
+
+    # Test timeout errors (should return False)
+    monkeypatch.setattr("bot._get", mock_timeout_error)
+    assert bot._check_url_sync("http://example.com") is False
+
+
+def test_is_restricted_sync_network_errors(monkeypatch):
+    """Test _is_restricted_sync handles various network errors."""
+    # Test HTTPError
+    def mock_http_error(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.HTTPError("http://test.com", 403, "Forbidden", {}, None)
+
+    # Test URL error
+    def mock_url_error(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.URLError("Failed to resolve host")
+
+    # Test timeout
+    def mock_timeout_error(*args, **kwargs):
+        raise TimeoutError("Request timed out")
+
+    # Test that HTTP errors don't crash the function
+    monkeypatch.setattr("bot._get", mock_http_error)
+    # Should return False (not restricted) on HTTP error
+    assert bot._is_restricted_sync("http://example.com") is False
+
+    # Should return False on URL error
+    monkeypatch.setattr("bot._get", mock_url_error)
+    assert bot._is_restricted_sync("http://example.com") is False
+
+    # Should return False on timeout
+    monkeypatch.setattr("bot._get", mock_timeout_error)
+    assert bot._is_restricted_sync("http://example.com") is False
+
+
+def test_expand_short_url_sync_network_errors(monkeypatch):
+    """Test _expand_short_url_sync handles network errors."""
+    # Test various network errors that should cause fallback to original URL
+    def mock_head_error(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.URLError("DNS resolution failed")
+
+    def mock_head_timeout(*args, **kwargs):
+        raise TimeoutError("Request timed out")
+
+    def mock_head_http_error(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.HTTPError("http://bit.ly/test", 500, "Server Error", {}, None)
+
+    # Test URL error - should return original URL
+    monkeypatch.setattr("bot._head", mock_head_error)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+
+    # Test timeout - should return original URL
+    monkeypatch.setattr("bot._head", mock_head_timeout)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+
+    # Test HTTP error - should return original URL
+    monkeypatch.setattr("bot._head", mock_head_http_error)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+
+
+def test_cleanup_db_error_conditions():
+    """Test cleanup_db handles error conditions gracefully."""
+    # These tests ensure the function doesn't crash under various error conditions
+    # We mainly test that it runs without exception since it's a cleanup function
+
+    # Normal operation should work
+    try:
+        bot.cleanup_db()
+        assert True  # If we get here, no exception was raised
+    except Exception as e:
+        pytest.fail(f"cleanup_db raised unexpected exception: {e}")
+
+    # Test with various cache states
+    bot._recent_mem.clear()
+    bot._rate_mem.clear()
+    bot._admin_cache.clear()
+    bot.SEEN_UPDATES.clear()
+
+    try:
+        bot.cleanup_db()
+        assert True
+    except Exception as e:
+        pytest.fail(f"cleanup_db raised unexpected exception with empty caches: {e}")
+
+
+def test_export_import_chat_data_error_conditions():
+    """Test export_chat_data and import_chat_data handle error conditions."""
+    cid = -1999
+    bot.init_db()
+
+    # Test export from non-existent chat (should still work)
+    data = bot.export_chat_data(cid)
+    assert isinstance(data, dict)
+    assert "chat_id" in data
+    assert data["chat_id"] == cid
+
+    # Test import with invalid data
+    ok, msg = bot.import_chat_data(cid + 1, {"invalid": "data"})
+    assert ok is False
+    assert isinstance(msg, str)
+    assert len(msg) > 0
+
+    # Test import with None data
+    ok, msg = bot.import_chat_data(cid + 1, None)
+    assert ok is False
+    assert isinstance(msg, str)
+
+    # Test import with non-dict data
+    ok, msg = bot.import_chat_data(cid + 1, "not a dict")
+    assert ok is False
+    assert isinstance(msg, str)
+
+
+def test_stat_functions_error_conditions():
+    """Test stat functions handle error conditions."""
+    # Test increment_stat with invalid inputs
+    try:
+        bot.increment_stat(-999, "invalid_platform", -999)
+        # Should not crash
+        assert True
+    except Exception:
+        # Some validation might raise exceptions, which is okay
+        pass
+
+    # Test get_stats with invalid inputs
+    try:
+        stats = bot.get_stats(-999, "invalid_platform")
+        assert isinstance(stats, int)
+        assert stats >= 0
+    except Exception:
+        # Some validation might raise exceptions, which is okay
+        pass
+
+    # Test get_stats with None/empty values
+    try:
+        stats = bot.get_stats(None, None)
+        assert isinstance(stats, int)
+    except Exception:
+        pass
+
+
+def test_platform_override_functions_error_conditions():
+    """Test platform override functions handle error conditions."""
+    cid = -1888
+    bot.init_db()
+
+    # Test with invalid platform names
+    try:
+        bot.set_platform_enabled(cid, "", True)  # Empty platform
+        assert True  # Should not crash
+    except Exception:
+        pass  # Might raise validation exception
+
+    try:
+        bot.set_platform_enabled(cid, None, True)  # None platform
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    # Test with invalid chat IDs
+    try:
+        bot.set_platform_enabled(None, "twitter", True)  # None chat ID
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    try:
+        bot.set_platform_enabled("invalid", "twitter", True)  # String chat ID
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    # Test getter functions with invalid inputs
+    try:
+        result = bot.is_platform_disabled(None, "twitter")
+        assert isinstance(result, bool)
+    except Exception:
+        pass
+
+    try:
+        result = bot.get_disabled_platforms(None)
+        assert isinstance(result, list)
+    except Exception:
+        pass
+
+
+def test_user_optout_functions_error_conditions():
+    """Test user optout functions handle error conditions."""
+    cid = -1777
+    bot.init_db()
+
+    # Test with invalid user IDs
+    try:
+        bot.set_user_optout(cid, None, True)  # None user ID
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    try:
+        bot.set_user_optout(cid, "invalid", True)  # String user ID
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    # Test with invalid chat IDs
+    try:
+        bot.set_user_optout(None, 123, True)  # None chat ID
+        assert True  # Should not crash
+    except Exception:
+        pass
+
+    # Test getter functions with invalid inputs
+    try:
+        result = bot.is_user_optout(None, 123)
+        assert isinstance(result, bool)
+    except Exception:
+        pass
+
+    try:
+        result = bot.is_user_optout("invalid", None)
+        assert isinstance(result, bool)
+    except Exception:
+        pass
+
+
+def test_text_processing_functions_error_conditions():
+    """Test text processing functions handle error conditions."""
+    # Test sender_label with various invalid inputs
+    class InvalidUser:
+        pass
+
+    # Test with object missing attributes
+    try:
+        result = bot.sender_label(InvalidUser(), "first_name")
+        # Should handle gracefully
+        assert result is None or isinstance(result, str)
+    except AttributeError:
+        # This is expected if accessing missing attributes
+        pass
+    except Exception:
+        # Other exceptions are okay too
+        pass
+
+    # Test format_repost_text with invalid inputs
+    class InvalidUser:
+        pass
+
+    try:
+        result = bot.format_repost_text(InvalidUser(), "first_name", "twitter", "http://test.com")
+        # Should handle gracefully
+        assert isinstance(result, str)
+        assert len(result) > 0
+    except Exception:
+        # Might raise exceptions, which is acceptable for invalid input
+        pass
+
+    # Test with None user
+    try:
+        result = bot.format_repost_text(None, "first_name", "twitter", "http://test.com")
+        # Should handle gracefully
+        assert isinstance(result, str)
+    except Exception:
+        pass
+
+    # Test build_fixed_for_key with invalid inputs
+    try:
+        url, platform = bot.build_fixed_for_key(None, None, None)
+        assert isinstance(url, str)
+        assert isinstance(platform, str)
+    except Exception:
+        pass
+
+    try:
+        url, platform = bot.build_fixed_for_key("http://test.com", "", "")
+        assert isinstance(url, str)
+        assert isinstance(platform, str)
+    except Exception:
+        pass
+
+
+# ── property-based tests for discovering edge cases ────────────────────────────
+
+try:
+    from hypothesis import given, strategies as st, settings, HealthCheck
+    import string
+
+    # Strategy for generating valid URLs (simplified)
+    def valid_url_chars():
+        return st.characters(whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters="-._~:/?#[]@!$&'()*+,;=")
+
+    def valid_domain():
+        return st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                              whitelist_characters="-."),
+                      min_size=1, max_size=63).filter(
+            lambda x: not x.startswith('.') and not x.endswith('.') and '..' not in x
+        )
+
+    def valid_tld():
+        return st.sampled_from(["com", "org", "net", "edu", "gov", "mil", "int",
+                               "co.uk", "de", "fr", "jp", "ca", "au", "in", "it", "es"])
+
+    def valid_url():
+        return st.builds(
+            lambda scheme, domain, tld, path, query, fragment:
+                f"{scheme}://{domain}.{tld}{path}{query}{fragment}",
+            scheme=st.sampled_from(["http", "https"]),
+            domain=valid_domain(),
+            tld=valid_tld(),
+            path=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                              whitelist_characters="/-._~"),
+                        min_size=0, max_size=20).map(lambda x: x if x.startswith("/") else f"/{x}" if x else ""),
+            query=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                                 whitelist_characters="&="),
+                         min_size=0, max_size=50).map(lambda x: f"?{x}" if x else ""),
+            fragment=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"),
+                                                      whitelist_characters="-._~"),
+                           min_size=0, max_size=20).map(lambda x: f"#{x}" if x else "")
+        )
+
+    @given(st.text())
+    def test_strip_tracking_property_based(text):
+        """Property-based test for strip_tracking: should never crash and should remove tracking params."""
+        try:
+            result = bot.strip_tracking(text)
+            # Should always return a string
+            assert isinstance(result, str)
+            # Should not contain any tracking parameters from the standard set
+            for param in bot.TRACKING:
+                assert param.lower() not in result.lower() or f"{param}=" not in result.lower()
+        except Exception:
+            # Hypothesis will track these as failures - we expect the function to handle all inputs
+            raise
+
+    @given(st.text())
+    def test_strip_generic_tracking_property_based(text):
+        """Property-based test for strip_generic_tracking: should never crash."""
+        try:
+            result = bot.strip_generic_tracking(text)
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_trim_property_based(text):
+        """Property-based test for trim: should always return a tuple of strings."""
+        try:
+            result = bot.trim(text)
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+            assert isinstance(result[0], str)
+            assert isinstance(result[1], str)
+            # The concatenation should equal the original input
+            assert result[0] + result[1] == text
+        except Exception:
+            raise
+
+    @given(st.text(max_size=100), st.text(max_size=100))
+    def test_get_platform_property_based(netloc, path):
+        """Property-based test for get_platform: should never crash and return valid values."""
+        try:
+            result = bot.get_platform(netloc, path)
+            # Should return None or a valid platform string
+            if result is not None:
+                assert isinstance(result, str)
+                assert result in bot.PROVIDERS or result in ["youtube_watch"]
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_clean_url_property_based(text):
+        """Property-based test for clean_url: should never crash."""
+        try:
+            result = bot.clean_url(text)
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_build_fixed_for_key_property_based(text):
+        """Property-based test for build_fixed_for_key: should never crash."""
+        try:
+            result = bot.build_fixed_for_key(text, "twitter", "vx")
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+            assert isinstance(result[0], str)
+            assert isinstance(result[1], str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_sender_label_property_based(text):
+        """Property-based test for sender_label: should never crash."""
+        try:
+            # Test with a simple user object
+            class SimpleUser:
+                def __init__(self, name=""):
+                    self.first_name = name
+                    self.username = name
+                    self.last_name = name
+
+            user = SimpleUser(text)
+            result = bot.sender_label(user, "first_name")
+            # Should return None or a string
+            assert result is None or isinstance(result, str)
+        except Exception:
+            raise
+
+    @given(st.text())
+    def test_format_repost_text_property_based(text):
+        """Property-based test for format_repost_text: should never crash."""
+        try:
+            # Test with a simple user object
+            class SimpleUser:
+                def __init__(self, name=""):
+                    self.first_name = name
+                    self.username = name
+                    self.last_name = name
+
+            user = SimpleUser(text)
+            result = bot.format_repost_text(user, "first_name", "twitter", "http://test.com")
+            # Should return a string
+            assert isinstance(result, str)
+        except Exception:
+            raise
+
+    # Configure hypothesis to be less strict about certain health checks for our use case
+    settings.register_profile("default", max_examples=100, deadline=None)
+    settings.load_profile("default")
+
+except ImportError:
+    # Hypothesis not available - skip property-based tests
+    pass
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

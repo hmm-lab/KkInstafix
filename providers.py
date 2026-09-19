@@ -26,6 +26,8 @@ PLATFORM_EMOJI = {
     "kick": "🟢",
     "weibo": "🔴",
     "xiaohongshu": "📕",
+    "linkedin": "💼",
+    "pinterest": "📌",
 }
 
 # Provider configurations
@@ -198,6 +200,24 @@ PROVIDERS = {
         "default": "xky",
         "domains": ["xhslink.com"],
         "options": {"xky": "xhslink.xky.us"},
+    },
+
+    "linkedin": {
+        "default": "vx",
+        "domains": ["linkedin.com"],
+        "options": {
+            "vx": "vxtdin.com",
+            "ez": "lnkedin.ez",
+        },
+    },
+
+    "pinterest": {
+        "default": "vx",
+        "domains": ["pinterest.com", "pin.it"],
+        "options": {
+            "vx": "vxtin.com",
+            "ez": "pin.ez",
+        },
     },
 }
 

@@ -631,3 +631,377 @@ def test_handle_caption_stores_rewrite_for_undo():
     original, sender = bot.lookup_rewrite(cid, sent_id)
     assert original == raw_url
     assert "Bob" in sender
+
+
+# ── edge cases and error conditions for handlers ─────────────────────────────────
+
+def test_handle_message_with_bot_user():
+    """Test that messages from bots are not processed for link rewriting."""
+    fb = FakeBot()
+    msg = FakeMessage(text="check https://twitter.com/u/status/1",
+                      user=FakeUser(999, "BotUser", is_bot=True),  # This is a bot
+                      chat=FakeChat(-1101), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=101), FakeContext(fb)))
+    # Bots should not trigger link rewriting
+    assert not msg.deleted
+    assert not fb.sent
+
+
+def test_handle_message_with_deleted_user():
+    """Test handling messages from deleted/deactivated users."""
+    fb = FakeBot()
+    # User with no first_name (simulating deleted account)
+    user = FakeUser(100, first_name="", username=None)
+    msg = FakeMessage(text="https://twitter.com/u/status/1",
+                      user=user, chat=FakeChat(-1102), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=102), FakeContext(fb)))
+    # Should still process the link even if user data is incomplete
+    assert msg.deleted
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_handle_message_private_chat():
+    """Test link rewriting in private chats."""
+    fb = FakeBot()
+    msg = FakeMessage(text="https://twitter.com/u/status/1",
+                      user=FakeUser(200, "PrivateUser"),
+                      chat=FakeChat(1001, "private"),  # Positive ID for private chat
+                      bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=103), FakeContext(fb)))
+    assert msg.deleted
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_handle_message_channel_post():
+    """Test handling channel posts (which should work similar to group posts)."""
+    fb = FakeBot()
+    msg = FakeMessage(text="https://twitter.com/u/status/1",
+                      user=None,  # Channel posts have no user
+                      chat=FakeChat(-100112233, "channel"),  # Channel ID
+                      bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=104), FakeContext(fb)))
+    # Channel posts should be rewritten and sent
+    assert not msg.deleted  # Original not deleted for channels
+    assert fb.sent  # But a new message should be sent
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_handle_message_edited_message():
+    """Test that edited messages are handled (or properly ignored)."""
+    fb = FakeBot()
+    # Test with edited_message instead of message
+    upd = FakeUpdate(edited_message=FakeMessage(text="https://twitter.com/u/status/1",
+                                                user=FakeUser(201, "Editor"),
+                                                chat=FakeChat(-1103),
+                                                bot=fb, message_id=1),
+                     update_id=105)
+    run(bot.handle_message(upd, FakeContext(fb)))
+    # Currently, edited_message handling might not trigger rewriting
+    # This test documents current behavior - adjust if behavior changes
+    # For now, we just ensure it doesn't crash
+    assert True  # If we get here without exception, the test passes
+
+
+def test_handle_message_channel_post_edited():
+    """Test edited channel posts."""
+    fb = FakeBot()
+    upd = FakeUpdate(channel_post=FakeMessage(text="https://twitter.com/u/status/1",
+                                              user=None,
+                                              chat=FakeChat(-100112234, "channel"),
+                                              bot=fb, message_id=1),
+                     update_id=106)
+    run(bot.handle_message(upd, FakeContext(fb)))
+    # Should not crash
+    assert True
+
+
+def test_handle_message_service_message():
+    """Test handling service messages (like user joins, leaves, etc.)."""
+    fb = FakeBot()
+    # Service message - no text, but might have new_chat_members
+    msg = FakeMessage(text=None,
+                      new_chat_members=[FakeUser(300, "NewUser")],
+                      chat=FakeChat(-1104),
+                      bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=107), FakeContext(fb)))
+    # Should not crash and should not rewrite links (no text)
+    assert not msg.deleted
+    assert not fb.sent
+
+
+def test_handle_message_with_various_entity_types():
+    """Test handling messages with different entity types mixed together."""
+    fb = FakeBot()
+    from telegram import MessageEntity  # This might not be available in fake env
+    # Instead, we'll test with our fake entities
+    url_entity = FakeEntity("url", "https://twitter.com/u/status/1")
+    bold_entity = FakeEntity("bold")  # This would overlap in real Telegram
+
+    # Message with URL and other entities
+    msg = FakeMessage(text="Check this https://twitter.com/u/status_1 out!",  # Note: changed to status_1 to avoid conflict
+                      user=FakeUser(301, "EntityTester"),
+                      chat=FakeChat(-1105),
+                      bot=fb, message_id=1)
+    # Manually set entities for testing
+    msg.parse_entities = lambda types=None: {url_entity: "https://twitter.com/u/status_1"}
+
+    run(bot.handle_message(FakeUpdate(msg, update_id=108), FakeContext(fb)))
+    # Should still detect and rewrite the URL
+    assert msg.deleted
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_handle_message_empty_text():
+    """Test handling messages with empty or whitespace-only text."""
+    fb = FakeBot()
+
+    # Empty string
+    msg1 = FakeMessage(text="", user=FakeUser(302, "EmptyTest"),
+                       chat=FakeChat(-1106), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg1, update_id=109), FakeContext(fb)))
+    assert not msg1.deleted
+    assert not fb.sent
+
+    # Whitespace only
+    msg2 = FakeMessage(text="   \t\n  ", user=FakeUser(303, "WhitespaceTest"),
+                       chat=FakeChat(-1107), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=110), FakeContext(fb)))
+    assert not msg2.deleted
+    assert not fb.sent
+
+
+def test_handle_message_very_long_text():
+    """Test handling extremely long messages."""
+    fb = FakeBot()
+    long_text = "A" * 10000 + " https://twitter.com/u/status/1 " + "B" * 10000
+    msg = FakeMessage(text=long_text, user=FakeUser(304, "LongText"),
+                      chat=FakeChat(-1108), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=111), FakeContext(fb)))
+    # Should still find and rewrite the URL
+    assert msg.deleted
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
+
+
+def test_callback_query_with_malformed_data():
+    """Test handling callback queries with malformed or unexpected data."""
+    fb = FakeBot()
+
+    # Test with completely malformed callback data
+    msg = FakeMessage(text="test", user=FakeUser(305, "CallbackTest"),
+                      chat=FakeChat(-1109), bot=fb, message_id=1)
+    cq = FakeCallbackQuery(data="::::::::::", message=msg, user=FakeUser(305, "CallbackTest"))
+    run(bot.handle_callback(FakeUpdate(callback_query=cq), FakeContext(fb)))
+    # Should not crash - might answer with error or ignore
+
+    # Test with empty callback data
+    cq2 = FakeCallbackQuery(data="", message=msg, user=FakeUser(305, "CallbackTest"))
+    run(bot.handle_callback(FakeUpdate(callback_query=cq2), FakeContext(fb)))
+    # Should not crash
+
+    # Test with very long callback data
+    cq3 = FakeCallbackQuery(data="x" * 1000, message=msg, user=FakeUser(305, "CallbackTest"))
+    run(bot.handle_callback(FakeUpdate(callback_query=cq3), FakeContext(fb)))
+    # Should not crash
+
+
+def test_inline_query_with_special_characters():
+    """Test inline queries with special characters and encoding edge cases."""
+    fb = FakeBot()
+
+    # Test with URL-encoded characters
+    iq1 = FakeInlineQuery("https://twitter.com/u/status/1%20%26%202")  # Contains space and &
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq1), FakeContext(fb)))
+    assert iq1.answered
+
+    # Test with emojis in query (should not affect URL detection)
+    iq2 = FakeInlineQuery("Check 🔥 https://twitter.com/u/status/2 🚀")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq2), FakeContext(fb)))
+    assert iq2.answered
+    assert len(iq2.answered) > 0
+    assert "vxtwitter.com" in iq2.answered[0].input_message_content.message_text
+
+    # Test with null bytes or other problematic characters
+    iq3 = FakeInlineQuery("https://twitter.com/u/status/3\x00test")
+    run(bot.handle_inline_query(FakeUpdate(inline_query=iq3), FakeContext(fb)))
+    # Should handle gracefully
+
+
+def test_cmd_clean_with_network_errors(monkeypatch):
+    """Test /clean command behavior when network requests fail."""
+    fb = FakeBot()
+    bot.init_db()
+    chat = FakeChat(-1110)
+
+    # Mock network failure in URL expansion
+    def mock_head_failure(*args, **kwargs):
+        raise ConnectionError("Network is down")
+
+    def mock_get_failure(*args, **kwargs):
+        raise ConnectionError("Network is down")
+
+    monkeypatch.setattr("bot._head", mock_head_failure)
+    monkeypatch.setattr("bot._get", mock_get_failure)
+
+    # Test /clean with youtu.be link when network is down
+    msg = FakeMessage(text="/clean https://youtu.be/test123",
+                      user=FakeUser(306, "CleanTest"),
+                      chat=chat, bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=112), FakeContext(fb)))
+    # Should still reply but might not be able to expand
+    assert msg.replies
+    # Even with network failure, basic validation should still work
+
+    # Test /clean with regular URL
+    msg2 = FakeMessage(text="/clean https://twitter.com/u/status/1?s=20",
+                       user=FakeUser(307, "CleanTest2"),
+                       chat=chat, bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=113), FakeContext(fb)))
+    assert msg2.replies
+    # Should still be able to clean tracking params without network
+
+
+def test_cmd_preview_with_network_errors(monkeypatch):
+    """Test /preview command behavior when network requests fail."""
+    fb = FakeBot()
+    bot.init_db()
+    chat = FakeChat(-1111)
+
+    # Mock network failure
+    def mock_head_failure(*args, **kwargs):
+        raise ConnectionError("Network is down")
+
+    monkeypatch.setattr("bot._head", mock_head_failure)
+
+    # Test /preview with youtu.be (should work without network for expansion)
+    msg = FakeMessage(text="/preview https://youtu.be/test123",
+                      user=FakeUser(308, "PreviewTest"),
+                      chat=chat, bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=114), FakeContext(fb)))
+    assert msg.replies
+    # Should still work for youtu.be since it doesn't require network for basic expansion
+
+    # Test /preview with regular URL that would need network for expansion
+    msg2 = FakeMessage(text="/preview https://bit.ly/test",
+                       user=FakeUser(309, "PreviewTest2"),
+                       chat=chat, bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=115), FakeContext(fb)))
+    assert msg2.replies
+    # Should handle gracefully even if network expansion fails
+
+
+def test_rate_limit_boundary_conditions():
+    """Test rate limiting at exact boundary conditions."""
+    fb = FakeBot()
+    cid = -1112
+    user = FakeUser(310, "RateLimitTest")
+    # Set rate limit to exactly 1 per second for testing
+    bot.update_chat_setting(cid, "rate_limit", 1)
+    bot.update_chat_setting(cid, "rate_window", 1)
+
+    # First message should go through
+    msg1 = FakeMessage(text="https://twitter.com/u/status/1", user=user,
+                       chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg1, update_id=116), FakeContext(fb)))
+    assert msg1.deleted
+    assert fb.sent
+
+    # Second message immediately after should be rate limited
+    msg2 = FakeMessage(text="https://twitter.com/u/status/2", user=user,
+                       chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=117), FakeContext(fb)))
+    # Depending on timing, this might or might not be rate limited
+    # At minimum, it should not crash
+
+    # Reset rate limit
+    bot.update_chat_setting(cid, "rate_limit", 5)  # Default
+    bot.update_chat_setting(cid, "rate_window", 30)  # Default
+
+
+def test_deduplication_boundary_conditions():
+    """Test deduplication at exact boundary conditions."""
+    fb = FakeBot()
+    cid = -1113
+    user = FakeUser(311, "DedupTest")
+    # Set dedup window to exactly 1 second
+    bot.update_chat_setting(cid, "dedup_window", 1)
+
+    msg1 = FakeMessage(text="https://twitter.com/u/status/1", user=user,
+                       chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg1, update_id=118), FakeContext(fb)))
+    assert not msg1.deleted  # First should not be deleted
+    assert fb.sent
+
+    # Immediate duplicate should be deleted
+    msg2 = FakeMessage(text="https://twitter.com/u/status/1", user=user,
+                       chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=119), FakeContext(fb)))
+    assert msg2.deleted  # Duplicate should be deleted
+    assert len(fb.sent) == 1  # Still only one sent
+
+    # Reset dedup window
+    bot.update_chat_setting(cid, "dedup_window", 60)  # Default
+
+
+def test_command_parsing_edge_cases():
+    """Test command parsing with various edge cases."""
+    fb = FakeBot(admin=True)
+    cid = -1114
+
+    # Test command with extra spaces
+    msg1 = FakeMessage(text="/platform   twitter   off", user=FakeUser(312, "SpaceTest"),
+                       chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg1, update_id=120), FakeContext(fb)))
+    assert bot.is_platform_disabled(cid, "twitter")
+
+    # Test command with mixed case
+    msg2 = FakeMessage(text="/Platform Twitter On", user=FakeUser(313, "CaseTest"),
+                       chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=121), FakeContext(fb)))
+    assert not bot.is_platform_disabled(cid, "twitter")  # Should be enabled now
+
+    # Test command with extra punctuation
+    msg3 = FakeMessage(text="/platform twitter off!!", user=FakeUser(314, "PunctTest"),
+                       chat=FakeChat(cid), bot=fb, message_id=3)
+    run(bot.handle_message(FakeUpdate(msg3, update_id=122), FakeContext(fb)))
+    # Should still work - "off!!" might not parse correctly, but shouldn't crash
+
+    # Test unknown command
+    msg4 = FakeMessage(text="/unknowncommand", user=FakeUser(315, "UnknownTest"),
+                       chat=FakeChat(cid), bot=fb, message_id=4)
+    run(bot.handle_message(FakeUpdate(msg4, update_id=123), FakeContext(fb)))
+    assert msg4.replies
+    assert "unknown" in msg4.replies[0].text.lower() or "not understood" in msg4.replies[0].text.lower()
+
+
+def test_optout_with_bot_accounts():
+    """Test opting out bot accounts (edge case)."""
+    fb = FakeBot()
+    cid = -1115
+    bot_user = FakeUser(999, "BotAccount", is_bot=True)
+
+    # Opt out a bot user
+    bot.set_user_optout(cid, bot_user.id, True)
+    assert bot.is_user_optout(cid, bot_user.id)
+
+    # Message from opted-out bot should not be rewritten
+    msg = FakeMessage(text="https://twitter.com/u/status/1", user=bot_user,
+                      chat=FakeChat(cid), bot=fb, message_id=1)
+    run(bot.handle_message(FakeUpdate(msg, update_id=124), FakeContext(fb)))
+    assert not msg.deleted  # Should not be rewritten due to optout
+    assert not fb.sent
+
+    # Even if platform is disabled for the bot, optout should still be respected
+    bot.set_platform_enabled(cid, "twitter", False)
+    msg2 = FakeMessage(text="https://twitter.com/u/status/2", user=bot_user,
+                       chat=FakeChat(cid), bot=fb, message_id=2)
+    run(bot.handle_message(FakeUpdate(msg2, update_id=125), FakeContext(fb)))
+    assert not msg2.deleted
+    assert not fb.sent
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

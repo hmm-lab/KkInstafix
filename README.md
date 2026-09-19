@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current version: **1.53.1** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -197,6 +197,19 @@ YouTube `youtu.be/<id>`, `/shorts/<id>` and `/live/<id>` URLs (the latter two on
 - `test_handlers.py` — async handler tests with lightweight fakes (36 tests covering every update handler). Run the whole suite with `pytest`.
 - `tools/check_providers.py` — provider health checker (run from a host with open network).
 - `bot_data.sqlite3` — auto-created SQLite database.
+
+## Pre-commit hooks
+
+This repository includes a pre-commit configuration to help maintain code quality.
+To install and use the pre-commit hooks:
+
+1. Install pre-commit: `pip install pre-commit`
+2. Install the hooks: `pre-commit install`
+3. Now, on each commit, the hooks will run automatically.
+
+You can also run the hooks manually on all files: `pre-commit run --all-files`
+
+See `.pre-commit-config.yaml` for the configured hooks.
 
 ## Data persistence warning
 
