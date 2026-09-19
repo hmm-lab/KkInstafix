@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from collections import OrderedDict, deque
 import typing
-from typing import Optional, Set, Dict, Any, List, Tuple
+from typing import Optional, Set, Dict, Any, List, Tuple, FrozenSet
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
@@ -38,7 +38,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-__version__ = "1.53.0"
+__version__ = "1.53.1"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -61,177 +61,11 @@ DB_FILE = os.path.join(os.environ.get("DATA_DIR", "."), "bot_data.sqlite3")
 _start_time = time.time()
 
 # ── Providers ──────────────────────────────────────────────────────────────────
-PROVIDERS = {
-    "instagram": {
-        "default": "ee",
-        "domains": ["instagram.com"],
-        "options": {
-            "kkclip": "kkclip.com",
-            "kk": "kkinstagram.com",
-            "ez": "instagramez.com",
-            "vx": "vxinstagram.com",
-            "ee": "eeinstagram.com",
-        },
-    },
-    "twitter": {
-        "default": "vx",
-        "domains": ["twitter.com", "x.com"],
-        "options": {
-            "vx": "vxtwitter.com",
-            "fx": "fxtwitter.com",
-            "fixvx": "fixvx.com",
-            "fixupx": "fixupx.com",
-            "ez": "twttrsz.com",
-            "xcancel": "xcancel.com",
-        },
-        # noauth_embed: when one of these keys is chosen, use its value as the
-        # embed provider for Telegram's preview while keeping the link URL as-is.
-        "noauth_embed": {"xcancel": "vx"},
-    },
-    "tiktok": {
-        "default": "tnk",
-        "domains": ["tiktok.com"],
-        "options": {
-            "tnk": "tnktok.com",
-            "vx": "vxtiktok.com",
-            "tik": "tiktxk.com",
-            "tfx": "tnfk.com",
-            "ez": "tktokz.com",
-            "proxitok": "proxitok.pabloferreiro.es",
-        },
-        "noauth_embed": {"proxitok": "tnk"},
-    },
-    "reddit": {
-        "default": "vx",
-        "domains": ["reddit.com"],
-        "options": {
-            "vx": "vxreddit.com",
-            "rx": "rxddit.com",
-            "rxy": "rxyddit.com",
-            "ez": "redditez.com",
-            "redlib": "redlib.org",
-            "libredd": "libredd.it",
-        },
-        "noauth_embed": {"redlib": "vx"},
-    },
-    "facebook": {
-        "default": "ez",
-        "domains": ["facebook.com", "fb.com", "fb.watch"],
-        "options": {
-            "ez": "facebookez.com",
-            "bed": "facebed.com",
-        },
-    },
-    "threads": {
-        "default": "fix",
-        "domains": ["threads.net", "threads.com"],
-        "options": {
-            "fix": "fixthreads.net",
-            "vx": "vxthreads.net",
-        },
-    },
-    "bluesky": {
-        "default": "bskx",
-        "domains": ["bsky.app"],
-        "options": {
-            "bskx": "bskx.app",
-            "bsyy": "bsyy.app",
-            "bskye": "bskye.app",
-            "xbsky": "xbsky.app",
-            "fx": "fxbsky.app",
-            "vx": "vxbsky.app",
-            "cbsky": "cbsky.app",
-        },
-    },
-    "pixiv": {
-        "default": "ph",
-        "domains": ["pixiv.net"],
-        "options": {"ph": "phixiv.net", "pp": "ppxiv.net"},
-    },
-    "tumblr": {
-        "default": "tp",
-        "domains": ["tumblr.com"],
-        "options": {
-            "tp": "tpmblr.com",
-            "txt": "txtumblr.com",
-        },
-    },
-    "bilibili": {
-        "default": "vx",
-        "domains": ["bilibili.com", "b23.tv"],
-        "options": {
-            "vx": "vxbilibili.com",
-            "fx": "fxbilibili.seria.moe",
-        },
-    },
-    "snapchat": {
-        "default": "ez",
-        "domains": ["snapchat.com"],
-        "options": {"ez": "snapchatez.com"},
-    },
-    "spotify": {
-        "default": "fx",
-        "domains": ["open.spotify.com"],
-        "options": {
-            "fx": "fxspotify.com",
-            "fix": "fixspotify.com",
-        },
-    },
-    "twitch": {
-        "default": "fx",
-        "domains": ["twitch.tv", "clips.twitch.tv"],
-        "options": {"fx": "fxtwitch.seria.moe"},
-    },
-    "ifunny": {
-        "default": "ez",
-        "domains": ["ifunny.co"],
-        "options": {"ez": "ifunnyez.co"},
-    },
-    "furaffinity": {
-        "default": "xfa",
-        "domains": ["furaffinity.net"],
-        "options": {
-            "xfa": "xfuraffinity.net",
-            "fxr": "fxraffinity.net",
-        },
-    },
-    "deviantart": {
-        "default": "fix",
-        "domains": ["deviantart.com"],
-        "options": {
-            "fix": "fixdeviantart.com",
-            "fx": "fxdeviantart.com",
-        },
-    },
-    "dribbble": {
-        "default": "tv",
-        "domains": ["dribbble.com"],
-        "options": {"tv": "dribbbletv.com"},
-    },
-    # Kick: clkick.com is the community fixer (kick.com -> clkick.com), covering
-    # streams, clips and VODs. (Not EmbedEZ — EmbedEZ has no Kick support.)
-    "kick": {
-        "default": "cl",
-        "domains": ["kick.com"],
-        "options": {"cl": "clkick.com"},
-    },
-    # Weibo: weiboez.com is EmbedEZ's host but listed "Coming Soon" — so weibo is
-    # in DEFAULT_DISABLED_PLATFORMS and ships OFF until an admin enables it.
-    "weibo": {
-        "default": "ez",
-        "domains": ["weibo.com", "weibo.cn"],
-        "options": {"ez": "weiboez.com"},
-    },
-    # Xiaohongshu (RED): the fixer is a community Cloudflare Worker that rewrites
-    # the xhslink.com share-link host to xhslink.xky.us. It operates on the share
-    # link itself, so we match xhslink.com (kept OUT of SHORT_LINK_DOMAINS so it
-    # isn't expanded first) rather than xiaohongshu.com pages.
-    "xiaohongshu": {
-        "default": "xky",
-        "domains": ["xhslink.com"],
-        "options": {"xky": "xhslink.xky.us"},
-    },
-}
+from providers import (
+    PROVIDERS, PLATFORM_EMOJI, get_provider_domain, get_default_provider,
+    is_valid_provider, get_provider_options, get_provider_domains,
+    get_platforms, get_platform_domains, get_noauth_embed_map
+)
 
 TRACKING = [
     "igsh", "igshid", "utm_source", "utm_medium", "utm_campaign",
@@ -343,7 +177,7 @@ SOUNDCLOUD_TRACKING = {"ref", "in"}  # "si" already in GENERIC_TRACKING; "ref" i
 
 # Pre-built host → extra tracking params map used by strip_generic_tracking.
 # Built once at import; O(1) lookup per call instead of 10 sequential if-blocks.
-HOST_TRACKING_MAP: dict[str, frozenset] = {}
+HOST_TRACKING_MAP: Dict[str, FrozenSet] = {}
 for _h in YOUTUBE_HOSTS:
     HOST_TRACKING_MAP[_h] = YOUTUBE_TRACKING
 for _h in AMAZON_TLDS:
@@ -445,7 +279,7 @@ PLATFORM_EMOJI = {
     "facebook": "📘",
     "threads": "🧵",
     "bluesky": "🔵",
-    "pixiv": "🎨",
+    "piviv": "🎨",
     "tumblr": "📝",
     "bilibili": "📺",
     "snapchat": "👻",
@@ -486,7 +320,7 @@ SAMPLE_URLS = {
     "kick": "https://kick.com/xqc",
     "weibo": "https://weibo.com/rmrb",                         # People's Daily (verified)
     # Best-effort: live landing/share pages — pass a real content URL via /testall.
-    "pixiv": "https://www.pixiv.net/en",
+    "piviv": "https://www.pixiv.net/en",
     "ifunny": "https://ifunny.co/",
     "xiaohongshu": "https://xhslink.com/a/exampleID",          # needs a real RED share link
 }
@@ -512,594 +346,15 @@ WELCOME_TEXT = (
     "Admins: use /menu to configure providers, /help for all commands."
 )
 
-# ── Database ───────────────────────────────────────────────────────────────────
-
-_conn: sqlite3.Connection = None
-
-
-def db_connect() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("PRAGMA synchronous=NORMAL")
-    return _conn
-
-
-def _warm_chat_cache() -> None:
-    conn = db_connect()
-    for row in conn.execute("SELECT * FROM chat_settings").fetchall():
-        cid = row["chat_id"]
-        _known_chats.add(cid)
-        _settings_cache[cid] = dict(row)
-        _providers_cache[cid] = {p: cfg["default"] for p, cfg in PROVIDERS.items()}
-
-
-def _warm_providers_cache() -> None:
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, platform, provider FROM provider_settings").fetchall():
-        cid, plat, prov = row["chat_id"], row["platform"], row["provider"]
-        if cid in _providers_cache and plat in PROVIDERS and prov in PROVIDERS[plat]["options"]:
-            _providers_cache[cid][plat] = prov
-
-
-def _warm_muted_cache() -> None:
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, user_id FROM blocked_users").fetchall():
-        _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
-
-
-def _warm_platform_overrides_cache() -> None:
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, platform, enabled FROM platform_overrides").fetchall():
-        _platform_override_cache.setdefault(row["chat_id"], {})[row["platform"]] = row["enabled"]
-
-
-def _warm_optout_cache():
-    conn = db_connect()
-    for row in conn.execute("SELECT chat_id, user_id FROM optout_users").fetchall():
-        _optout_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
-
-
-def init_db():
-    conn = db_connect()
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS chat_settings (
-            chat_id INTEGER PRIMARY KEY,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            sender_mode TEXT NOT NULL DEFAULT 'first_name',
-            dedup_window INTEGER NOT NULL DEFAULT 60,
-            rate_limit INTEGER NOT NULL DEFAULT 5,
-            rate_window INTEGER NOT NULL DEFAULT 30,
-            ignore_forwards INTEGER NOT NULL DEFAULT 1,
-            provider_fallback INTEGER NOT NULL DEFAULT 1,
-            caption_style TEXT NOT NULL DEFAULT 'reply',
-            text_spam INTEGER NOT NULL DEFAULT 1
-        );
-
-        CREATE TABLE IF NOT EXISTS provider_settings (
-            chat_id INTEGER NOT NULL,
-            platform TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            PRIMARY KEY (chat_id, platform)
-        );
-
-        CREATE TABLE IF NOT EXISTS blocked_users (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, user_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS disabled_platforms (
-            chat_id INTEGER NOT NULL,
-            platform TEXT NOT NULL,
-            PRIMARY KEY (chat_id, platform)
-        );
-
-        CREATE TABLE IF NOT EXISTS platform_overrides (
-            chat_id INTEGER NOT NULL,
-            platform TEXT NOT NULL,
-            enabled INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, platform)
-        );
-
-        CREATE TABLE IF NOT EXISTS optout_users (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, user_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS chat_stats (
-            chat_id INTEGER NOT NULL,
-            platform TEXT NOT NULL,
-            sender_id INTEGER NOT NULL DEFAULT 0,
-            count INTEGER NOT NULL DEFAULT 0,
-            last_ts INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, platform, sender_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS rewritten_messages (
-            chat_id INTEGER NOT NULL,
-            bot_msg_id INTEGER NOT NULL,
-            original_url TEXT NOT NULL,
-            sender_name TEXT,
-            ts INTEGER NOT NULL,
-            PRIMARY KEY (chat_id, bot_msg_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_rewritten_ts ON rewritten_messages(ts);
-        """
-    )
-    _migrate_chat_settings_columns(conn)
-    # Migrate the old disabled_platforms table (v1.49–v1.51) into the newer
-    # platform_overrides model as explicit "disabled" entries. Idempotent.
-    conn.execute(
-        "INSERT OR IGNORE INTO platform_overrides(chat_id, platform, enabled) "
-        "SELECT chat_id, platform, 0 FROM disabled_platforms"
-    )
-    conn.commit()
-    _warm_chat_cache()
-    _warm_providers_cache()
-    _warm_muted_cache()
-    _warm_platform_overrides_cache()
-    _warm_optout_cache()
-
-
-# Canonical column DDL for chat_settings, mirroring the CREATE TABLE above.
-# Used to ADD COLUMN any column missing from a database created by an older
-# version (CREATE TABLE IF NOT EXISTS never alters an existing table). Keep this
-# in lock-step with the CREATE TABLE statement and DEFAULT_CHAT_SETTINGS.
-_CHAT_SETTINGS_COLUMNS = [
-    ("enabled", "INTEGER NOT NULL DEFAULT 1"),
-    ("sender_mode", "TEXT NOT NULL DEFAULT 'first_name'"),
-    ("dedup_window", "INTEGER NOT NULL DEFAULT 60"),
-    ("rate_limit", "INTEGER NOT NULL DEFAULT 5"),
-    ("rate_window", "INTEGER NOT NULL DEFAULT 30"),
-    ("ignore_forwards", "INTEGER NOT NULL DEFAULT 1"),
-    ("provider_fallback", "INTEGER NOT NULL DEFAULT 1"),
-    ("caption_style", "TEXT NOT NULL DEFAULT 'reply'"),
-    ("text_spam", "INTEGER NOT NULL DEFAULT 1"),
-]
-
-
-def _migrate_chat_settings_columns(conn):
-    """Add any chat_settings column missing from an older database.
-
-    An upgrade from a version that predates a setting (e.g. caption_style added
-    in v1.37.0, text_spam earlier) leaves the existing table without that column.
-    Without this, ensure_chat_settings' INSERT — which names every column —
-    raises sqlite3.OperationalError on the first chat interaction.
-    """
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(chat_settings)")}
-    for name, ddl in _CHAT_SETTINGS_COLUMNS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE chat_settings ADD COLUMN {name} {ddl}")
-            logger.info("Migrated chat_settings: added missing column %s", name)
-    conn.commit()
-
-
-def ensure_chat_settings(chat_id):
-    if chat_id in _known_chats:
-        return
-    conn = db_connect()
-    cols = ", ".join(DEFAULT_CHAT_SETTINGS.keys())
-    qs = ", ".join(["?"] * len(DEFAULT_CHAT_SETTINGS))
-    conn.execute(
-        f"INSERT OR IGNORE INTO chat_settings(chat_id, {cols}) VALUES (?, {qs})",
-        [chat_id, *DEFAULT_CHAT_SETTINGS.values()],
-    )
-    conn.commit()
-    _known_chats.add(chat_id)
-    if chat_id not in _providers_cache:
-        _providers_cache[chat_id] = {p: cfg["default"] for p, cfg in PROVIDERS.items()}
-
-
-def get_chat_settings(chat_id):
-    if chat_id in _settings_cache:
-        return _settings_cache[chat_id].copy()
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)).fetchone()
-    # Merge over defaults so a column missing from an older, un-migrated row
-    # falls back to its default rather than producing an incomplete dict that
-    # would KeyError on direct subscript in the handlers.
-    s = DEFAULT_CHAT_SETTINGS.copy()
-    if row:
-        s.update({k: row[k] for k in row.keys()})
-    _settings_cache[chat_id] = s
-    return s.copy()
-
-
-def update_chat_setting(chat_id, key, value):
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
-    conn.commit()
-    if chat_id in _settings_cache:
-        _settings_cache[chat_id][key] = value
-
-
-def update_chat_settings_batch(chat_id, updates: dict):
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    for key, value in updates.items():
-        conn.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (value, chat_id))
-    conn.commit()
-    if chat_id in _settings_cache:
-        _settings_cache[chat_id].update(updates)
-
-
-def get_choice(chat_id, platform):
-    chat_p = _providers_cache.get(chat_id)
-    if chat_p is not None:
-        return chat_p.get(platform, PROVIDERS[platform]["default"])
-    # First access for this chat — ensure row exists then cache all platforms
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT provider FROM provider_settings WHERE chat_id = ? AND platform = ?",
-        (chat_id, platform),
-    ).fetchone()
-    stored = row["provider"] if row else None
-    result = stored if stored and stored in PROVIDERS[platform]["options"] else PROVIDERS[platform]["default"]
-    _providers_cache.setdefault(chat_id, {p: cfg["default"] for p, cfg in PROVIDERS.items()})[platform] = result
-    return result
-
-
-def set_choice(chat_id, platform, provider):
-    conn = db_connect()
-    conn.execute(
-        "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
-        (chat_id, platform, provider),
-    )
-    conn.commit()
-    _providers_cache.setdefault(chat_id, {})[platform] = provider
-
-
-def reset_providers(chat_id):
-    conn = db_connect()
-    conn.execute("DELETE FROM provider_settings WHERE chat_id = ?", (chat_id,))
-    conn.commit()
-    _providers_cache.pop(chat_id, None)
-
-
-def _muted_set(chat_id) -> set:
-    if chat_id not in _muted_cache:
-        conn = db_connect()
-        rows = conn.execute(
-            "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
-        ).fetchall()
-        _muted_cache[chat_id] = {r["user_id"] for r in rows}
-    return _muted_cache[chat_id]
-
-
-def mute_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _muted_set(chat_id).add(user_id)
-
-
-def unmute_user(chat_id, user_id):
-    conn = db_connect()
-    conn.execute(
-        "DELETE FROM blocked_users WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id),
-    )
-    conn.commit()
-    _muted_set(chat_id).discard(user_id)
-
-
-def is_user_muted(chat_id, user_id):
-    return user_id in _muted_set(chat_id)
-
-
-def blocked_user_count(chat_id):
-    return len(_muted_set(chat_id))
-
-
-def _override_map(chat_id) -> dict:
-    """chat_id -> {platform: 1|0} of EXPLICIT admin enable/disable choices."""
-    if chat_id not in _platform_override_cache:
-        conn = db_connect()
-        rows = conn.execute(
-            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
-        ).fetchall()
-        _platform_override_cache[chat_id] = {r["platform"]: r["enabled"] for r in rows}
-    return _platform_override_cache[chat_id]
-
-
-def set_platform_enabled(chat_id, platform, enabled):
-    """Record an explicit enable/disable choice for one platform in a chat.
-
-    Stored as an override so it persists across restarts and wins over the
-    platform's default (most platforms default ON; entries in
-    DEFAULT_DISABLED_PLATFORMS default OFF until their fixer host is live).
-    """
-    val = 1 if enabled else 0
-    conn = db_connect()
-    conn.execute(
-        "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
-        (chat_id, platform, val),
-    )
-    conn.commit()
-    _override_map(chat_id)[platform] = val
-
-
-def is_platform_disabled(chat_id, platform):
-    override = _override_map(chat_id).get(platform)
-    if override is not None:
-        return override == 0
-    return platform in DEFAULT_DISABLED_PLATFORMS
-
-
-def get_disabled_platforms(chat_id) -> set:
-    """Effective set of platforms whose rewriting is currently off in this chat."""
-    return {p for p in PROVIDERS if is_platform_disabled(chat_id, p)}
-
-
-def _optout_set(chat_id: int) -> set:
-    if chat_id not in _optout_cache:
-        conn = db_connect()
-        rows = conn.execute(
-            "SELECT user_id FROM optout_users WHERE chat_id = ?", (chat_id,)
-        ).fetchall()
-        _optout_cache[chat_id] = {r["user_id"] for r in rows}
-    return _optout_cache[chat_id]
-
-
-def set_user_optout(chat_id: int, user_id: int, opted_out: bool) -> None:
-    """Opt a user in or out of having their own links rewritten in a chat."""
-    conn = db_connect()
-    if opted_out:
-        conn.execute(
-            "INSERT OR IGNORE INTO optout_users(chat_id, user_id) VALUES(?, ?)",
-            (chat_id, user_id),
-        )
-        _optout_set(chat_id).add(user_id)
-    else:
-        conn.execute(
-            "DELETE FROM optout_users WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        _optout_set(chat_id).discard(user_id)
-    conn.commit()
-
-
-def is_user_optout(chat_id: int, user_id: int) -> bool:
-    return user_id in _optout_set(chat_id)
-
-
-def cleanup_db() -> None:
-    now = int(time.time())
-    conn = db_connect()
-    conn.execute("DELETE FROM rewritten_messages WHERE ts < ?", (now - 7 * 86400,))
-    conn.commit()
-    # Prune stale in-memory caches
-    cutoff = now - 7200
-    for key in [k for k, ts_list in _rate_mem.items() if not ts_list or ts_list[-1] < cutoff]:
-        del _rate_mem[key]
-    for key in [k for k, v in _recent_mem.items() if v < cutoff]:
-        del _recent_mem[key]
-    # No size-based clear here: seen_recent() already hard-caps _recent_mem at
-    # _RECENT_MEM_HARD_CAP on every insert, so the dict can never reach a higher
-    # threshold by the time this hourly job runs. Age-based pruning above is this
-    # job's contribution.
-    for key in [k for k, (_, exp) in _admin_cache.items() if exp < now]:
-        del _admin_cache[key]
-    if len(_user_names) > 50_000:
-        to_keep = dict(list(_user_names.items())[-10_000:])
-        _user_names.clear()
-        _user_names.update(to_keep)
-
-
-def increment_stat(chat_id, platform, sender_id):
-    now = int(time.time())
-    conn = db_connect()
-    conn.execute(
-        """
-        INSERT INTO chat_stats(chat_id, platform, sender_id, count, last_ts)
-        VALUES(?, ?, ?, 1, ?)
-        ON CONFLICT(chat_id, platform, sender_id) DO UPDATE SET
-            count = count + 1,
-            last_ts = excluded.last_ts
-        """,
-        (chat_id, platform, sender_id, now),
-    )
-    conn.commit()
-
-
-def get_stats(chat_id):
-    conn = db_connect()
-    total = conn.execute(
-        "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?",
-        (chat_id,),
-    ).fetchone()["c"]
-    by_platform = conn.execute(
-        """
-        SELECT platform, SUM(count) AS c FROM chat_stats
-        WHERE chat_id = ?
-        GROUP BY platform ORDER BY c DESC LIMIT 10
-        """,
-        (chat_id,),
-    ).fetchall()
-    by_sender = conn.execute(
-        """
-        SELECT sender_id, SUM(count) AS c FROM chat_stats
-        WHERE chat_id = ? AND sender_id != 0
-        GROUP BY sender_id ORDER BY c DESC LIMIT 5
-        """,
-        (chat_id,),
-    ).fetchall()
-    return total, by_platform, by_sender
-
-
-def store_rewrite(chat_id, bot_msg_id, original_url, sender_name):
-    now = int(time.time())
-    conn = db_connect()
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO rewritten_messages
-        (chat_id, bot_msg_id, original_url, sender_name, ts)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (chat_id, bot_msg_id, original_url, sender_name, now),
-    )
-    conn.commit()
-
-
-def lookup_rewrite(chat_id, bot_msg_id):
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT original_url, sender_name FROM rewritten_messages WHERE chat_id = ? AND bot_msg_id = ?",
-        (chat_id, bot_msg_id),
-    ).fetchone()
-    return (row["original_url"], row["sender_name"]) if row else (None, None)
-
-
-def export_chat_data(chat_id):
-    conn = db_connect()
-    settings_row = conn.execute(
-        "SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)
-    ).fetchone()
-    # Fall back to the default for any key not yet present in the DB row (schema
-    # evolution: new settings added after this chat's row was created).
-    settings = (
-        {k: (settings_row[k] if k in settings_row.keys() else DEFAULT_CHAT_SETTINGS[k])
-         for k in DEFAULT_CHAT_SETTINGS}
-        if settings_row else DEFAULT_CHAT_SETTINGS.copy()
-    )
-    providers = {
-        row["platform"]: row["provider"]
-        for row in conn.execute(
-            "SELECT platform, provider FROM provider_settings WHERE chat_id = ?", (chat_id,)
-        )
-    }
-    muted = [
-        row["user_id"]
-        for row in conn.execute(
-            "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
-        )
-    ]
-    overrides = {
-        row["platform"]: row["enabled"]
-        for row in conn.execute(
-            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
-        )
-    }
-    return {
-        "version": 1,
-        "chat_id": chat_id,
-        "settings": settings,
-        "providers": providers,
-        "muted_users": muted,
-        "platform_overrides": overrides,
-    }
-
-
-def import_chat_data(chat_id, data):
-    if not isinstance(data, dict) or data.get("version") != 1:
-        return False, "unsupported format"
-    source_chat = data.get("chat_id")
-    settings = data.get("settings", {})
-    providers = data.get("providers", {})
-    muted = data.get("muted_users", [])
-    overrides = data.get("platform_overrides", {})
-    # Backward-compat: older backups carried a plain "disabled_platforms" list.
-    if not overrides and isinstance(data.get("disabled_platforms"), list):
-        overrides = {p: 0 for p in data["disabled_platforms"]}
-    ensure_chat_settings(chat_id)
-    conn = db_connect()
-    for key, value in settings.items():
-        if key not in DEFAULT_CHAT_SETTINGS:
-            continue
-        if key in _SETTING_INT_BOOL:
-            if not isinstance(value, int) or value not in (0, 1):
-                continue
-        elif key in _SETTING_INT_BOUNDS:
-            lo, hi = _SETTING_INT_BOUNDS[key]
-            if not isinstance(value, int) or not (lo <= value <= hi):
-                continue
-        elif key in _SETTING_ENUMS:
-            if value not in _SETTING_ENUMS[key]:
-                continue
-        conn.execute(
-            f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",
-            (value, chat_id),
-        )
-    for platform, provider in providers.items():
-        if platform in PROVIDERS and provider in PROVIDERS[platform]["options"]:
-            conn.execute(
-                "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
-                (chat_id, platform, provider),
-            )
-    imported_mutes = 0
-    for user_id in muted:
-        if isinstance(user_id, int):
-            conn.execute(
-                "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
-                (chat_id, user_id),
-            )
-            imported_mutes += 1
-    imported_overrides = 0
-    if isinstance(overrides, dict):
-        for platform, enabled in overrides.items():
-            if platform in PROVIDERS and enabled in (0, 1):
-                conn.execute(
-                    "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
-                    (chat_id, platform, enabled),
-                )
-                imported_overrides += 1
-    conn.commit()
-    # Invalidate in-memory caches so changes take effect immediately
-    _settings_cache.pop(chat_id, None)
-    _providers_cache.pop(chat_id, None)
-    _muted_cache.pop(chat_id, None)
-    _platform_override_cache.pop(chat_id, None)
-    msg = f"imported {len(providers)} providers, {imported_mutes} mutes, {imported_overrides} platform overrides"
-    if source_chat and source_chat != chat_id:
-        msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
-    return True, msg
-
-
-def seen_recent(kind, chat_id, event_key, window):
-    now = time.time()
-    key = (kind, chat_id, event_key)
-    ts = _recent_mem.get(key)
-    if ts and now - ts < window:
-        return True
-    _recent_mem[key] = now
-    # Self-contained safety valve: age-based pruning lives in the hourly
-    # cleanup_db job, but if that never runs, hard-cap memory by clearing
-    # wholesale. O(1) per call; the O(n) clear only fires far above steady state.
-    if len(_recent_mem) > _RECENT_MEM_HARD_CAP:
-        _recent_mem.clear()
-        _recent_mem[key] = now
-    return False
-
-
-_rate_mem: dict = {}  # (chat_id, user_id) -> deque of timestamps
-
-
-def check_rate(chat_id, user_id, limit_count, window):
-    now = time.time()
-    key = (chat_id, user_id)
-    timestamps = _rate_mem.get(key)
-    if timestamps is None:
-        timestamps = deque()
-        _rate_mem[key] = timestamps
-    cutoff = now - window
-    while timestamps and timestamps[0] < cutoff:
-        timestamps.popleft()
-    if len(timestamps) >= limit_count:
-        return False
-    timestamps.append(now)
-    return True
-
+from database import (
+    db_connect, _warm_chat_cache, _warm_providers_cache, _warm_muted_cache,
+    _warm_platform_overrides_cache, _warm_optout_cache, init_db,
+    _migrate_chat_settings_columns, ensure_chat_settings, get_chat_settings,
+    update_chat_setting, update_chat_settings_batch, get_choice, set_choice,
+    reset_providers, _muted_set, mute_user, unmute_user, is_user_muted,
+    DEFAULT_CHAT_SETTINGS, _SETTING_INT_BOOL, _SETTING_INT_BOUNDS,
+    _SETTING_ENUMS, _CHAT_SETTINGS_COLUMNS
+)
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def is_duplicate_update(update_id):
@@ -1132,7 +387,9 @@ def strip_generic_tracking(url: str) -> str:
     parsed = urlparse(url)
     if not parsed.query:
         return url
-    host = parsed.netloc.lower().removeprefix("www.")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
     drop = set(GENERIC_TRACKING)
     host_extra = HOST_TRACKING_MAP.get(host)
     if host_extra:
@@ -1157,7 +414,9 @@ def trim(raw: str) -> Tuple[str, str]:
 
 
 def get_platform(netloc: str, path: str) -> Optional[str]:
-    host = netloc.lower().removeprefix("www.")
+    host = netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
     if host in FIXER_HOSTS:
         return None
     if host in YOUTUBE_WATCH_HOSTS and YOUTUBE_PATH_RE.match(path):
@@ -1199,7 +458,9 @@ async def clean_url_expanded(url: str) -> str:
     unchanged. Mirrors the transformations fix_url applies before platform detection.
     """
     parsed = urlparse(url)
-    host = parsed.netloc.lower().removeprefix("www.")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
     # youtu.be: pure path rewrite, no network (same reason as fix_url avoids HTTP).
     if host == "youtu.be":
         m = YOUTU_BE_PATH_RE.match(parsed.path)
@@ -1215,7 +476,9 @@ async def clean_url_expanded(url: str) -> str:
     if host in SHORT_LINK_DOMAINS:
         url = await expand_short_url(url)
         parsed = urlparse(url)
-        host = parsed.netloc.lower().removeprefix("www.")
+        host = parsed.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
     # Amazon: extract canonical /dp/ASIN path after expansion.
     if host in AMAZON_TLDS:
         m = AMAZON_PATH_RE.search(parsed.path)
@@ -1397,7 +660,9 @@ async def fix_url(raw: str, chat_id: int, chat_settings: Dict[str, Any]) -> Tupl
     url, tail = trim(raw)
     original_url = url  # pre-expansion URL for dedup and non-platform comparison
     parsed = urlparse(url)
-    host = parsed.netloc.lower().removeprefix("www.")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
     # youtu.be is a pure path rewrite to the canonical watch URL — it must never
     # be expanded over HTTP. From a server IP that redirect can land on a Google
     # CAPTCHA page (google.com/sorry/...), so we rewrite the path directly and
@@ -1438,7 +703,9 @@ async def fix_url(raw: str, chat_id: int, chat_settings: Dict[str, Any]) -> Tupl
     ):
         url = await expand_short_url(url)
         parsed = urlparse(url)
-        host = parsed.netloc.lower().removeprefix("www.")
+        host = parsed.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
         # amzn.to expands to a full amazon.* URL — run ASIN extraction now.
         if host in AMAZON_TLDS:
             m = AMAZON_PATH_RE.search(parsed.path)
@@ -2283,7 +1550,7 @@ async def _cmd_platform(msg, parts, context, chat_id):
         )
 
 
-async def _cmd_setsendermode(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+async def _cmd_setsendermode(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     modes = {
         "first_name": "first name (e.g. Mehrab)",
         "username": "@username",
@@ -2304,7 +1571,7 @@ async def _cmd_setsendermode(msg, parts: list[str], context: ContextTypes.DEFAUL
     )
 
 
-async def _cmd_setdedup(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+async def _cmd_setdedup(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) != 2 or not parts[1].isdigit():
         await msg.reply_text(
             "Usage: <code>/setdedup &lt;seconds&gt;</code>\n"
@@ -2322,7 +1589,7 @@ async def _cmd_setdedup(msg, parts: list[str], context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def _cmd_testall(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+async def _cmd_testall(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) < 2:
         await msg.reply_text(
             "Usage: <code>/testall &lt;platform&gt; [url]</code>\n"
@@ -2375,7 +1642,7 @@ async def _cmd_testall(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE
         pass
 
 
-async def _cmd_setratelimit(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+async def _cmd_setratelimit(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
         await msg.reply_text(
             "Usage: <code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code>\n"
@@ -2393,7 +1660,7 @@ async def _cmd_setratelimit(msg, parts: list[str], context: ContextTypes.DEFAULT
 
 
 def _make_toggle_cmd(setting_key: str, on_text: str, off_text: str, usage: str):
-    async def _cmd(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    async def _cmd(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
         value = parse_on_off(parts[1]) if len(parts) == 2 else None
         if value is None:
             await msg.reply_text(usage, parse_mode="HTML")
@@ -2425,7 +1692,7 @@ _cmd_textspam = _make_toggle_cmd(
 )
 
 
-async def _cmd_resetstats(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+async def _cmd_resetstats(msg, parts: List[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     conn = db_connect()
     row = conn.execute(
         "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?", (chat_id,)
@@ -2831,7 +2098,10 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             # Non-platform but changed: tracking stripped or short link expanded.
             # Show the destination domain so users can verify before sending.
-            dest = urlparse(fixed).netloc.lower().removeprefix("www.") or fixed
+            host = urlparse(fixed).netloc.lower()
+            if host.startswith("www."):
+                host = host[4:]
+            dest = host or fixed
             title = f"🧹 Clean link → {dest}"
         results.append(
             InlineQueryResultArticle(
@@ -3137,6 +2407,310 @@ def main() -> None:
         app.run_webhook(**wh_kwargs)
     else:
         app.run_polling(drop_pending_updates=True, allowed_updates=_allowed)
+
+def export_chat_data(chat_id):
+    conn = db_connect()
+    settings_row = conn.execute(
+        "SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,)
+    ).fetchone()
+    # Fall back to the default for any key not yet present in the DB row (schema
+    # evolution: new settings added after this chat's row was created).
+    settings = (
+        {k: (settings_row[k] if k in settings_row.keys() else DEFAULT_CHAT_SETTINGS[k])
+         for k in DEFAULT_CHAT_SETTINGS}
+        if settings_row else DEFAULT_CHAT_SETTINGS.copy()
+    )
+    providers = {
+        row["platform"]: row["provider"]
+        for row in conn.execute(
+            "SELECT platform, provider FROM provider_settings WHERE chat_id = ?", (chat_id,)
+        )
+    }
+    muted = [
+        row["user_id"]
+        for row in conn.execute(
+            "SELECT user_id FROM blocked_users WHERE chat_id = ?", (chat_id,)
+        )
+    ]
+    overrides = {
+        row["platform"]: row["enabled"]
+        for row in conn.execute(
+            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
+        )
+    }
+    return {
+        "version": 1,
+        "chat_id": chat_id,
+        "settings": settings,
+        "providers": providers,
+        "muted_users": muted,
+        "platform_overrides": overrides,
+    }
+
+
+def import_chat_data(chat_id, data):
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return False, "unsupported format"
+    source_chat = data.get("chat_id")
+    settings = data.get("settings", {})
+    providers = data.get("providers", {})
+    muted = data.get("muted_users", [])
+    overrides = data.get("platform_overrides", {})
+    # Backward-compat: older backups carried a plain "disabled_platforms" list.
+    if not overrides and isinstance(data.get("disabled_platforms"), list):
+        overrides = {p: 0 for p in data["disabled_platforms"]}
+    ensure_chat_settings(chat_id)
+    conn = db_connect()
+    for key, value in settings.items():
+        if key not in DEFAULT_CHAT_SETTINGS:
+            continue
+        if key in _SETTING_INT_BOOL:
+            if not isinstance(value, int) or value not in (0, 1):
+                continue
+        elif key in _SETTING_INT_BOUNDS:
+            lo, hi = _SETTING_INT_BOUNDS[key]
+            if not isinstance(value, int) or not (lo <= value <= hi):
+                continue
+        elif key in _SETTING_ENUMS:
+            if value not in _SETTING_ENUMS[key]:
+                continue
+        conn.execute(
+            f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?",
+            (value, chat_id),
+        )
+    for platform, provider in providers.items():
+        if platform in PROVIDERS and provider in PROVIDERS[platform]["options"]:
+            conn.execute(
+                "INSERT OR REPLACE INTO provider_settings(chat_id, platform, provider) VALUES(?, ?, ?)",
+                (chat_id, platform, provider),
+            )
+    imported_mutes = 0
+    for user_id in muted:
+        if isinstance(user_id, int):
+            conn.execute(
+                "INSERT OR IGNORE INTO blocked_users(chat_id, user_id) VALUES(?, ?)",
+                (chat_id, user_id),
+            )
+            imported_mutes += 1
+    imported_overrides = 0
+    if isinstance(overrides, dict):
+        for platform, enabled in overrides.items():
+            if platform in PROVIDERS and enabled in (0, 1):
+                conn.execute(
+                    "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
+                    (chat_id, platform, enabled),
+                )
+                imported_overrides += 1
+    conn.commit()
+    # Invalidate in-memory caches so changes take effect immediately
+    _settings_cache.pop(chat_id, None)
+    _providers_cache.pop(chat_id, None)
+    _muted_cache.pop(chat_id, None)
+    _platform_override_cache.pop(chat_id, None)
+    msg = f"imported {len(providers)} providers, {imported_mutes} mutes, {imported_overrides} platform overrides"
+    if source_chat and source_chat != chat_id:
+        msg += f"\n⚠️ This backup was from a different chat ({source_chat}) — double-check the settings."
+    return True, msg
+
+
+
+def blocked_user_count(chat_id):
+    return len(_muted_set(chat_id))
+
+
+def _override_map(chat_id) -> dict:
+    """chat_id -> {platform: 1|0} of EXPLICIT admin enable/disable choices."""
+    if chat_id not in _platform_override_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT platform, enabled FROM platform_overrides WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _platform_override_cache[chat_id] = {r["platform"]: r["enabled"] for r in rows}
+    return _platform_override_cache[chat_id]
+
+
+def set_platform_enabled(chat_id, platform, enabled):
+    """Record an explicit enable/disable choice for one platform in a chat.
+
+    Stored as an override so it persists across restarts and wins over the
+    platform's default (most platforms default ON; entries in
+    DEFAULT_DISABLED_PLATFORMS default OFF until their fixer host is live).
+    """
+    val = 1 if enabled else 0
+    conn = db_connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO platform_overrides(chat_id, platform, enabled) VALUES(?, ?, ?)",
+        (chat_id, platform, val),
+    )
+    conn.commit()
+    _override_map(chat_id)[platform] = val
+
+
+def is_platform_disabled(chat_id, platform):
+    override = _override_map(chat_id).get(platform)
+    if override is not None:
+        return override == 0
+    return platform in DEFAULT_DISABLED_PLATFORMS
+
+
+def get_disabled_platforms(chat_id) -> set:
+    """Effective set of platforms whose rewriting is currently off in this chat."""
+    return {p for p in PROVIDERS if is_platform_disabled(chat_id, p)}
+
+
+def _optout_set(chat_id: int) -> set:
+    if chat_id not in _optout_cache:
+        conn = db_connect()
+        rows = conn.execute(
+            "SELECT user_id FROM optout_users WHERE chat_id = ?", (chat_id,)
+        ).fetchall()
+        _optout_cache[chat_id] = {r["user_id"] for r in rows}
+    return _optout_cache[chat_id]
+
+
+def set_user_optout(chat_id: int, user_id: int, opted_out: bool) -> None:
+    """Opt a user in or out of having their own links rewritten in a chat."""
+    conn = db_connect()
+    if opted_out:
+        conn.execute(
+            "INSERT OR IGNORE INTO optout_users(chat_id, user_id) VALUES(?, ?)",
+            (chat_id, user_id),
+        )
+        _optout_set(chat_id).add(user_id)
+    else:
+        conn.execute(
+            "DELETE FROM optout_users WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        _optout_set(chat_id).discard(user_id)
+    conn.commit()
+
+
+def is_user_optout(chat_id: int, user_id: int) -> bool:
+    return user_id in _optout_set(chat_id)
+
+
+def cleanup_db() -> None:
+    now = int(time.time())
+    conn = db_connect()
+    conn.execute("DELETE FROM rewritten_messages WHERE ts < ?", (now - 7 * 86400,))
+    conn.commit()
+    # Prune stale in-memory caches
+    cutoff = now - 7200
+    for key in [k for k, ts_list in _rate_mem.items() if not ts_list or ts_list[-1] < cutoff]:
+        del _rate_mem[key]
+    for key in [k for k, v in _recent_mem.items() if v < cutoff]:
+        del _recent_mem[key]
+    # No size-based clear here: seen_recent() already hard-caps _recent_mem at
+    # _RECENT_MEM_HARD_CAP on every insert, so the dict can never reach a higher
+    # threshold by the time this hourly job runs. Age-based pruning above is this
+    # job's contribution.
+    for key in [k for k, (_, exp) in _admin_cache.items() if exp < now]:
+        del _admin_cache[key]
+    if len(_user_names) > 50_000:
+        to_keep = dict(list(_user_names.items())[-10_000:])
+        _user_names.clear()
+        _user_names.update(to_keep)
+
+
+def increment_stat(chat_id, platform, sender_id):
+    now = int(time.time())
+    conn = db_connect()
+    conn.execute(
+        """
+        INSERT INTO chat_stats(chat_id, platform, sender_id, count, last_ts)
+        VALUES(?, ?, ?, 1, ?)
+        ON CONFLICT(chat_id, platform, sender_id) DO UPDATE SET
+            count = count + 1,
+            last_ts = excluded.last_ts
+        """,
+        (chat_id, platform, sender_id, now),
+    )
+    conn.commit()
+
+
+def get_stats(chat_id):
+    conn = db_connect()
+    total = conn.execute(
+        "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()["c"]
+    by_platform = conn.execute(
+        """
+        SELECT platform, SUM(count) AS c FROM chat_stats
+        WHERE chat_id = ?
+        GROUP BY platform ORDER BY c DESC LIMIT 10
+        """,
+        (chat_id,),
+    ).fetchall()
+    by_sender = conn.execute(
+        """
+        SELECT sender_id, SUM(count) AS c FROM chat_stats
+        WHERE chat_id = ? AND sender_id != 0
+        GROUP BY sender_id ORDER BY c DESC LIMIT 5
+        """,
+        (chat_id,),
+    ).fetchall()
+    return total, by_platform, by_sender
+
+
+def store_rewrite(chat_id, bot_msg_id, original_url, sender_name):
+    now = int(time.time())
+    conn = db_connect()
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO rewritten_messages
+        (chat_id, bot_msg_id, original_url, sender_name, ts)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (chat_id, bot_msg_id, original_url, sender_name, now),
+    )
+    conn.commit()
+
+
+def seen_recent(kind, chat_id, event_key, window):
+    now = time.time()
+    key = (kind, chat_id, event_key)
+    ts = _recent_mem.get(key)
+    if ts and now - ts < window:
+        return True
+    _recent_mem[key] = now
+    # Self-contained safety valve: age-based pruning lives in the hourly
+    # cleanup_db job, but if that never runs, hard-cap memory by clearing
+    # wholesale. O(1) per call; the O(n) clear only fires far above steady state.
+    if len(_recent_mem) > _RECENT_MEM_HARD_CAP:
+        _recent_mem.clear()
+        _recent_mem[key] = now
+    return False
+
+
+_rate_mem: dict = {}  # (chat_id, user_id) -> deque of timestamps
+
+
+def check_rate(chat_id, user_id, limit_count, window):
+    now = time.time()
+    key = (chat_id, user_id)
+    timestamps = _rate_mem.get(key)
+    if timestamps is None:
+        timestamps = deque()
+        _rate_mem[key] = timestamps
+    cutoff = now - window
+    while timestamps and timestamps[0] < cutoff:
+        timestamps.popleft()
+    if len(timestamps) >= limit_count:
+        return False
+    timestamps.append(now)
+    return True
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def lookup_rewrite(chat_id, bot_msg_id):
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT original_url, sender_name FROM rewritten_messages WHERE chat_id = ? AND bot_msg_id = ?",
+        (chat_id, bot_msg_id),
+    ).fetchone()
+    return (row["original_url"], row["sender_name"]) if row else (None, None)
 
 
 if __name__ == "__main__":
