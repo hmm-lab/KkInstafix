@@ -496,6 +496,11 @@ ABOUT_TEXT = (
     "My name is Mehrab and I love you Motki 🥰\n\n"
     "This bot fixes social media links so they embed properly in Telegram. "
     "It can also reduce repeated link, text, sticker, and GIF spam in groups.\n\n"
+    "This bot relies on community-maintained alternative frontends (fixers) "
+    "for various social media platforms. Special thanks to the developers "
+    "and maintainers of services like kkclip, vxtwitter, tntok, vxreddit, "
+    "redlib, libredd, and many others who make these privacy-friendly "
+    "frontends available.\n\n"
     "_Made with love by Mehrab_ 💖"
 )
 
