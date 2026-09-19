@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current version: **1.53.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current version: **1.53.1** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 

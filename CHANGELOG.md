@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed `fxfb.seria.moe` from Facebook providers (unreliable hobbyist project)
   - Updated documentation to reflect these changes
 
+## [1.53.1] - 2026-09-19
+
+### Changed
+- **Updated non-working providers based on community submissions:**
+  - Fixed TikTok `tfx` provider host: `tfxktok.com` → `tnfk.com`
+  - Fixed TikTok `ez` provider host: `tiktokez.com` → `tktokz.com`
+  - Fixed Twitter/X `ez` provider host: `twitterez.com` → `twttrsz.com`
+
 ## [1.53.0] - 2026-06-17
 
 ### Changed
