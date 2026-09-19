@@ -128,6 +128,26 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 | weibo | `ez` (weiboez.com) |
 | xiaohongshu | `xky` (xhslink.xky.us) |
 
+## Provider Reliability & Troubleshooting
+
+### Reliability Indicators
+While all listed providers are tested regularly, some have demonstrated particularly strong reliability:
+- **Most Reliable**: `kkclip` (Instagram), `vx` (Twitter/X), `tnk` (TikTok), `vx` (Reddit), `ez` (Facebook)
+- **Privacy-Focused (🌐)**: `xcancel` (Twitter/X), `redlib` & `libredd` (Reddit), `proxitok` (TikTok)
+- **Regional Coverage**: Many services now include regional domains (e.g., `amazon.de`, `ebay.co.uk`) for better global performance
+
+### Common Issues & Solutions
+- **"Preview not showing"**: Try switching providers with `/setprovider <platform> <key>` or use the "🔁 Embed not working?" button
+- **"Link not rewriting"**: Ensure the platform isn't disabled with `/platform <name> on`
+- **"Rate limit errors"**: These protect against abuse; wait a moment or request higher limits from admins
+- **"Bot not responding"**: Check if the bot has been removed from the group or lost permissions
+
+### Provider Selection Tips
+- For best Telegram previews: Use providers marked with 🌐 (no-account frontends) when available
+- For maximum reliability: Stick with the default providers unless experiencing issues
+- For privacy: Always prefer 🌐 marked providers when available
+- For regional content: Some providers offer better performance for specific geographic regions
+
 Notes on the most recently added platforms:
 
 - **Kick** uses `clkick.com`, the community Kick→Discord/Telegram fixer (streams, clips, VODs).
