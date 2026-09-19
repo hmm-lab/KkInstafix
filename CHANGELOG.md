@@ -5,6 +5,15 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.54.0] - 2026-09-19
+
+### Changed
+- **Updated provider configuration based on community feedback:**
+  - Added `libredd.it` as a new Reddit provider option (privacy-friendly frontend)
+  - Removed `fxig.seria.moe` from Instagram providers (unreliable hobbyist project)
+  - Removed `fxfb.seria.moe` from Facebook providers (unreliable hobbyist project)
+  - Updated documentation to reflect these changes
+
 ## [1.53.0] - 2026-06-17
 
 ### Changed

@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import OrderedDict, deque
+import typing
+from typing import Optional, Set, Dict, Any, List, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from telegram import (
@@ -24,6 +26,7 @@ from telegram import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     LinkPreviewOptions,
+    Update,
 )
 from telegram.error import Conflict
 from telegram.ext import (
@@ -32,6 +35,7 @@ from telegram.ext import (
     InlineQueryHandler,
     MessageHandler,
     filters,
+    ContextTypes,
 )
 
 __version__ = "1.53.0"
@@ -67,7 +71,6 @@ PROVIDERS = {
             "ez": "instagramez.com",
             "vx": "vxinstagram.com",
             "ee": "eeinstagram.com",
-            "fxig": "fxig.seria.moe",
         },
     },
     "twitter": {
@@ -107,6 +110,7 @@ PROVIDERS = {
             "rxy": "rxyddit.com",
             "ez": "redditez.com",
             "redlib": "redlib.org",
+            "libredd": "libredd.it",
         },
         "noauth_embed": {"redlib": "vx"},
     },
@@ -115,7 +119,6 @@ PROVIDERS = {
         "domains": ["facebook.com", "fb.com", "fb.watch"],
         "options": {
             "ez": "facebookez.com",
-            "fx": "fxfb.seria.moe",
             "bed": "facebed.com",
         },
     },
@@ -519,7 +522,7 @@ def db_connect() -> sqlite3.Connection:
     return _conn
 
 
-def _warm_chat_cache():
+def _warm_chat_cache() -> None:
     conn = db_connect()
     for row in conn.execute("SELECT * FROM chat_settings").fetchall():
         cid = row["chat_id"]
@@ -528,7 +531,7 @@ def _warm_chat_cache():
         _providers_cache[cid] = {p: cfg["default"] for p, cfg in PROVIDERS.items()}
 
 
-def _warm_providers_cache():
+def _warm_providers_cache() -> None:
     conn = db_connect()
     for row in conn.execute("SELECT chat_id, platform, provider FROM provider_settings").fetchall():
         cid, plat, prov = row["chat_id"], row["platform"], row["provider"]
@@ -536,13 +539,13 @@ def _warm_providers_cache():
             _providers_cache[cid][plat] = prov
 
 
-def _warm_muted_cache():
+def _warm_muted_cache() -> None:
     conn = db_connect()
     for row in conn.execute("SELECT chat_id, user_id FROM blocked_users").fetchall():
         _muted_cache.setdefault(row["chat_id"], set()).add(row["user_id"])
 
 
-def _warm_platform_overrides_cache():
+def _warm_platform_overrides_cache() -> None:
     conn = db_connect()
     for row in conn.execute("SELECT chat_id, platform, enabled FROM platform_overrides").fetchall():
         _platform_override_cache.setdefault(row["chat_id"], {})[row["platform"]] = row["enabled"]
@@ -834,7 +837,7 @@ def get_disabled_platforms(chat_id) -> set:
     return {p for p in PROVIDERS if is_platform_disabled(chat_id, p)}
 
 
-def _optout_set(chat_id) -> set:
+def _optout_set(chat_id: int) -> set:
     if chat_id not in _optout_cache:
         conn = db_connect()
         rows = conn.execute(
@@ -844,7 +847,7 @@ def _optout_set(chat_id) -> set:
     return _optout_cache[chat_id]
 
 
-def set_user_optout(chat_id, user_id, opted_out):
+def set_user_optout(chat_id: int, user_id: int, opted_out: bool) -> None:
     """Opt a user in or out of having their own links rewritten in a chat."""
     conn = db_connect()
     if opted_out:
@@ -862,11 +865,11 @@ def set_user_optout(chat_id, user_id, opted_out):
     conn.commit()
 
 
-def is_user_optout(chat_id, user_id):
+def is_user_optout(chat_id: int, user_id: int) -> bool:
     return user_id in _optout_set(chat_id)
 
 
-def cleanup_db():
+def cleanup_db() -> None:
     now = int(time.time())
     conn = db_connect()
     conn.execute("DELETE FROM rewritten_messages WHERE ts < ?", (now - 7 * 86400,))
@@ -1103,7 +1106,7 @@ def is_duplicate_update(update_id):
     return False
 
 
-def strip_tracking(url, extra=None):
+def strip_tracking(url: str, extra: Optional[Set[str]] = None) -> str:
     drop = _TRACKING_SET if not extra else _TRACKING_SET | extra
     parsed = urlparse(url)
     kept = {
@@ -1117,7 +1120,7 @@ def strip_tracking(url, extra=None):
     )
 
 
-def strip_generic_tracking(url):
+def strip_generic_tracking(url: str) -> str:
     """Remove known tracking params from any URL, preserving everything else
     (path, fragment, and non-tracking query params). On YouTube hosts a few
     extra share params (e.g. ?si=, ?is=) are also dropped."""
@@ -1141,14 +1144,14 @@ def strip_generic_tracking(url):
     )
 
 
-def trim(raw):
+def trim(raw: str) -> Tuple[str, str]:
     url, tail = raw, ""
     while url and url[-1] in TAIL:
         tail, url = url[-1] + tail, url[:-1]
     return url, tail
 
 
-def get_platform(netloc, path):
+def get_platform(netloc: str, path: str) -> Optional[str]:
     host = netloc.lower().removeprefix("www.")
     if host in FIXER_HOSTS:
         return None
@@ -1161,14 +1164,14 @@ def get_platform(netloc, path):
     return None
 
 
-def apply_provider(url, platform, provider_key):
+def apply_provider(url: str, platform: str, provider_key: str) -> str:
     host = PROVIDERS[platform]["options"][provider_key]
     parsed = urlparse(url)
     fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, parsed.fragment))
     return strip_tracking(fixed, extra=PLATFORM_TRACKING.get(platform))
 
 
-def clean_url(url):
+def clean_url(url: str) -> str:
     """Strip tracking from a single URL WITHOUT swapping to a fixer host.
 
     For a known platform this removes the same params a rewrite would (the global
@@ -1183,7 +1186,7 @@ def clean_url(url):
     return strip_generic_tracking(url)
 
 
-async def clean_url_expanded(url):
+async def clean_url_expanded(url: str) -> str:
     """Like clean_url but expands short links and applies path rewrites first.
 
     Powers /clean so that e.g. `/clean bit.ly/xyz` or `/clean youtu.be/abc?si=x`
@@ -1217,15 +1220,31 @@ async def clean_url_expanded(url):
 
 
 def _check_url_sync(url: str) -> bool:
+    if not url or not isinstance(url, str):
+        logger.debug("Invalid URL provided to _check_url_sync: %r", url)
+        return False
+
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=4):
-            return True
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            # Successful response (2xx or 3xx)
+            return 200 <= resp.status < 400
     except urllib.error.HTTPError as e:
         # 4xx means the server responded normally (content may be restricted);
         # 5xx means the provider itself is broken/overloaded → treat as down.
+        logger.debug("HTTP error checking URL %s: %s %s", url, e.code, e.reason)
         return e.code < 500
-    except Exception:
+    except urllib.error.URLError as e:
+        # Network-related errors (DNS failure, connection refused, timeout, etc.)
+        logger.debug("URL error checking URL %s: %s", url, str(e.reason))
+        return False
+    except ValueError as e:
+        # Invalid URL format
+        logger.debug("ValueError checking URL %s: %s", url, str(e))
+        return False
+    except Exception as e:
+        # Unexpected errors - log them but don't crash
+        logger.debug("Unexpected error checking URL %s: %s", url, str(e))
         return False
 
 
@@ -1240,6 +1259,10 @@ _RESTRICTION_PHRASES = [
 
 def _is_restricted_sync(url: str) -> bool:
     """Return True if the URL is inaccessible: 4xx HTTP error or known restriction phrases."""
+    if not url or not isinstance(url, str):
+        logger.debug("Invalid URL provided to _is_restricted_sync: %r", url)
+        return False
+
     try:
         # Use Telegram's real preview-crawler UA so we test exactly what
         # Telegram sees; embed providers whitelist this UA.
@@ -1248,16 +1271,28 @@ def _is_restricted_sync(url: str) -> bool:
             headers={"User-Agent": "TelegramBot (like TwitterBot)"},
         )
         with urllib.request.urlopen(req, timeout=6) as resp:
-            chunk = resp.read(3072).decode("utf-8", errors="ignore").lower()
+            # Read more content to catch restriction messages that might appear later
+            chunk = resp.read(8192).decode("utf-8", errors="ignore").lower()
         return any(phrase in chunk for phrase in _RESTRICTION_PHRASES)
     except urllib.error.HTTPError as e:
         # 4xx = content inaccessible (private, age-gated, blocked by provider)
+        logger.debug("HTTP error checking restriction for URL %s: %s %s", url, e.code, e.reason)
         return 400 <= e.code < 500
-    except Exception:
+    except urllib.error.URLError as e:
+        # Network-related errors (DNS failure, connection refused, timeout, etc.)
+        logger.debug("URL error checking restriction for URL %s: %s", url, str(e.reason))
+        return False
+    except ValueError as e:
+        # Invalid URL format
+        logger.debug("ValueError checking restriction for URL %s: %s", url, str(e))
+        return False
+    except Exception as e:
+        # Unexpected errors - log them but don't crash
+        logger.debug("Unexpected error checking restriction for URL %s: %s", url, str(e))
         return False
 
 
-async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str, original_text: str, preview=None, reply_markup=None):
+async def _warn_if_restricted(context: ContextTypes.DEFAULT_TYPE, chat_id: int, msg_id: int, check_url: str, original_text: str, preview: Optional[LinkPreviewOptions] = None, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
     """Background task: if the fixed URL is inaccessible, edit the message to explain."""
     loop = asyncio.get_running_loop()
     restricted = await loop.run_in_executor(None, _is_restricted_sync, check_url)
@@ -1279,17 +1314,33 @@ async def _warn_if_restricted(context, chat_id: int, msg_id: int, check_url: str
 
 
 def _expand_short_url_sync(url: str) -> str:
+    if not url or not isinstance(url, str):
+        logger.debug("Invalid URL provided to _expand_short_url_sync: %r", url)
+        return url
+
     with _expand_cache_lock:
         if url in _expand_cache:
             _expand_cache.move_to_end(url)
             return _expand_cache[url]
+
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             result = resp.url
     except urllib.error.HTTPError as e:
+        # HTTP error occurred - try to get the redirect URL if available
+        logger.debug("HTTP error expanding short URL %s: %s %s", url, e.code, e.reason)
         result = getattr(e, "url", None) or url
+    except urllib.error.URLError as e:
+        # URL-related errors (DNS, connection, timeout)
+        logger.debug("URL error expanding short URL %s: %s", url, str(e.reason))
+        result = url
+    except ValueError as e:
+        # Invalid URL format
+        logger.debug("ValueError expanding short URL %s: %s", url, str(e))
+        result = url
     except Exception as exc:
+        # Unexpected errors
         logger.debug("Short-link expansion failed for %s: %s", url, exc)
         result = url
     with _expand_cache_lock:
@@ -1316,7 +1367,7 @@ async def provider_alive(url: str) -> bool:
     return result
 
 
-async def choose_provider_url(original_url, platform, preferred_key, allow_fallback=True):
+async def choose_provider_url(original_url: str, platform: str, preferred_key: str, allow_fallback: bool = True) -> Tuple[str, str]:
     options = PROVIDERS[platform]["options"]
     chosen_url = apply_provider(original_url, platform, preferred_key)
     if not allow_fallback or len(options) == 1:
@@ -1337,7 +1388,7 @@ INSTAGRAM_CONTENT_RE = re.compile(
 )
 
 
-async def fix_url(raw, chat_id, chat_settings):
+async def fix_url(raw: str, chat_id: int, chat_settings: Dict[str, Any]) -> Tuple[str, Optional[str], str, str]:
     url, tail = trim(raw)
     original_url = url  # pre-expansion URL for dedup and non-platform comparison
     parsed = urlparse(url)
@@ -1442,7 +1493,7 @@ async def fix_url(raw, chat_id, chat_settings):
     return fixed + tail, platform, url, fixed
 
 
-def build_fixed_for_key(original_url, platform, key):
+def build_fixed_for_key(original_url: str, platform: str, key: str) -> Tuple[str, str]:
     """Force a specific provider for an original URL, no health check.
 
     Returns (link_url, preview_url). For no-account frontends the clickable
@@ -1459,7 +1510,7 @@ def build_fixed_for_key(original_url, platform, key):
     return link, preview
 
 
-async def process_text(text, chat_id, chat_settings):
+async def process_text(text: str, chat_id: int, chat_settings: Dict[str, Any]) -> Tuple[str, bool, Optional[str], Optional[str], Optional[str], int, List[str], Optional[str]]:
     urls = URL_RE.findall(text)
     changed = False
     fixed_count = 0
@@ -1503,7 +1554,7 @@ async def process_text(text, chat_id, chat_settings):
     return new_text, changed, first_fixed_url, first_platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url
 
 
-def sender_label(user, mode):
+def sender_label(user: Optional[Any], mode: str) -> Optional[str]:
     if not user or mode == "none":
         return None
     if mode == "username" and user.username:
@@ -1514,7 +1565,7 @@ def sender_label(user, mode):
     return user.first_name or user.username or "User"
 
 
-def format_repost_text(user, mode, platform=None, url=None):
+def format_repost_text(user: Optional[Any], mode: str, platform: Optional[str] = None, url: Optional[str] = None) -> str:
     label = sender_label(user, mode)
     emoji = PLATFORM_EMOJI.get(platform, "") if platform else ""
     if label and url:
@@ -1527,7 +1578,7 @@ def format_repost_text(user, mode, platform=None, url=None):
     return _html.escape(url) if url else ""
 
 
-def providers_text(chat_id):
+def providers_text(chat_id: int) -> str:
     lines = ["<b>Providers for this chat</b>", ""]
     has_noauth = False
     for plat in sorted(PROVIDERS):
@@ -1554,7 +1605,7 @@ def providers_text(chat_id):
     return "\n".join(lines)
 
 
-def status_text(chat_id):
+def status_text(chat_id: int) -> str:
     s = get_chat_settings(chat_id)
     on_off = lambda v: "✅ on" if v else "❌ off"
     mode_labels = {
@@ -1586,7 +1637,7 @@ def status_text(chat_id):
     ])
 
 
-def _build_platform_keyboard(chat_id):
+def _build_platform_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     rows = []
     platforms = sorted(PROVIDERS)
     for i in range(0, len(platforms), 2):
@@ -2227,7 +2278,7 @@ async def _cmd_platform(msg, parts, context, chat_id):
         )
 
 
-async def _cmd_setsendermode(msg, parts, context, chat_id):
+async def _cmd_setsendermode(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     modes = {
         "first_name": "first name (e.g. Mehrab)",
         "username": "@username",
@@ -2248,7 +2299,7 @@ async def _cmd_setsendermode(msg, parts, context, chat_id):
     )
 
 
-async def _cmd_setdedup(msg, parts, context, chat_id):
+async def _cmd_setdedup(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) != 2 or not parts[1].isdigit():
         await msg.reply_text(
             "Usage: <code>/setdedup &lt;seconds&gt;</code>\n"
@@ -2266,7 +2317,7 @@ async def _cmd_setdedup(msg, parts, context, chat_id):
     )
 
 
-async def _cmd_testall(msg, parts, context, chat_id):
+async def _cmd_testall(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) < 2:
         await msg.reply_text(
             "Usage: <code>/testall &lt;platform&gt; [url]</code>\n"
@@ -2319,7 +2370,7 @@ async def _cmd_testall(msg, parts, context, chat_id):
         pass
 
 
-async def _cmd_setratelimit(msg, parts, context, chat_id):
+async def _cmd_setratelimit(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
         await msg.reply_text(
             "Usage: <code>/setratelimit &lt;count&gt; &lt;seconds&gt;</code>\n"
@@ -2336,8 +2387,8 @@ async def _cmd_setratelimit(msg, parts, context, chat_id):
     )
 
 
-def _make_toggle_cmd(setting_key, on_text, off_text, usage):
-    async def _cmd(msg, parts, context, chat_id):
+def _make_toggle_cmd(setting_key: str, on_text: str, off_text: str, usage: str):
+    async def _cmd(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
         value = parse_on_off(parts[1]) if len(parts) == 2 else None
         if value is None:
             await msg.reply_text(usage, parse_mode="HTML")
@@ -2369,7 +2420,7 @@ _cmd_textspam = _make_toggle_cmd(
 )
 
 
-async def _cmd_resetstats(msg, parts, context, chat_id):
+async def _cmd_resetstats(msg, parts: list[str], context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     conn = db_connect()
     row = conn.execute(
         "SELECT COALESCE(SUM(count), 0) AS c FROM chat_stats WHERE chat_id = ?", (chat_id,)
@@ -2427,7 +2478,7 @@ ADMIN_CMDS = {
 }
 
 # ── Main text handler ──────────────────────────────────────────────────────────
-async def handle_message(update, context):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg or not msg.text:
         return
@@ -2555,7 +2606,7 @@ async def handle_message(update, context):
         )
 
 # ── Caption handler ────────────────────────────────────────────────────────────
-async def handle_caption(update, context):
+async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg or not msg.caption:
         return
@@ -2609,7 +2660,7 @@ async def handle_caption(update, context):
         logger.exception("Caption reply failed in chat %s", chat_id)
 
 # ── Edit handler ──────────────────────────────────────────────────────────────
-async def handle_edit(update, context):
+async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.edited_message
     if not msg or not msg.text:
         return
@@ -2663,7 +2714,7 @@ async def handle_edit(update, context):
         logger.exception("Edit handler reply failed in chat %s", chat_id)
 
 # ── Media spam handler ─────────────────────────────────────────────────────────
-async def handle_media(update, context):
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg:
         return
@@ -2693,7 +2744,7 @@ async def handle_media(update, context):
         await safe_delete(msg, "duplicate-media")
 
 # ── Channel post handler ──────────────────────────────────────────────────────
-async def handle_channel_post(update, context):
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.channel_post
     if not msg or not msg.text:
         return
@@ -2736,7 +2787,7 @@ async def handle_channel_post(update, context):
         logger.exception("Channel post reply failed in chat %s", chat_id)
 
 # ── Document import handler ────────────────────────────────────────────────────
-async def handle_import_document(update, context):
+async def handle_import_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg or not msg.document or not msg.caption:
         return
@@ -2752,7 +2803,7 @@ async def handle_import_document(update, context):
 
 
 # ── Inline query handler ───────────────────────────────────────────────────────
-async def handle_inline_query(update, context):
+async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.inline_query
     if not query:
         return
@@ -2811,7 +2862,7 @@ async def handle_inline_query(update, context):
     await query.answer(results, cache_time=10, is_personal=True)
 
 
-async def _cycle_provider(cq, data, chat_id):
+async def _cycle_provider(cq, data: str, chat_id: int) -> None:
     # Answer immediately so the loading spinner clears regardless of what happens next.
     # (Telegram only allows one answer per callback query.)
     answered = False
@@ -2914,7 +2965,7 @@ async def _cycle_provider(cq, data, chat_id):
 
 
 # ── Callback query handler (inline menu) ───────────────────────────────────────
-async def handle_callback(update, context):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cq = update.callback_query
     if not cq or not cq.data:
         return
@@ -2995,7 +3046,7 @@ async def handle_callback(update, context):
 
 
 # ── Welcome handler ────────────────────────────────────────────────────────────
-async def handle_new_members(update, context):
+async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg or not msg.new_chat_members:
         return
@@ -3006,19 +3057,19 @@ async def handle_new_members(update, context):
         logger.exception("Failed sending welcome text in chat %s", msg.chat_id if msg else "?")
 
 # ── Boot ───────────────────────────────────────────────────────────────────────
-def validate_env():
+def validate_env() -> None:
     if not TOKEN:
         raise SystemExit(
             "ERROR: BOT_TOKEN environment variable is not set. Add it in Railway variables."
         )
 
 
-async def periodic_cleanup(context):
+async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE) -> None:
     cleanup_db()
     logger.info("Periodic DB cleanup done.")
 
 
-async def on_startup(app):
+async def on_startup(app: Application) -> None:
     init_db()
     cleanup_db()
     if not WEBHOOK_URL:
@@ -3041,14 +3092,14 @@ async def on_startup(app):
     logger.info("Bot started in %s mode. Database ready.", mode)
 
 
-async def handle_error(update, context):
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if isinstance(context.error, Conflict):
         logger.warning("Conflict: another instance may be running. Ignoring.")
         return
     logger.exception("Unhandled exception for update %s", update, exc_info=context.error)
 
 
-def main():
+def main() -> None:
     validate_env()
     app = Application.builder().token(TOKEN).post_init(on_startup).build()
     app.add_error_handler(handle_error)

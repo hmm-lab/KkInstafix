@@ -107,11 +107,11 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 
 | Platform | Provider keys |
 |---|---|
-| instagram | `kkclip`, `kk`, `ee`, `vx`, `ez`, `fxig` |
+| instagram | `kkclip`, `kk`, `ee`, `vx`, `ez` |
 | twitter | `vx`, `fx`, `fixvx`, `fixupx`, `ez`, `xcancel` 🌐 |
 | tiktok | `tnk`, `vx`, `tik`, `tfx`, `ez`, `proxitok` 🌐 |
 | reddit | `vx`, `rx`, `rxy`, `ez`, `redlib` 🌐 |
-| facebook | `ez`, `fx`, `bed` |
+| facebook | `ez`, `bed` |
 | threads | `fix`, `vx` |
 | bluesky | `bskx`, `bsyy`, `bskye`, `xbsky`, `fx`, `vx`, `cbsky` |
 | pixiv | `ph`, `pp` |
