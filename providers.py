@@ -213,7 +213,7 @@ PROVIDERS = {
 
     "pinterest": {
         "default": "vx",
-        "domains": ["vxtin.com", "pin.ez"],
+        "domains": ["pinterest.com"],
         "options": {
             "vx": "vxtin.com",
             "ez": "pin.ez",

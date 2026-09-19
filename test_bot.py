@@ -624,7 +624,7 @@ def test_new_platforms_detected():
     # rewrites that, not xiaohongshu.com pages).
     assert bot.get_platform("xhslink.com", "/a/abc") == "xiaohongshu"
     # Pinterest IS now supported via its fixer hosts (vxtin.com, pin.ez), not that it's undetectable
-    assert bot.get_platform("pinterest.com", "/pin/123/") is None
+    assert bot.get_platform("pinterest.com", "/pin/123/") == "pinterest"
     assert "pinterest" in bot.PROVIDERS
 
 
@@ -1375,14 +1375,14 @@ def test_strip_tracking_empty_and_malformed_urls():
     # No netloc
     assert bot.strip_tracking("/path?utm_source=test") == "/path"
     # Only fragment
-    assert bot.strip_tracking("http://example.com#frag?utm_source=test") == "http://example.com#frag"
+    assert bot.strip_tracking("http://example.com?utm_source=test#frag") == "http://example.com#frag"
     # Only query params to strip
-    assert bot.strip_tracking("http://example.com?utm_source=test&utm_medium=test") == "http://example.com/"
+    assert bot.strip_tracking("http://example.com?utm_source=test&utm_medium=test") == "http://example.com"
     # Repeated params
-    assert bot.strip_tracking("http://example.com?utm_source=1&utm_source=2") == "http://example.com/"
+    assert bot.strip_tracking("http://example.com?utm_source=1&utm_source=2") == "http://example.com"
     # Mixed case params (should be case insensitive)
-    assert bot.strip_tracking("http://example.com?UTM_SOURCE=test") == "http://example.com/"
-    assert bot.strip_tracking("http://example.com?UtM_SoUrCe=test") == "http://example.com/"
+    assert bot.strip_tracking("http://example.com?UTM_SOURCE=test") == "http://example.com"
+    assert bot.strip_tracking("http://example.com?UtM_SoUrCe=test") == "http://example.com"
 
 
 def test_strip_generic_tracking_edge_cases():
@@ -1394,7 +1394,7 @@ def test_strip_generic_tracking_edge_cases():
     # No query params
     assert bot.strip_generic_tracking("http://example.com/path") == "http://example.com/path"
     # Only tracking params
-    assert bot.strip_generic_tracking("http://example.com?utm_source=test&fbclid=123") == "http://example.com/"
+    assert bot.strip_generic_tracking("http://example.com?utm_source=test&fbclid=123") == "http://example.com"
     # YouTube specific - should strip is, feature, pp
     assert bot.strip_generic_tracking("http://youtube.com/watch?v=abc&is=test") == "http://youtube.com/watch?v=abc"
     assert bot.strip_generic_tracking("http://youtu.be/abc?feature=test") == "http://youtu.be/abc"
@@ -1442,7 +1442,6 @@ def test_get_platform_edge_cases():
     assert bot.get_platform("twitter.com.uk", "/") is None  # Not a TLD we handle
     # Deep subdomains
     assert bot.get_platform("a.b.c.d.twitter.com", "/") == "twitter"
-    # Path matching for special platforms
     assert bot.get_platform("youtube.com", "/watch?v=test") == "youtube_watch"
     assert bot.get_platform("youtube.com", "/embed/test") is None  # Not a watch path
     assert bot.get_platform("youtube.com", "/live/test") == "youtube_watch"

@@ -197,11 +197,12 @@ HOST_TRACKING_MAP["soundcloud.com"] = SOUNDCLOUD_TRACKING
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
 # which previews more reliably than the original path form.
-YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]+)", re.IGNORECASE)
+# Also matches /watch?v=<id> to extract the video ID from query parameter.
+YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([^/?#]+)|^/watch\?v=([^&]+)", re.IGNORECASE)
 YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com", "music.youtube.com"}
 # youtu.be/<id> is a pure path rewrite to the canonical watch URL — no network.
 YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
-TAIL = ".,!?)]>}"
+TAIL = ".,!?);:]>} "
 FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
 # Platforms that default to OFF (no auto-rewrite) until their fixer host is
 # confirmed live — e.g. EmbedEZ lists weiboez.com as "Coming Soon". Admins can
@@ -372,8 +373,17 @@ def is_duplicate_update(update_id: int) -> bool:
 
 
 def strip_tracking(url: str, extra: Optional[Set[str]] = None) -> str:
-    drop = _TRACKING_SET if not extra else _TRACKING_SET | extra
+    # Handle edge case: if there's no path/query/fragment, return original
+    # (e.g., whitespace-only strings)
+    if not url:
+        return url
+
     parsed = urlparse(url)
+    # If no path, query, or fragment, there's nothing to process
+    if not parsed.path and not parsed.query and not parsed.fragment:
+        return url
+
+    drop = _TRACKING_SET if not extra else _TRACKING_SET | extra
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
@@ -419,6 +429,8 @@ def trim(raw: str) -> Tuple[str, str]:
 
 
 def get_platform(netloc: str, path: str) -> Optional[str]:
+    if netloc is None:
+        return None
     host = netloc.lower()
     if host.startswith("www."):
         host = host[4:]
@@ -434,6 +446,10 @@ def get_platform(netloc: str, path: str) -> Optional[str]:
 
 
 def apply_provider(url: str, platform: str, provider_key: str) -> str:
+    # Return original URL if platform or provider_key is not supported
+    if platform not in PROVIDERS or provider_key not in PROVIDERS[platform]["options"]:
+        return url
+
     host = PROVIDERS[platform]["options"][provider_key]
     parsed = urlparse(url)
     fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, parsed.fragment))
