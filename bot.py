@@ -293,6 +293,8 @@ PLATFORM_EMOJI = {
     "kick": "🟢",
     "weibo": "🔴",
     "xiaohongshu": "📕",
+    "linkedin": "💼",
+    "pinterest": "📌",
 }
 
 # Real, live sample URLs used by /testall and tools/check_providers.py to
@@ -324,6 +326,8 @@ SAMPLE_URLS = {
     "piviv": "https://www.pixiv.net/en",
     "ifunny": "https://ifunny.co/",
     "xiaohongshu": "https://xhslink.com/a/exampleID",          # needs a real RED share link
+    "linkedin": "https://www.linkedin.com/in/username/",
+    "pinterest": "https://www.pinterest.com/pin/123456789/",
 }
 
 ABOUT_TEXT = (

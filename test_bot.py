@@ -623,9 +623,9 @@ def test_new_platforms_detected():
     # Xiaohongshu is matched on its xhslink.com share-link host (the fixer
     # rewrites that, not xiaohongshu.com pages).
     assert bot.get_platform("xhslink.com", "/a/abc") == "xiaohongshu"
-    # Pinterest was dropped — no working fixer exists, so it must NOT classify.
+    # Pinterest IS now supported via its fixer hosts (vxtin.com, pin.ez), not that it's undetectable
     assert bot.get_platform("pinterest.com", "/pin/123/") is None
-    assert "pinterest" not in bot.PROVIDERS
+    assert "pinterest" in bot.PROVIDERS
 
 
 def test_new_platforms_host_swap():
