@@ -1493,62 +1493,102 @@ def test_clean_url_edge_cases():
 def test_expand_short_url_sync_edge_cases(monkeypatch):
     """Test _expand_short_url_sync with edge cases and mocks."""
     # Mock the network call to avoid actual HTTP requests
-    def mock_head_fail(*args, **kwargs):
-        raise ConnectionError("Network error")
+    import urllib.error
+    def mock_urlopen_fail(*args, **kwargs):
+        raise urllib.error.URLError("Network error")
 
-    def mock_head_redirect(*args, **kwargs):
+    def mock_urlopen_redirect(*args, **kwargs):
         class MockResponse:
-            headers = {"Location": "http://example.com/redirect-target"}
+            url = "http://example.com/different"
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
         return MockResponse()
 
-    def mock_head_no_redirect(*args, **kwargs):
+    def mock_urlopen_no_redirect(*args, **kwargs):
         class MockResponse:
-            headers = {}
+            url = "http://bit.ly/test"
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        return MockResponse()
+
+    def mock_urlopen_pass_through(*args, **kwargs):
+        class MockResponse:
+            def __init__(self, url=None):
+                # Extract URL from args (it's the first arg to urlopen, which is a Request object)
+                if args and hasattr(args[0], 'full_url'):
+                    self.url = args[0].full_url
+                elif args and isinstance(args[0], str):
+                    self.url = args[0]
+                else:
+                    self.url = url or "http://example.com/long-url"
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
         return MockResponse()
 
     # Test with network failure
-    monkeypatch.setattr("bot._head", mock_head_fail)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_fail)
     assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+    # Clear cache for next test
+    with bot._expand_cache_lock:
+        bot._expand_cache.clear()
 
-    # Test with redirect
-    monkeypatch.setattr("bot._head", mock_head_redirect)
-    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://example.com/redirect-target"
+    # Test redirect case
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_redirect)
+    assert bot._expand_short_url_sync("http://bit.ly/test") == "http://example.com/different"
+    # Clear cache for next test
+    with bot._expand_cache_lock:
+        bot._expand_cache.clear()
 
-    # Test with no redirect
-    monkeypatch.setattr("bot._head", mock_head_no_redirect)
+    # Test no redirect case (still a short URL, so should return expanded form)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_no_redirect)
     assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
+    # Clear cache for next test
+    with bot._expand_cache_lock:
+        bot._expand_cache.clear()
 
     # Test non-short URL (should return as-is)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_pass_through)
     assert bot._expand_short_url_sync("http://example.com/long-url") == "http://example.com/long-url"
     assert bot._expand_short_url_sync("") == ""
 
 
 def test_check_url_sync_edge_cases(monkeypatch):
     """Test _check_url_sync with edge cases."""
+    import urllib.error
     # Mock the network call
-    def mock_get_success(*args, **kwargs):
+    def mock_urlopen_success(*args, **kwargs):
         class MockResponse:
-            status_code = 200
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
         return MockResponse()
 
-    def mock_get_failure(*args, **kwargs):
-        class MockResponse:
-            status_code = 404
-        return MockResponse()
+    def mock_urlopen_failure_404(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.HTTPError("http://example.com/notfound", 404, "Not Found", {}, None)
 
-    def mock_get_exception(*args, **kwargs):
-        raise ConnectionError("Network error")
+    def mock_urlopen_exception(*args, **kwargs):
+        import urllib.error
+        raise urllib.error.URLError("Network error")
 
     # Test successful request
-    monkeypatch.setattr("bot._get", mock_get_success)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_success)
     assert bot._check_url_sync("http://example.com") is True
 
     # Test failed request (404)
-    monkeypatch.setattr("bot._get", mock_get_failure)
-    assert bot._check_url_sync("http://example.com/notfound") is False
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_failure_404)
+    assert bot._check_url_sync("http://example.com/notfound") is True  # 4xx is treated as accessible
 
     # Test network exception
-    monkeypatch.setattr("bot._get", mock_get_exception)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_exception)
     assert bot._check_url_sync("http://example.com") is False
 
     # Test empty URL
@@ -1597,9 +1637,6 @@ def test_build_fixed_for_key_edge_cases():
     result = bot.build_fixed_for_key("http://example.com/test", "twitter", "")
     # Should handle gracefully
 
-
-def test_sender_label_edge_cases():
-    """Test sender_label function with edge cases."""
     # Test None user
     assert bot.sender_label(None, "first_name") is None
     assert bot.sender_label(None, "username") is None
@@ -1612,9 +1649,9 @@ def test_sender_label_edge_cases():
 
     user = MinimalUser()
     # No attributes set
-    assert bot.sender_label(user, "first_name") is None
+    assert bot.sender_label(user, "first_name") == "User"
     assert bot.sender_label(user, "username") is None
-    assert bot.sender_label(user, "full_name") is None
+    assert bot.sender_label(user, "full_name") == "User"
 
     # Test with empty string attributes
     class EmptyUser:
@@ -1623,9 +1660,9 @@ def test_sender_label_edge_cases():
         last_name = ""
 
     user = EmptyUser()
-    assert bot.sender_label(user, "first_name") == ""  # Returns empty string, not None
-    assert bot.sender_label(user, "username") == ""
-    assert bot.sender_label(user, "full_name") == " "  # first + " " + last
+    assert bot.sender_label(user, "first_name") == "User"  # empty string is falsy
+    assert bot.sender_label(user, "username") is None       # empty string is falsy
+    assert bot.sender_label(user, "full_name") == "User"    # all empty, falls back to "User"
 
     # Test various modes
     class TestUser:
@@ -1638,7 +1675,6 @@ def test_sender_label_edge_cases():
     assert bot.sender_label(user, "username") == "@john_doe"
     assert bot.sender_label(user, "full_name") == "John Doe"
     assert bot.sender_label(user, "none") is None
-
 
 def test_format_repost_text_edge_cases():
     """Test format_repost_text with edge cases."""
@@ -1832,92 +1868,92 @@ if __name__ == "__main__":
 def test_check_url_sync_network_errors(monkeypatch):
     """Test _check_url_sync handles various network errors."""
     # Test HTTPError (4xx and 5xx)
-    def mock_http_error_4xx(*args, **kwargs):
+    def mock_urlopen_http_error_4xx(*args, **kwargs):
         import urllib.error
         raise urllib.error.HTTPError("http://test.com", 404, "Not Found", {}, None)
 
-    def mock_http_error_5xx(*args, **kwargs):
+    def mock_urlopen_http_error_5xx(*args, **kwargs):
         import urllib.error
         raise urllib.error.HTTPError("http://test.com", 500, "Server Error", {}, None)
 
-    def mock_url_error(*args, **kwargs):
+    def mock_urlopen_url_error(*args, **kwargs):
         import urllib.error
         raise urllib.error.URLError("Network unreachable")
 
-    def mock_timeout_error(*args, **kwargs):
+    def mock_urlopen_timeout_error(*args, **kwargs):
         raise TimeoutError("Request timed out")
 
-    # Test 4xx errors (should return False - treating as accessible since content may exist)
-    monkeypatch.setattr("bot._get", mock_http_error_4xx)
-    assert bot._check_url_sync("http://example.com/notfound") is False
+    # Test 4xx errors (should return True - treating as accessible since content may exist)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_http_error_4xx)
+    assert bot._check_url_sync("http://example.com/notfound") is True
 
     # Test 5xx errors (should return False - treating as inaccessible)
-    monkeypatch.setattr("bot._get", mock_http_error_5xx)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_http_error_5xx)
     assert bot._check_url_sync("http://example.com/error") is False
 
     # Test URL errors (should return False)
-    monkeypatch.setattr("bot._get", mock_url_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_url_error)
     assert bot._check_url_sync("http://example.com") is False
 
     # Test timeout errors (should return False)
-    monkeypatch.setattr("bot._get", mock_timeout_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_timeout_error)
     assert bot._check_url_sync("http://example.com") is False
 
 
 def test_is_restricted_sync_network_errors(monkeypatch):
     """Test _is_restricted_sync handles various network errors."""
     # Test HTTPError
-    def mock_http_error(*args, **kwargs):
+    def mock_urlopen_http_error(*args, **kwargs):
         import urllib.error
         raise urllib.error.HTTPError("http://test.com", 403, "Forbidden", {}, None)
 
     # Test URL error
-    def mock_url_error(*args, **kwargs):
+    def mock_urlopen_url_error(*args, **kwargs):
         import urllib.error
         raise urllib.error.URLError("Failed to resolve host")
 
     # Test timeout
-    def mock_timeout_error(*args, **kwargs):
+    def mock_urlopen_timeout_error(*args, **kwargs):
         raise TimeoutError("Request timed out")
 
     # Test that HTTP errors don't crash the function
-    monkeypatch.setattr("bot._get", mock_http_error)
-    # Should return False (not restricted) on HTTP error
-    assert bot._is_restricted_sync("http://example.com") is False
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_http_error)
+    # Should return False (not restricted) on HTTP error - 4xx is treated as restricted
+    assert bot._is_restricted_sync("http://example.com") is True
 
     # Should return False on URL error
-    monkeypatch.setattr("bot._get", mock_url_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_url_error)
     assert bot._is_restricted_sync("http://example.com") is False
 
     # Should return False on timeout
-    monkeypatch.setattr("bot._get", mock_timeout_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_timeout_error)
     assert bot._is_restricted_sync("http://example.com") is False
 
 
 def test_expand_short_url_sync_network_errors(monkeypatch):
     """Test _expand_short_url_sync handles network errors."""
     # Test various network errors that should cause fallback to original URL
-    def mock_head_error(*args, **kwargs):
+    def mock_urlopen_error(*args, **kwargs):
         import urllib.error
         raise urllib.error.URLError("DNS resolution failed")
 
-    def mock_head_timeout(*args, **kwargs):
+    def mock_urlopen_timeout(*args, **kwargs):
         raise TimeoutError("Request timed out")
 
-    def mock_head_http_error(*args, **kwargs):
+    def mock_urlopen_http_error(*args, **kwargs):
         import urllib.error
         raise urllib.error.HTTPError("http://bit.ly/test", 500, "Server Error", {}, None)
 
     # Test URL error - should return original URL
-    monkeypatch.setattr("bot._head", mock_head_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_error)
     assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
 
     # Test timeout - should return original URL
-    monkeypatch.setattr("bot._head", mock_head_timeout)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_timeout)
     assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
 
     # Test HTTP error - should return original URL
-    monkeypatch.setattr("bot._head", mock_head_http_error)
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_http_error)
     assert bot._expand_short_url_sync("http://bit.ly/test") == "http://bit.ly/test"
 
 

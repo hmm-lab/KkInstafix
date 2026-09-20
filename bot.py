@@ -799,9 +799,10 @@ def build_fixed_for_key(original_url: str, platform: str, key: str) -> Tuple[str
     Used by the per-message "try another provider" button.
     """
     if (
-        platform not in PROVIDERS
-        or key not in PROVIDERS[platform]["options"]
+        not original_url
         or not isinstance(original_url, str)
+        or platform not in PROVIDERS
+        or key not in PROVIDERS[platform]["options"]
     ):
         return original_url, platform
 
@@ -813,8 +814,6 @@ def build_fixed_for_key(original_url: str, platform: str, key: str) -> Tuple[str
     else:
         preview = link
     return link, preview
-
-
 async def process_text(text: str, chat_id: int, chat_settings: Dict[str, Any]) -> Tuple[str, bool, Optional[str], Optional[str], Optional[str], int, List[str], Optional[str]]:
     urls = URL_RE.findall(text)
     changed = False
@@ -1828,6 +1827,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await ADMIN_CMDS[cmd](msg, parts, context, chat_id)
             return
 
+        # Unknown command
+        await msg.reply_text(
+            "Unknown command. Available commands: /help, /platform, /clean, /preview, /optout, /optin, /version"
+        )
         return
 
     if not chat_settings["enabled"]:
