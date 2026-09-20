@@ -142,7 +142,20 @@ class FakeUpdate:
 def _isolate(monkeypatch):
     """Fresh DB caches and no background restriction task per test."""
     bot.init_db()
+    # Clear platform overrides table to ensure clean state for platform enabling/disabling
+    conn = bot.db_connect()
+    conn.execute("DELETE FROM platform_overrides")
+    conn.commit()
     bot._recent_mem.clear()
+    bot._platform_override_cache.clear()
+    bot._providers_cache.clear()
+    bot._settings_cache.clear()
+    bot._muted_cache.clear()
+    bot._optout_cache.clear()
+    bot._known_chats.clear()
+    bot._file_id_cache.clear()
+    bot._admin_cache.clear()
+    bot._user_names.clear()
     bot._rate_mem.clear()
     bot.SEEN_UPDATES.clear()
 

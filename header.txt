@@ -1,0 +1,63 @@
+import asyncio
+import html as _html
+import io
+import json
+import logging
+import os
+import re
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
+from collections import OrderedDict, deque
+import typing
+from typing import Optional, Set, Dict, Any, List, Tuple
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from telegram import (
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    LinkPreviewOptions,
+    Update,
+)
+from telegram.error import Conflict
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    InlineQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
+
+__version__ = "1.53.1"
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=logging.INFO,
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
+
+TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+PORT = int(os.environ.get("PORT", 8443))
+IMAGE_FILE = "30364.jpg"
+GENIUS_VIDEO = "genius.mp4"
+# Set DATA_DIR to a Railway persistent volume mount (e.g. /data) so settings,
+# stats and undo records survive redeploys. Defaults to the working directory.
+DB_FILE = os.path.join(os.environ.get("DATA_DIR", "."), "bot_data.sqlite3")
+_start_time = time.time()
+
+# ── Providers ──────────────────────────────────────────────────────────────────

@@ -1,0 +1,280 @@
+
+TRACKING = [
+    "igsh", "igshid", "utm_source", "utm_medium", "utm_campaign",
+    "utm_content", "utm_term", "utm_id", "fbclid", "ref", "hl", "s", "si",
+]
+_TRACKING_SET = {t.lower() for t in TRACKING}
+
+# Extra tracking params stripped only for a specific platform when rewriting.
+# These keys are unambiguous tracking on their platform but are meaningful
+# elsewhere (e.g. "t" is a YouTube timestamp), so they must not go in the global
+# TRACKING list. The embed providers need only the path, so dropping these is
+# always safe for a rewritten link.
+PLATFORM_TRACKING = {
+    # Twitter/X share tokens: ?s=20&t=<token>, plus cxt context blobs.
+    "twitter": {"t", "cxt"},
+    # TikTok app/web session and referrer junk.
+    "tiktok": {
+        "is_from_webapp", "sender_device", "sender_web_id", "web_id",
+        "_t", "_r", "_d", "share_app_id", "share_link_id", "u_code",
+        "preview_pb", "refer", "referer_url", "referer_video_id",
+    },
+}
+
+# Tracking params safe to strip from ANY link (e.g. YouTube), unlike TRACKING
+# this deliberately excludes ambiguous keys like "s"/"ref" that legitimate
+# sites use for search and routing.
+GENERIC_TRACKING = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+    "utm_id", "utm_name", "utm_reader", "utm_social", "utm_brand",
+    "fbclid", "gclid", "dclid", "msclkid", "yclid", "twclid", "ttclid",
+    "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_id", "wickedid",
+    "igsh", "igshid", "si",
+    # Facebook/Meta mobile share identifiers
+    "mibextid", "extid",
+    # Reddit web tracking
+    "rdt",
+    # Campaign / analytics identifiers (unambiguous, vendor-documented)
+    "ncid", "cmpid", "_branch_referrer", "oly_enc_id", "oly_anon_id",
+}
+
+# YouTube-only share/analytics params. "si" is already in GENERIC_TRACKING so
+# it is stripped globally; "is" and "pp" are too generic to strip from arbitrary
+# sites, so they are only removed when the host is YouTube. "feature" is a
+# documented YouTube share param that could be a legitimate flag elsewhere.
+YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
+YOUTUBE_TRACKING = {"is", "feature", "pp"}
+
+# Amazon operates under many country TLDs; track all of them by this set.
+AMAZON_TLDS = {
+    "amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.co.jp",
+    "amazon.ca", "amazon.com.au", "amazon.in", "amazon.it", "amazon.es",
+    "amazon.com.br", "amazon.com.mx", "amazon.nl", "amazon.se", "amazon.sg",
+    "amazon.ae", "amazon.sa",
+    # Additional regional stores
+    "amazon.com.tr", "amazon.com.be", "amazon.pl", "amazon.eg", "amazon.co.za",
+}
+AMAZON_TRACKING = {
+    "tag", "ref", "linkCode", "camp", "creative", "creativeASIN",
+    "linkId", "th", "psc", "sprefix", "crid", "qid", "sr", "keywords",
+    "ie", "hvadid", "hvpos", "hvnetw", "hvrand", "hvdev", "hvtargid",
+}
+AMAZON_PATH_RE = re.compile(
+    r"/(?:dp|gp/product|gp/aw/d|gp/offer-listing|exec/obidos/ASIN|o/ASIN)/([A-Z0-9]{10})",
+    re.IGNORECASE,
+)
+
+EBAY_TLDS = {
+    "ebay.com", "ebay.co.uk", "ebay.de", "ebay.com.au", "ebay.fr",
+    "ebay.it", "ebay.es", "ebay.ca", "ebay.com.sg",
+    "ebay.at", "ebay.pl", "ebay.nl", "ebay.ch", "ebay.se", "ebay.be",
+}
+EBAY_TRACKING = {
+    "hash", "mkrid", "siteid", "campid", "toolid", "customid",
+    "mkcid", "mkevt", "mkpid", "epid", "nma", "ch", "var", "widget_ver",
+}
+
+ALIEXPRESS_DOMAINS = {
+    "aliexpress.com", "aliexpress.us", "aliexpress.ru",
+    "aliexpress.fr", "aliexpress.de", "aliexpress.es", "aliexpress.it",
+    "aliexpress.co.uk", "aliexpress.com.br", "aliexpress.nl", "aliexpress.pl",
+    "aliexpress.at", "aliexpress.ch", "aliexpress.se", "aliexpress.be",
+}
+ALIEXPRESS_TRACKING = {
+    "spm", "aff_platform", "aff_trace_key", "algo_expid", "algo_pvid",
+    "btsid", "ws_ab_test", "pvid", "pdp_npi", "gatewayAdapt",
+}
+
+LINKEDIN_TRACKING = {
+    "trackingId", "lipi", "src", "trk", "rcm", "refId",
+    "midToken", "midSig", "trkInfo", "original_referer",
+    "sessionRedirect", "liuid", "midMgmt",
+}
+
+PINTEREST_DOMAINS = {
+    "pinterest.com", "pinterest.co.uk", "pinterest.de", "pinterest.fr",
+    "pinterest.es", "pinterest.it", "pinterest.com.au", "pinterest.ca",
+    "pinterest.at", "pinterest.ch", "pinterest.se", "pinterest.pt",
+    "pinterest.nl", "pinterest.be", "pinterest.in", "pinterest.jp",
+    "pinterest.ru", "pinterest.mx", "pinterest.nz", "pinterest.ie",
+    "pinterest.sg", "pinterest.cz", "pinterest.gr", "pinterest.br",
+}
+PINTEREST_TRACKING = {"rs", "amp"}
+
+APPLE_MUSIC_TRACKING = {"itsct", "itscg", "ls", "app", "at", "ct", "itm_campaign", "itm_content"}
+
+VIMEO_TRACKING = {"app_id", "referrer", "from", "badge"}
+
+SOUNDCLOUD_TRACKING = {"ref", "in"}  # "si" already in GENERIC_TRACKING; "ref" is not (ambiguous globally)
+
+# Pre-built host → extra tracking params map used by strip_generic_tracking.
+# Built once at import; O(1) lookup per call instead of 10 sequential if-blocks.
+HOST_TRACKING_MAP: dict[str, frozenset] = {}
+for _h in YOUTUBE_HOSTS:
+    HOST_TRACKING_MAP[_h] = YOUTUBE_TRACKING
+for _h in AMAZON_TLDS:
+    HOST_TRACKING_MAP[_h] = AMAZON_TRACKING
+for _h in EBAY_TLDS:
+    HOST_TRACKING_MAP[_h] = EBAY_TRACKING
+for _h in ALIEXPRESS_DOMAINS:
+    HOST_TRACKING_MAP[_h] = ALIEXPRESS_TRACKING
+HOST_TRACKING_MAP["linkedin.com"] = LINKEDIN_TRACKING
+for _h in PINTEREST_DOMAINS:
+    HOST_TRACKING_MAP[_h] = PINTEREST_TRACKING
+HOST_TRACKING_MAP["music.apple.com"] = APPLE_MUSIC_TRACKING
+HOST_TRACKING_MAP["vimeo.com"] = VIMEO_TRACKING
+HOST_TRACKING_MAP["soundcloud.com"] = SOUNDCLOUD_TRACKING
+
+URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+# YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,
+# which previews more reliably than the original path form.
+YOUTUBE_PATH_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]+)", re.IGNORECASE)
+YOUTUBE_WATCH_HOSTS = {"youtube.com", "m.youtube.com"}
+# youtu.be/<id> is a pure path rewrite to the canonical watch URL — no network.
+YOUTU_BE_PATH_RE = re.compile(r"^/([A-Za-z0-9_-]+)", re.IGNORECASE)
+TAIL = ".,!?)]>}"
+FIXER_HOSTS = {host for cfg in PROVIDERS.values() for host in cfg["options"].values()}
+# Platforms that default to OFF (no auto-rewrite) until their fixer host is
+# confirmed live — e.g. EmbedEZ lists weiboez.com as "Coming Soon". Admins can
+# turn one on per chat with /platform <name> on; that explicit choice is stored
+# and sticks. Remove a platform from this set once its host is reliably up.
+DEFAULT_DISABLED_PLATFORMS = frozenset({"weibo"})
+# Short-link domains that redirect to the real URL before we can fix them
+SHORT_LINK_DOMAINS = {
+    # Platform-specific short/share links (expanded before rewriting)
+    "vm.tiktok.com", "vt.tiktok.com", "redd.it", "b23.tv", "t.co",
+    "amzn.to",          # Amazon short links
+    "maps.app.goo.gl",  # Google Maps
+    "pin.it",           # Pinterest (expanded + tracking-stripped; no rewrite host)
+    # Generic URL shorteners (expand to real URL, then apply tracking strip / rewrite)
+    "bit.ly", "tinyurl.com", "t.ly", "ow.ly", "is.gd",
+    "rb.gy", "buff.ly", "goo.gl",
+}
+_expand_cache: OrderedDict = OrderedDict()  # short URL -> expanded URL (LRU)
+_expand_cache_lock = threading.Lock()
+_EXPAND_CACHE_MAX = 2000
+HEALTH_CACHE: dict = {}
+HEALTH_TTL = 600
+SEEN_UPDATES: OrderedDict = OrderedDict()
+MAX_SEEN_UPDATES = 2000
+_known_chats: set = set()
+_settings_cache: dict = {}   # chat_id -> settings dict
+_providers_cache: dict = {}  # chat_id -> {platform -> provider_key}
+_muted_cache: dict = {}      # chat_id -> set of muted user_ids
+_platform_override_cache: dict = {}  # chat_id -> {platform: 1|0} explicit choices
+_optout_cache: dict = {}     # chat_id -> set of user_ids who opted out of rewriting
+_recent_mem: dict = {}       # (kind, chat_id, event_key) -> float timestamp
+# Hard cap so the dedup cache stays bounded even if the periodic cleanup job is
+# never scheduled (e.g. job-queue extra missing) or hasn't run yet.
+_RECENT_MEM_HARD_CAP = 200_000
+_file_id_cache: dict = {}    # filename -> telegram file_id
+_admin_cache: dict = {}      # (chat_id, user_id) -> (is_admin, expiry_ts)
+_user_names: dict = {}       # user_id -> first_name (from messages)
+_ADMIN_CACHE_TTL = 300
+
+DEFAULT_CHAT_SETTINGS = {
+    "enabled": 1,
+    "sender_mode": "first_name",
+    "dedup_window": 60,
+    "rate_limit": 5,
+    "rate_window": 30,
+    "ignore_forwards": 1,
+    "provider_fallback": 1,
+    "caption_style": "reply",
+    "text_spam": 1,
+}
+
+# Import-validation rules for chat settings. Every key in DEFAULT_CHAT_SETTINGS
+# must be covered by exactly one of these so import_chat_data can validate an
+# untrusted backup. test_settings_sources_stay_in_sync guards that this holds —
+# along with the DB schema and the migration list — to prevent the parallel-list
+# drift that caused the v1.37.0 (schema/defaults) and v1.45.0 (migration) bugs.
+_SETTING_INT_BOOL = frozenset({"enabled", "ignore_forwards", "provider_fallback", "text_spam"})
+_SETTING_INT_BOUNDS = {
+    "dedup_window": (5, 3600),
+    "rate_limit": (1, 100),
+    "rate_window": (5, 3600),
+}
+_SETTING_ENUMS = {
+    "sender_mode": frozenset({"first_name", "username", "full_name", "none"}),
+    "caption_style": frozenset({"reply"}),
+}
+
+RATE_LIMIT = 5       # links per user per window
+RATE_WINDOW = 30     # seconds
+
+PLATFORM_EMOJI = {
+    "instagram": "📷",
+    "twitter": "🐦",
+    "tiktok": "🎵",
+    "reddit": "👽",
+    "facebook": "📘",
+    "threads": "🧵",
+    "bluesky": "🔵",
+    "pixiv": "🎨",
+    "tumblr": "📝",
+    "bilibili": "📺",
+    "snapchat": "👻",
+    "spotify": "🎧",
+    "twitch": "🎮",
+    "ifunny": "😂",
+    "furaffinity": "🐾",
+    "deviantart": "🖌",
+    "dribbble": "🏀",
+    "kick": "🟢",
+    "weibo": "🔴",
+    "xiaohongshu": "📕",
+}
+
+# Real, live sample URLs used by /testall and tools/check_providers.py to
+# health-check each provider. These are permanent posts or official accounts so
+# a deleted sample never produces a false "down". Items in the "best-effort"
+# group are guaranteed live but are landing/profile pages — pass a real content
+# URL for a richer embed test: /testall <platform> <url>.
+SAMPLE_URLS = {
+    # Iconic permanent posts.
+    "instagram": "https://www.instagram.com/p/DBPVOg2TonD/",   # @natgeo post
+    "twitter": "https://twitter.com/jack/status/20",           # the first-ever tweet
+    "spotify": "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8",  # Never Gonna Give You Up
+    # Official accounts / channels (won't disappear).
+    "tiktok": "https://www.tiktok.com/@nasa",
+    "reddit": "https://www.reddit.com/r/announcements/",
+    "facebook": "https://www.facebook.com/NASA",
+    "threads": "https://www.threads.net/@zuck",
+    "bluesky": "https://bsky.app/profile/bsky.app",
+    "tumblr": "https://www.tumblr.com/staff",
+    "bilibili": "https://space.bilibili.com/546195",           # 老番茄, a top creator
+    "twitch": "https://www.twitch.tv/nasa",
+    "snapchat": "https://www.snapchat.com/add/team.snapchat",
+    "deviantart": "https://www.deviantart.com/team",           # official DeviantArt account
+    "furaffinity": "https://www.furaffinity.net/user/fender/",  # FA mascot account
+    "dribbble": "https://dribbble.com/dribbble",
+    "kick": "https://kick.com/xqc",
+    "weibo": "https://weibo.com/rmrb",                         # People's Daily (verified)
+    # Best-effort: live landing/share pages — pass a real content URL via /testall.
+    "pixiv": "https://www.pixiv.net/en",
+    "ifunny": "https://ifunny.co/",
+    "xiaohongshu": "https://xhslink.com/a/exampleID",          # needs a real RED share link
+}
+
+ABOUT_TEXT = (
+    "💖 *About this bot*\n\n"
+    "My name is Mehrab and I love you Motki 🥰\n\n"
+    "This bot fixes social media links so they embed properly in Telegram. "
+    "It can also reduce repeated link, text, sticker, and GIF spam in groups.\n\n"
+    "This bot relies on community-maintained alternative frontends (fixers) "
+    "for various social media platforms. Special thanks to the developers "
+    "and maintainers of services like kkclip, vxtwitter, tntok, vxreddit, "
+    "redlib, libredd, and many others who make these privacy-friendly "
+    "frontends available.\n\n"
+    "_Made with love by Mehrab_ 💖"
+)
+
+WELCOME_TEXT = (
+    "👋 <b>Hi! I'm KkInstafix.</b>\n\n"
+    "I automatically rewrite social media links so Telegram shows proper previews, "
+    "and strip tracking from Amazon, eBay, AliExpress, LinkedIn, and other sites.\n\n"
+    "<b>Just send or post a link and I'll fix it automatically.</b>\n\n"
+    "Admins: use /menu to configure providers, /help for all commands."
+)
+
