@@ -538,8 +538,6 @@ async def clean_url_expanded(url: str) -> str:
 
 
 
-        logger.debug("Unexpected error checking URL %s: %s", url, str(e))
-        return False
 
 
 _RESTRICTION_PHRASES = [
