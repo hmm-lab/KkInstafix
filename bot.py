@@ -450,8 +450,13 @@ def apply_provider(url: str, platform: str, provider_key: str) -> str:
     if platform not in PROVIDERS or provider_key not in PROVIDERS[platform]["options"]:
         return url
 
-    host = PROVIDERS[platform]["options"][provider_key]
     parsed = urlparse(url)
+
+    # Do not rewrite malformed or scheme-relative input.
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return url
+
+    host = PROVIDERS[platform]["options"][provider_key]
     fixed = urlunparse((parsed.scheme, host, parsed.path, parsed.params, parsed.query, parsed.fragment))
     return strip_tracking(fixed, extra=PLATFORM_TRACKING.get(platform))
 
@@ -793,6 +798,13 @@ def build_fixed_for_key(original_url: str, platform: str, key: str) -> Tuple[str
     link points at the chosen frontend while the preview uses its embed pair.
     Used by the per-message "try another provider" button.
     """
+    if (
+        platform not in PROVIDERS
+        or key not in PROVIDERS[platform]["options"]
+        or not isinstance(original_url, str)
+    ):
+        return original_url, platform
+
     url, _tail = trim(original_url)
     link = apply_provider(url, platform, key)
     noauth_embed = PROVIDERS[platform].get("noauth_embed", {})
@@ -850,12 +862,19 @@ async def process_text(text: str, chat_id: int, chat_settings: Dict[str, Any]) -
 def sender_label(user: Optional[Any], mode: str) -> Optional[str]:
     if not user or mode == "none":
         return None
-    if mode == "username" and user.username:
-        return "@" + user.username
+
+    username = getattr(user, "username", None)
+    first_name = getattr(user, "first_name", None)
+    last_name = getattr(user, "last_name", None)
+
+    if mode == "username":
+        return "@" + username if username else None
+
     if mode == "full_name":
-        full = " ".join(x for x in [user.first_name, user.last_name] if x)
-        return full or user.first_name or "User"
-    return user.first_name or user.username or "User"
+        full = " ".join(x for x in (first_name, last_name) if x)
+        return full or first_name or username or "User"
+
+    return first_name or username or "User"
 
 
 def format_repost_text(user: Optional[Any], mode: str, platform: Optional[str] = None, url: Optional[str] = None) -> str:
