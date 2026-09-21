@@ -158,7 +158,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Try multiple fallback strategies for sending the message
         fallback_attempts = []
 
-        # Attempts 1-7: Try sending WITH reply_to (as a reply to original message)
         # Attempt 1: full formatted message with link preview options
         fallback_attempts.append((post_text, post_parse_mode, preview, markup, True))  # (text, parse_mode, preview, markup, use_reply_to)
 
@@ -192,29 +191,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Attempt 7: single character as absolute last resort
         fallback_attempts.append((".", None, None, None, True))
 
-        # Attempts 8-14: Try sending WITHOUT reply_to (as a regular message)
-        # Attempt 8: full formatted message with link preview options
-        fallback_attempts.append((post_text, post_parse_mode, preview, markup, False))
-
-        # Attempt 9: without link preview options (in case of preview issues)
-        fallback_attempts.append((post_text, post_parse_mode, None, markup, False))
-
-        # Attempt 10: without parse mode and reply markup (simplest formatting)
-        fallback_attempts.append((post_text, None, None, None, False))
-
-        # Attempt 11: just the cleaned URL with label (most essential information)
-        fallback_attempts.append((fallback_text, fallback_parse_mode, None, None, False))
-
-        # Attempt 12: just the cleaned URL (no label)
-        if cleaned_url:
-            fallback_attempts.append((cleaned_url, None, None, None, False))
-
-        # Attempt 13: simple failure message
-        fallback_attempts.append(("Link fixing failed", None, None, None, False))
-
-        # Attempt 14: single character as absolute last resort
-        fallback_attempts.append((".", None, None, None, False))
-
         # Try each fallback attempt until one succeeds
         for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(fallback_attempts):
             sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to if use_reply_to else None, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
@@ -234,7 +210,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Try multiple fallback strategies for replying
         reply_fallbacks = []
 
-        # Attempts 1-7: Try replying WITH reply_to
         # Attempt 1: full formatted message with link preview options
         reply_fallbacks.append((post_text, post_parse_mode, preview, markup, True))
 
@@ -267,29 +242,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Attempt 7: single character as absolute last resort
         reply_fallbacks.append((".", None, None, None, True))
-
-        # Attempts 8-14: Try replying WITHOUT reply_to (as a regular message to chat)
-        # Attempt 8: full formatted message with link preview options
-        reply_fallbacks.append((post_text, post_parse_mode, preview, markup, False))
-
-        # Attempt 9: without link preview options
-        reply_fallbacks.append((post_text, post_parse_mode, None, markup, False))
-
-        # Attempt 10: without parse mode and reply markup
-        reply_fallbacks.append((post_text, None, None, None, False))
-
-        # Attempt 11: just the cleaned URL with label (most essential information)
-        reply_fallbacks.append((reply_text, reply_parse_mode, None, None, False))
-
-        # Attempt 12: just the cleaned URL (no label)
-        if cleaned_url:
-            reply_fallbacks.append((cleaned_url, None, None, None, False))
-
-        # Attempt 13: simple failure message
-        reply_fallbacks.append(("Link fixing failed", None, None, None, False))
-
-        # Attempt 14: single character as absolute last resort
-        reply_fallbacks.append((".", None, None, None, False))
 
         # Try each fallback attempt until one succeeds
         for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(reply_fallbacks):
@@ -717,7 +669,7 @@ async def handle_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if msg.left_chat_member.id == context.bot.id:
             # The bot was removed from a chat
             chat_id = msg.chat_id
-            logger.info("Bot removed from chat %s", chat_id)
+            logger.info("Bot removed from chat %s")
 
 
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
