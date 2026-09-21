@@ -147,66 +147,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         markup = helpers._cycle_keyboard(bot.PROVIDERS, platform, (chosen_idx + 1) % len(options))
 
     logger.info("Fixed %d link(s) in chat %s for user %s", fixed_count, chat_id, user_id)
-    sent_msg = None
-    deleted = await helpers.safe_delete(context, chat_id, msg.message_id, "link-rewrite", message=msg)
+
+    # Try to delete the original message first to see if we can
+    deleted = await helpers.safe_delete(context, chat_id, msg.message_id, "link-rewrite-attempt", message=msg)
+
     if deleted:
+        # We can delete the original message, so send the fixed message as a new message
+        sent_msg = None
+
         # Try multiple fallback strategies for sending the message
-        sent_msg = await helpers.safe_send_text(context, chat_id, post_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
+        fallback_attempts = []
+
+        # Attempt 1: full formatted message with link preview options
+        fallback_attempts.append((post_text, post_parse_mode, preview, markup))
+
+        # Attempt 2: without link preview options (in case of preview issues)
+        fallback_attempts.append((post_text, post_parse_mode, None, markup))
+
+        # Attempt 3: without parse mode and reply markup (simplest formatting)
+        fallback_attempts.append((post_text, None, None, None))
+
+        # Attempt 4: just the cleaned URL with label (most essential information)
+        cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
+        label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
+        if label and cleaned_url:
+            fallback_text = f"{label}: {cleaned_url}"
+        elif label:
+            fallback_text = label
+        elif cleaned_url:
+            fallback_text = cleaned_url
+        else:
+            fallback_text = "Link fixed!"  # Last resort fallback
+        fallback_parse_mode = "HTML" if fixed_count == 1 and label else None
+        fallback_attempts.append((fallback_text, fallback_parse_mode, None, None))
+
+        # Attempt 5: just the cleaned URL (no label)
+        if cleaned_url:
+            fallback_attempts.append((cleaned_url, None, None, None))
+
+        # Attempt 6: simple failure message
+        fallback_attempts.append(("Link fixing failed", None, None, None))
+
+        # Try each fallback attempt until one succeeds
+        for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup) in enumerate(fallback_attempts):
+            sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
+            if sent_msg:
+                logger.info("Send succeeded on fallback attempt %d: %s", i+1, fallback_text[:50] if fallback_text else "empty")
+                break
+
         if not sent_msg:
-            logger.info("First send attempt failed, trying without link preview options")
-            sent_msg = await helpers.safe_send_text(context, chat_id, post_text, reply_to_message_id=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
-        if not sent_msg:
-            logger.info("Second send attempt failed, trying without parse mode and reply markup")
-            sent_msg = await helpers.safe_send_text(context, chat_id, post_text, reply_to_message_id=reply_to)
-        if not sent_msg:
-            logger.info("Third send attempt failed, trying with minimal parameters")
-            # Truncate text if too long (Telegram limit is 4096 characters)
-            truncated_text = post_text[:4096] if len(post_text) > 4096 else post_text
-            sent_msg = await helpers.safe_send_text(context, chat_id, truncated_text)
-        if not sent_msg:
-            logger.info("All send attempts failed, trying fallback options")
-            # Fallback chain: try progressively simpler messages
-            fallback_attempts = []
-            
-            # Attempt 1: cleaned original URL with sender label and shuffle button
-            cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-            label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-            if label and cleaned_url:
-                fallback_text = f"{label}: {cleaned_url}"
-            elif label:
-                fallback_text = label
-            elif cleaned_url:
-                fallback_text = cleaned_url
-            else:
-                fallback_text = "Link fixing failed"
-            fallback_parse_mode = "HTML" if fixed_count == 1 else None
-            fallback_attempts.append((fallback_text, fallback_parse_mode, None, markup))
-            
-            # Attempt 2: just the cleaned URL (no label, no markup)
-            if cleaned_url:
-                fallback_attempts.append((cleaned_url, None, None, None))
-            
-            # Attempt 3: simple failure message
-            fallback_attempts.append(("Link fixing failed", None, None, None))
-            
-            # Attempt 4: single character (minimum valid message)
-            fallback_attempts.append((".", None, None, None))
-            
-            # Try each fallback attempt until one succeeds
-            for fallback_text, fallback_parse_mode, fallback_preview, fallback_markup in fallback_attempts:
-                sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
-                if sent_msg:
-                    logger.info("Fallback send succeeded on attempt: %s", fallback_text[:50] if fallback_text else "empty")
-                    break
-            
-            if not sent_msg:
-                logger.error("All fallback send attempts failed for chat %s. Check bot permissions and chat status.", chat_id)
+            # If all send attempts failed, log error and try to notify user by replying to original message
+            # We need to restore the original message since we deleted it but couldn't send replacement
+            logger.error("All send attempts failed for chat %s. Check bot permissions and chat status.", chat_id)
+            try:
+                # Restore original message by sending it back
+                await helpers.safe_send_text(context, chat_id, text, reply_to_message_id=reply_to)
+            except Exception:
+                logger.exception("Failed to restore original message in chat %s")
     else:
+        # We cannot delete the original message, so reply to it in-place
         try:
             sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode, reply_markup=markup)
-            logger.info("Delete failed, replied instead in chat %s", chat_id)
+            logger.info("Delete not permitted, replied in-place instead in chat %s", chat_id)
         except Exception:
-            logger.exception("reply_text fallback failed in chat %s", chat_id)
+            logger.exception("reply_text failed in chat %s")
+            # If even the reply fails, we have to accept that we couldn't fix the link
 
     if sent_msg:
         for plat in fixed_platforms:
