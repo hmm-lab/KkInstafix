@@ -233,7 +233,7 @@ async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.exception("Caption reply failed in chat %s")
 
 
-async def handle_edit(update: Edit, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle edited messages for link rewriting."""
     # Import bot inside function to avoid circular imports
     import bot
@@ -583,7 +583,12 @@ def setup_handlers(application):
     # Register other handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE, handle_message))
     application.add_handler(MessageHandler(filters.CAPTION, handle_caption))
-    application.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, filters.TEXT, handle_edit))
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.EDITED_MESSAGE & filters.TEXT,
+            handle_edit,
+        )
+    )
     application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST, handle_channel_post))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.Document.ALL & filters.CaptionRegex(r"^/import"), handle_import_document))

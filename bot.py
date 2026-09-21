@@ -652,11 +652,15 @@ def _check_url_sync(url: str) -> bool:
             # Successful response (2xx or 3xx)
             return 200 <= resp.status < 400
     except urllib.error.HTTPError as e:
-        # 4xx means the specific content is not available (e.g. 404 Not Found)
-        # 5xx means the provider itself is broken/overloaded -> treat as down.
-        # For our purposes, both 4xx and 5xx mean the provider is not viable for this specific content
-        logger.debug("HTTP error checking URL %s: %s %s", url, e.code, e.reason)
-        return False
+        # A 4xx response proves that the host/provider responded.
+        # The specific post may be deleted, but the provider should still count as available.
+        logger.debug(
+            "HTTP error checking URL %s: %s %s",
+            url,
+            e.code,
+            e.reason,
+        )
+        return 400 <= e.code < 500
     except urllib.error.URLError as e:
         # Network-related errors (DNS failure, connection refused, timeout, etc.)
         logger.debug("URL error checking URL %s: %s", url, str(e.reason))

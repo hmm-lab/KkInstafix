@@ -1585,7 +1585,7 @@ def test_check_url_sync_edge_cases(monkeypatch):
 
     # Test failed request (404)
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_failure_404)
-    assert bot._check_url_sync("http://example.com/notfound") is True  # 4xx is treated as accessible
+    assert bot._check_url_sync("http://example.com/notfound") is True  # 4xx means provider responded
 
     # Test network exception
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_exception)
@@ -1883,7 +1883,7 @@ def test_check_url_sync_network_errors(monkeypatch):
     def mock_urlopen_timeout_error(*args, **kwargs):
         raise TimeoutError("Request timed out")
 
-    # Test 4xx errors (should return True - treating as accessible since content may exist)
+    # Test 4xx errors (should return True - provider responded)
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_http_error_4xx)
     assert bot._check_url_sync("http://example.com/notfound") is True
 
