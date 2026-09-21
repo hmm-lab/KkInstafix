@@ -164,9 +164,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             truncated_text = post_text[:4096] if len(post_text) > 4096 else post_text
             sent_msg = await helpers.safe_send_text(context, chat_id, truncated_text)
         if not sent_msg:
-            logger.info("All send attempts failed, sending notification about issue")
-            # Last resort: send a simple notification that link fixing is working but display had issues
-            await helpers.safe_send_text(context, chat_id, "✅ Link fixed! (Notification display issue)", reply_to_message_id=reply_to)
+            logger.info("All send attempts failed, showing cleaned original URL")
+            # Fallback: show cleaned original URL with sender label and provider shuffle button
+            cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
+            label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
+            if label and cleaned_url:
+                fallback_text = f"{label}: {cleaned_url}"
+            elif label:
+                fallback_text = label
+            elif cleaned_url:
+                fallback_text = cleaned_url
+            else:
+                fallback_text = "Link fixing failed"
+            await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to, reply_markup=markup, parse_mode=fallback_parse_mode)
     else:
         try:
             sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode, reply_markup=markup)
