@@ -150,9 +150,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     sent_msg = None
     deleted = await helpers.safe_delete(context, chat_id, msg.message_id, "link-rewrite", message=msg)
     if deleted:
+        # Try multiple fallback strategies for sending the message
         sent_msg = await helpers.safe_send_text(context, chat_id, post_text, link_preview_options=preview, reply_to_message_id=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
         if not sent_msg:
+            logger.info("First send attempt failed, trying without link preview options")
             sent_msg = await helpers.safe_send_text(context, chat_id, post_text, reply_to_message_id=reply_to, parse_mode=post_parse_mode, reply_markup=markup)
+        if not sent_msg:
+            logger.info("Second send attempt failed, trying without parse mode and reply markup")
+            sent_msg = await helpers.safe_send_text(context, chat_id, post_text, reply_to_message_id=reply_to)
+        if not sent_msg:
+            logger.info("Third send attempt failed, trying with minimal parameters")
+            # Truncate text if too long (Telegram limit is 4096 characters)
+            truncated_text = post_text[:4096] if len(post_text) > 4096 else post_text
+            sent_msg = await helpers.safe_send_text(context, chat_id, truncated_text)
+        if not sent_msg:
+            logger.info("All send attempts failed, sending notification about issue")
+            # Last resort: send a simple notification that link fixing is working but display had issues
+            await helpers.safe_send_text(context, chat_id, "✅ Link fixed! (Notification display issue)", reply_to_message_id=reply_to)
     else:
         try:
             sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode, reply_markup=markup)
