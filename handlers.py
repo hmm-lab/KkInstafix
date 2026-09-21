@@ -401,16 +401,16 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Process the text to get fixed URL
     try:
         new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(
-            text, 0, {"enabled": True}  # Use dummy chat ID and settings for inline queries
+            text, 0, {"enabled": True, "dedup_window": 60}  # Use dummy chat ID and settings for inline queries
         )
     except Exception as e:
         logger.exception("Error processing inline query: %s", e)
         await query.answer([
-            helpers.InlineQueryResultArticle(
+            InlineQueryResultArticle(
                 id="error",
                 title="Error processing link",
                 description="Could not process the provided URL",
-                input_message_content=helpers.InputTextMessageContent("❌ Error processing link")
+                input_message_content=InputTextMessageContent("❌ Error processing link")
             )
         ], cache_time=1, is_personal=True)
         return
@@ -418,11 +418,11 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not changed or not first_fixed_url:
         # No URL found or no change needed
         results = [
-            helpers.InlineQueryResultArticle(
+            InlineQueryResultArticle(
                 id="nochange",
                 title="No link to fix",
                 description="The provided text doesn't contain a fixable link",
-                input_message_content=helpers.InputTextMessageContent(text)
+                input_message_content=InputTextMessageContent(text)
             )
         ]
         await query.answer(results, cache_time=10, is_personal=True)
@@ -558,6 +558,65 @@ async def handle_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info("Bot removed from chat %s", chat_id)
 
 
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle channel posts for link rewriting."""
+    # Import bot inside function to avoid circular imports
+    import bot
+    msg = update.channel_post
+    if not msg or not msg.text:
+        return
+    if msg.from_user and msg.from_user.is_bot:
+        return
+    if bot.is_duplicate_update(update.update_id):
+        return
+
+    chat_id = msg.chat_id
+    user_id = msg.from_user.id if msg.from_user else 0
+    chat_settings = database.get_chat_settings(chat_id, user_id)
+
+    if not chat_settings["enabled"]:
+        return
+    if bot.is_user_muted(chat_id, user_id):
+        # For channel posts, we can't delete the original message, so just don't rewrite
+        return
+    if chat_settings.get("ignore_forwards", 1) and bot.is_forwarded(msg):
+        return
+    if bot.is_user_optout(chat_id, user_id):
+        return   # user opted out of link rewriting
+    if not bot.check_rate(chat_id, user_id, int(chat_settings.get("rate_limit", bot.RATE_LIMIT)), int(chat_settings.get("rate_window", bot.RATE_WINDOW))):
+        return
+
+    # Import bot inside function to avoid circular imports
+    import bot
+    new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(msg.text, chat_id, chat_settings)
+    if not changed:
+        return
+
+    reply_to = msg.message_id
+    sender_name = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
+    preview = helpers.LinkPreviewOptions(
+        is_disabled=False,
+        url=first_preview_url,
+        prefer_large_media=True,
+        show_above_text=False,
+    ) if first_fixed_url else None
+
+    logger.info("Fixed channel post link in chat %s for user %s", chat_id, user_id)
+    try:
+        sent_msg = await msg.reply_text(helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url), link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
+        for plat in fixed_platforms:
+            bot.increment_stat(chat_id, plat, user_id)
+        if sent_msg and first_raw_url:
+            bot.store_rewrite(chat_id, sent_msg.message_id, first_raw_url,
+                              helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
+        if sent_msg and first_preview_url and fixed_count == 1:
+            asyncio.create_task(
+                helpers._warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url))
+            )
+    except Exception:
+        logger.exception("Failed to send reply for channel post in chat %s")
+
+
 async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors."""
     if isinstance(context.error, Conflict):
@@ -627,7 +686,6 @@ __all__ = [
     "handle_message",
     "handle_caption",
     "handle_edit",
-    "handle_media",
     "handle_channel_post",
     "handle_document",
     "handle_import_document",
