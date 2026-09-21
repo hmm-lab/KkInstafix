@@ -164,8 +164,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             truncated_text = post_text[:4096] if len(post_text) > 4096 else post_text
             sent_msg = await helpers.safe_send_text(context, chat_id, truncated_text)
         if not sent_msg:
-            logger.info("All send attempts failed, showing cleaned original URL")
-            # Fallback: show cleaned original URL with sender label and provider shuffle button
+            logger.info("All send attempts failed, trying fallback options")
+            # Fallback chain: try progressively simpler messages
+            fallback_attempts = []
+            
+            # Attempt 1: cleaned original URL with sender label and shuffle button
             cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
             label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
             if label and cleaned_url:
@@ -176,7 +179,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 fallback_text = cleaned_url
             else:
                 fallback_text = "Link fixing failed"
-            await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to, reply_markup=markup, parse_mode=fallback_parse_mode)
+            fallback_parse_mode = "HTML" if fixed_count == 1 else None
+            fallback_attempts.append((fallback_text, fallback_parse_mode, None, markup))
+            
+            # Attempt 2: just the cleaned URL (no label, no markup)
+            if cleaned_url:
+                fallback_attempts.append((cleaned_url, None, None, None))
+            
+            # Attempt 3: simple failure message
+            fallback_attempts.append(("Link fixing failed", None, None, None))
+            
+            # Attempt 4: single character (minimum valid message)
+            fallback_attempts.append((".", None, None, None))
+            
+            # Try each fallback attempt until one succeeds
+            for fallback_text, fallback_parse_mode, fallback_preview, fallback_markup in fallback_attempts:
+                sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
+                if sent_msg:
+                    logger.info("Fallback send succeeded on attempt: %s", fallback_text[:50] if fallback_text else "empty")
+                    break
+            
+            if not sent_msg:
+                logger.error("All fallback send attempts failed for chat %s. Check bot permissions and chat status.", chat_id)
     else:
         try:
             sent_msg = await msg.reply_text(post_text, link_preview_options=preview, parse_mode=post_parse_mode, reply_markup=markup)
