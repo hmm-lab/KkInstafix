@@ -122,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else None
     sender_name = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-    preview = helpers.LinkPreviewOptions(
+    preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
         prefer_large_media=True,
@@ -210,7 +210,7 @@ async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
     clean_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
-    preview = helpers.LinkPreviewOptions(
+    preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
         prefer_large_media=True,
@@ -268,7 +268,7 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     reply_to = msg.message_id
     sender_name = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-    preview = helpers.LinkPreviewOptions(
+    preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
         prefer_large_media=True,
@@ -384,11 +384,11 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not helpers.URL_RE.search(query.query):
         # Return hint about usage
         results = [
-            helpers.InlineQueryResultArticle(
+            InlineQueryResultArticle(
                 id="hint",
-                title="Fix links",
-                description="Enter a URL to get a fixed version for sharing",
-                input_message_content=helpers.InputTextMessageContent(
+                title="No supported link",
+                description="The provided text doesn't contain a supported link",
+                input_message_content=InputTextMessageContent(
                     "🔗 Share links like: https://twitter.com/user/status/123\n"
                     "✨ Get fixed versions for cleaner previews!"
                 )
@@ -415,13 +415,16 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         ], cache_time=1, is_personal=True)
         return
 
-    if not changed or not first_fixed_url:
-        # No URL found or no change needed
+
+    # Handle cases where URL was found but no fixing is needed
+    # We know a URL was present because URL_RE.search(query.query) was True above
+    if not changed or first_raw_url == first_fixed_url:
+        # URL found but no changes needed (already clean)
         results = [
             InlineQueryResultArticle(
-                id="nochange",
-                title="No link to fix",
-                description="The provided text doesn't contain a fixable link",
+                id="alreadyclean",
+                title="Already clean",
+                description="The link is already clean and doesn't need fixing",
                 input_message_content=InputTextMessageContent(text)
             )
         ]
@@ -429,17 +432,30 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Create result with fixed URL
-    title = f"Fixed {platform.upper()} link" if platform else "Fixed link"
+    # Determine if we changed the domain (platform fix) or just cleaned parameters
+    from urllib.parse import urlparse
+    try:
+        raw_parsed = urlparse(first_raw_url)
+        fixed_parsed = urlparse(first_fixed_url)
+        domain_changed = (raw_parsed.netloc != fixed_parsed.netloc) or (raw_parsed.scheme != fixed_parsed.scheme)
+    except Exception:
+        domain_changed = bool(platform)  # fallback to original logic
+
+    if domain_changed:
+        title = f"Fixed {platform} link" if platform else "Fixed link"
+    else:
+        title = "Clean link"
+
     description = first_fixed_url
     if first_preview_url and first_preview_url != first_fixed_url:
         description += f" (preview: {first_preview_url})"
 
     results = [
-        helpers.InlineQueryResultArticle(
+        InlineQueryResultArticle(
             id="fixed",
             title=title,
             description=description,
-            input_message_content=helpers.InputTextMessageContent(
+            input_message_content=InputTextMessageContent(
                 first_fixed_url,
                 disable_web_page_preview=False
             ),
@@ -450,11 +466,11 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Also provide the original if it was changed
     if changed and first_raw_url != first_fixed_url:
         results.append(
-            helpers.InlineQueryResultArticle(
+            InlineQueryResultArticle(
                 id="original",
                 title="Original link",
                 description=first_raw_url,
-                input_message_content=helpers.InputTextMessageContent(first_raw_url),
+                input_message_content=InputTextMessageContent(first_raw_url),
                 thumbnail_url="https://img.icons8.com/color/48/000000/link--v2.png"
             )
         )
@@ -603,7 +619,7 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     logger.info("Fixed channel post link in chat %s for user %s", chat_id, user_id)
     try:
-        sent_msg = await msg.reply_text(helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url), link_preview_options=preview, reply_to_message_id=reply_to, parse_mode="HTML")
+        sent_msg = await helpers.safe_send_text(context, chat_id, helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url), link_preview_options=preview, parse_mode="HTML")
         for plat in fixed_platforms:
             bot.increment_stat(chat_id, plat, user_id)
         if sent_msg and first_raw_url:
