@@ -26,3 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_recent_events_ts ON recent_events(ts);
 CREATE TABLE IF NOT EXISTS rate_events (chat_id INTEGER NOT NULL,user_id INTEGER NOT NULL,event_id INTEGER NOT NULL,ts INTEGER NOT NULL,PRIMARY KEY(chat_id,user_id,event_id));
 CREATE INDEX IF NOT EXISTS idx_rate_events_ts ON rate_events(ts);
 ''')
+# Additive Worker-only migrations also form part of the clean-install schema.
+with (root/'cloudflare/schema.sql').open('a') as target:
+    for migration in sorted((root/'cloudflare/migrations').glob('*.sql')):
+        target.write('\n'+migration.read_text())

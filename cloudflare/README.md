@@ -12,7 +12,7 @@ Containers, R2, or external database subscription is enabled by this deployment.
 - Readiness: `/health` (`active` stays false until Telegram activation)
 - D1: `kkinstafix` (`645ac61c-40da-4846-b1ba-d9461abb579e`), Western Europe
 - Compatibility date: `2026-11-15`
-- Hourly cleanup: `17 * * * *` UTC
+- Hourly cleanup and provider checks: `17 * * * *` UTC
 
 ## Activation
 
@@ -38,6 +38,54 @@ Railway resources are deleted by this migration.
 returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
+
+## Improvements in 2.1.0
+
+Messages and captions retain Telegram formatting, including bold, italics,
+spoilers, code, quotes and linked labels. If HTML is rejected, delivery retries
+with native entities. Spoiler links disable previews and retry buttons to avoid
+revealing the hidden destination; oversized spoiler posts keep their original
+and receive an explanation. Confirmed replacements are saved before a text
+original is deleted, so a storage failure preserves the original.
+
+Inline mode retains surrounding text and all links, up to eight, with an explicit
+explanation for queries exceeding the link or Telegram message limit.
+
+`/diagnose <url>` or `/diagnose` as a reply reports cleaned destinations, preview
+URLs, provider health, removed parameter names and likely skip reasons. It does
+not consume rate-limit or deduplication reservations. All query values and URL
+credentials are masked in its report. A fixed-post reply uses the stored original
+and its author's preferences where available.
+
+`/undo` as a reply restores the full original text with entities for new records,
+or a supported single photo, video, animation, document, audio or voice attachment
+using Telegram's file ID, with its original caption and entities. This creates a
+bot-authored copy, not the original sender's message. Albums are not reconstructed.
+Snapshots expire after seven days and are excluded from configuration exports.
+Historical records without a snapshot explicitly fall back to the original URL.
+
+### Upgrade an existing D1 database
+
+Before deploying 2.1.0, apply `migrations/0002-improvements.sql` through D1's query
+API or Wrangler. It is additive and safe to run again. Clean installs use the
+regenerated `schema.sql`, which includes the migration. Preserve the existing
+secret bindings and bot token when uploading the rebuilt Worker.
+
+### Background provider monitoring
+
+The existing hourly cron checks four rotating preview backends using fixed public
+samples, never user-submitted links. Only repeated failures on two curated posts,
+corroborated by another backend succeeding on both, count toward quarantine.
+Three confirmed checks temporarily skip that backend for six hours; successful
+content checks clear the failure history. HTTP 403/429, timeouts and profile-only
+observations cannot quarantine a provider. Stale cached decisions expire.
+Monitoring does not establish that every Telegram client can play a preview.
+Native previews and browser frontends are not probed as proxy backends.
+
+`POST /admin/check-providers`, authenticated with the same private Bearer key as
+`/admin/status`, runs one bounded batch. The hourly lease prevents duplicate
+checks. `/admin/status` includes aggregate cached health counts and timestamps.
+Only fixed evidence labels, HTTP status and timestamps are stored for probes.
 
 ## Preserve old settings
 
@@ -71,8 +119,10 @@ npm test --prefix cloudflare
 the Python source without executing the bot. Provider mappings follow the shared catalogue; the latest changes and probe
 limitations are documented in [PROVIDER_REVIEW.md](PROVIDER_REVIEW.md). Platform probes no longer block delivery or mistake a 403 on a
 post for a failed embed: the selected provider is posted immediately, with an
-alternative-provider button. The legacy `provider_fallback` setting is retained
-in backups; it does not trigger speculative HTTP probes in the Worker.
+alternative-provider button. With `/fallback on`, cached background health can
+temporarily skip a confirmed failing preview backend without changing the saved
+provider choice. `/fallback off` keeps the selected backend. No provider health
+requests block a user message.
 
 Tests use Miniflare/workerd with a real local D1 database and a mocked Telegram
 API. The installed workerd binary supports compatibility dates through

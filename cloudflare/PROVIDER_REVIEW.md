@@ -132,3 +132,14 @@ Other results:
 
 These checks establish usable metadata on the sampled public posts, not playback
 in every Telegram client, every media size, or every account visibility setting.
+
+## Runtime monitoring (2.1.0)
+
+The catalogue is unchanged in this release. Hourly checks rotate four preview
+backends using fixed public samples. Two curated samples must fail while a
+control provider succeeds on both before a check counts as a confirmed failure.
+Three confirmed checks cause a six-hour skip; successful checks recover the
+backend. Profile observations, HTTP 403/429 and timeouts cannot quarantine.
+This is conservative sampled evidence, not a live guarantee for every provider
+or every post. Saved chat choices remain intact; `/fallback off` disables cached
+health-based switching. See [runtime details](README.md#background-provider-monitoring).

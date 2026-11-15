@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.1.0] - 2026-11-15
+
+### Added
+
+- Preserved Telegram text/caption formatting and native entity delivery fallbacks, with spoiler-safe preview suppression.
+- Kept full surrounding text and multiple URLs in inline results, with explicit size/link-limit explanations.
+- Added `/diagnose` for cleaned destinations, preview providers, removed parameter names, cached health and skip reasons, masking query values without consuming posting quotas.
+- Added bounded hourly provider checks on fixed public samples, corroborated failure detection and temporary six-hour fallback after three confirmed failures. Access blocks, timeouts and profile-only probes cannot quarantine providers.
+- Added full original-message snapshots for seven-day `/undo`, including original entities and supported single attachments/captions; historical entries retain explicit URL-only fallback.
+
+### Fixed
+
+- Saved the original snapshot before deleting a successfully replaced text message; storage failures preserve the original.
+- Preserved saved provider preferences while automatic fallback and manual retries skip temporarily quarantined preview backends.
+
+### Deployment
+
+- Added idempotent D1 migration `cloudflare/migrations/0002-improvements.sql`, required before uploading the new Worker; clean-install schema includes it.
+
+### Validation
+
+- Passed 227 Worker tests with local D1 and mocked Telegram, plus 241 Python tests (468 total), including formatting, spoilers, inline messages, diagnostics, undo, failure safety and bounded health monitoring. External provider availability is not established by these tests.
+
 ## [2.0.11] - 2026-11-15
 
 ### Changed

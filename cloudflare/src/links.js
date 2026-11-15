@@ -1,3 +1,4 @@
+import {pickHealthy} from './provider-policy.js';
 import { PROVIDERS, TRACKING, PLATFORM_TRACKING, INSTAGRAM_CONTENT_QUERY, INSTAGRAM_CONTENT_PATH, GENERIC_TRACKING, YOUTUBE_HOSTS,
   YOUTUBE_TRACKING, AMAZON_TLDS, AMAZON_TRACKING, EBAY_TLDS, EBAY_TRACKING,
   ALIEXPRESS_DOMAINS, ALIEXPRESS_TRACKING, LINKEDIN_TRACKING, PINTEREST_DOMAINS,
@@ -80,7 +81,7 @@ export function fixedFor(raw, platform, key) {
 }
 // Recognize pasted embed-proxy links, while leaving deliberate browser
 // frontends (e.g. XCancel/Redlib) alone.
-const rewritePlatform=u=>platformFor(u)??Object.entries(PROVIDERS).find(([,p])=>
+export const rewritePlatform=u=>platformFor(u)??Object.entries(PROVIDERS).find(([,p])=>
   Object.entries(p.options).some(([key,host])=>hostOf(u)===host&&!Object.hasOwn(p.noauth_embed??{},key)))?.[0]??null;
 function canonical(raw) {
   const u = new URL(raw), h = hostOf(u);
@@ -123,7 +124,7 @@ export async function expand(raw, net=fetch) {
   }
   return current;
 }
-export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fetch, clean=false) {
+export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fetch, clean=false, health={}) {
   const [trimmed,tail] = trim(raw);
   let input;
   try {input = new URL(trimmed);} catch {return {url:raw};}
@@ -137,16 +138,21 @@ export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fe
   if ((overrides[platform]??(platform==='weibo'?0:1))===0) return {url:raw};
   if (platform==='instagram' && !instagramContentPath.test(new URL(expanded).pathname) && !/^\/(s|share)\//i.test(new URL(expanded).pathname)) return {url:stripTracking(expanded,platform)+tail,preview:stripTracking(expanded,platform),raw:trimmed};
   const p = PROVIDERS[platform], preferred = p.options[choices[platform]]?choices[platform]:p.default;
+  const preferredPreview=p.noauth_embed?.[preferred]??preferred;
+  const previewKey=settings.provider_fallback===0?preferredPreview:pickHealthy(platform,preferredPreview,health[platform]);
+  const preserveBrowser=Object.hasOwn(p.noauth_embed??{},preferred);
+  const selected=preserveBrowser?preferred:previewKey;
   // Post immediately with the selected provider. HTTP 403/404 on a single post
   // is not proof of provider failure; the button lets users choose an alternative.
-  const fixed = fixedFor(expanded,platform,preferred);
-  return {...fixed,url:fixed.url+tail,platform,key:preferred,raw:trimmed};
+  const fixed = fixedFor(expanded,platform,selected);
+  if(preserveBrowser&&previewKey!==preferredPreview)fixed.preview=applyProvider(expanded,platform,previewKey);
+  return {...fixed,url:fixed.url+tail,platform,key:selected,previewKey,raw:trimmed};
 }
-export async function processText(text, settings, choices, overrides, net=fetch, clean=false) {
+export async function processText(text, settings, choices, overrides, net=fetch, clean=false, health={}) {
   const tokens = [...new Set(text.match(/https?:\/\/[^\s<>]+/gi)??[])];
   // Bound external calls below Workers Free's subrequest limit.
   if (tokens.length>8) return {text,links:[],tooMany:true};
-  const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,net,clean)})));
+  const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,net,clean,health)})));
   const changed = results.filter(r=>r.original!==r.url || r.platform==='youtube' || (r.platform&&r.preview&&r.preview!==trim(r.url)[0]));
   const replacements = new Map(changed.map(r=>[r.original,r.url]));
   return {text:text.replace(/https?:\/\/[^\s<>]+/gi,m=>replacements.get(m)??m),links:changed};

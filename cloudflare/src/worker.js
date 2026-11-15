@@ -1,5 +1,7 @@
 import {PROVIDERS,PROVIDER_REVISION} from './config.js';
 import {processText,urls,trim,senderLabel,escapeHTML as h} from './links.js';
+import {captureOriginal} from './formatting.js';
+import {runHealthChecks} from './health.js';
 import {messageSource,linkIdentity,formatRepost} from './messages.js';
 import {Store,DEFAULTS} from './store.js';
 import {Telegram,TelegramError} from './telegram.js';
@@ -37,15 +39,18 @@ async function activate(request,env,store) {
     return json({ok:true,username:me.username});
   } catch {return json({error:'Token verified, but Telegram could not connect the webhook. Try activating again.'},502);}
 }
-async function inline(query,tg) {
+async function inline(query,tg,store) {
   const source=query.query??'';
   if(!urls(source).length)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'hint',title:'Paste a social link',input_message_content:{message_text:'Paste a link after the bot username.'}}]});
-  const result=await processText(source,DEFAULTS,{},{});
+  const result=await processText(source,DEFAULTS,{},{},fetch,false,await store.health());
+  if(result.tooMany)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'limit',title:'Use up to 8 links per message',input_message_content:{message_text:'Use up to 8 links per inline message, then try again.',link_preview_options:{is_disabled:true}}}]});
   const first=result.links[0];
   const link=first?.url??urls(source)[0];
+  // Inline mode keeps the entire query, not just its first URL.
+  if(result.text.length>4096)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'too-long',title:'Message is too long — shorten it first',input_message_content:{message_text:'This message exceeds Telegram’s limit. Shorten it and try again.',link_preview_options:{is_disabled:true}}}]});
   return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:10,is_personal:true,results:[{
-    type:'article',id:'fixed',title:first?'Fixed link':'Clean link',description:link,
-    input_message_content:{message_text:link,link_preview_options:{is_disabled:false,url:first?.preview??link,show_above_text:true,prefer_large_media:true}},
+    type:'article',id:'fixed',title:first?'Fixed links':'Clean links',description:link,
+    input_message_content:{message_text:result.text,link_preview_options:{is_disabled:false,url:first?.preview??link,show_above_text:true,prefer_large_media:true}},
   }]});
 }
 async function rewrite(msg,update,store,tg,ctx) {
@@ -64,7 +69,7 @@ async function rewrite(msg,update,store,tg,ctx) {
     }
     return;
   }
-  const result=await processText(text,settings,state.choices,state.overrides);
+  const result=await processText(text,settings,state.choices,state.overrides,fetch,false,state.health);
   if(result.tooMany||!result.links.length)return;
   if(!await store.rate(chat,user,update.update_id,settings.rate_limit,settings.rate_window,stamp)) {
     if(await store.claimRecent('ratewarn',chat,String(user),settings.rate_window,stamp)) await tg.send(chat,'⏱ Slow down — link rate limit reached.');
@@ -79,12 +84,12 @@ async function rewrite(msg,update,store,tg,ctx) {
     }
     if(!reservations.length)return;
     const first=result.links[0],label=senderLabel(msg.from,settings.sender_mode);
-    let {html,plain}=formatRepost({text:msg.text??msg.caption??'',
+    let {html,plain,fallback,protectedLinks}=formatRepost({text:msg.text??msg.caption??'',
       entities:msg.text!==undefined?msg.entities:msg.caption_entities,
       plainText:result.text,links:result.links,label});
-    const preview=first.preview?{is_disabled:false,url:first.preview,prefer_large_media:true,show_above_text:true}:undefined;
+    const preview=protectedLinks?{is_disabled:true}:first.preview?{is_disabled:false,url:first.preview,prefer_large_media:true,show_above_text:true}:undefined;
     let keyboard;
-    if(result.links.length===1&&first.platform) {
+    if(!protectedLinks&&result.links.length===1&&first.platform) {
       const options=Object.keys(PROVIDERS[first.platform].options);
       if(options.length>1)keyboard=cycleKeyboard(first.platform,(options.indexOf(first.key)+1)%options.length,(await hash(linkIdentity(first.url,first.platform))).slice(0,12));
     }
@@ -92,6 +97,17 @@ async function rewrite(msg,update,store,tg,ctx) {
     // Telegram's limit. Very long URLs use short clickable labels instead.
     const companion=plain.length>4096;
     if(companion) {
+      fallback=undefined;
+      // A long spoiler must never be exposed in a plain companion reply.
+      if(protectedLinks) {
+        if(await store.claimRecent('formatwarn',chat,String(user),60,stamp)) {
+          await tg.send(chat,'This formatted message is too long to replace safely. Your original message was kept.',
+            {link_preview_options:{is_disabled:true},message_thread_id:msg.message_thread_id,
+              reply_parameters:{message_id:msg.message_id,allow_sending_without_reply:true}});
+          ctx.sent=true;
+        }
+        return;
+      }
       plain=result.links.map(link=>link.url).join('\n');
       if(plain.length>4096) {
         html=result.links.map((link,i)=>`<a href="${h(trim(link.url)[0])}">Open fixed link ${i+1}</a>`).join('\n');
@@ -101,12 +117,13 @@ async function rewrite(msg,update,store,tg,ctx) {
     const replyId=companion||msg.caption||update.edited_message||update.edited_channel_post?msg.message_id:msg.reply_to_message?.message_id;
     await store.finishUpdate(update.update_id,'sending',stamp);
     const delivered=await tg.deliver(chat,html,plain,{link_preview_options:preview,reply_markup:keyboard,
-      message_thread_id:msg.message_thread_id,reply_parameters:replyId?{message_id:replyId,allow_sending_without_reply:true}:undefined});
+      fallback_message:fallback,message_thread_id:msg.message_thread_id,reply_parameters:replyId?{message_id:replyId,allow_sending_without_reply:true}:undefined});
     sent=true;ctx.sent=true;
-    // Only a confirmed replacement permits deletion. Captions keep their media.
-    if(update.message?.text&&!companion) await tg.remove(chat,msg.message_id);
+    // Persist recoverable content before deletion; storage errors keep originals.
     await store.record(chat,delivered.message_id,first.raw??first.original,label,
-      reservations.map(r=>r.platform).filter(Boolean),user,stamp);
+      reservations.map(r=>r.platform).filter(Boolean),user,stamp,
+      {original:captureOriginal(msg),platform:first.platform,provider:first.previewKey??first.key});
+    if(update.message?.text&&!companion) await tg.remove(chat,msg.message_id);
   } finally {
     if(!sent) {
       for(const r of reservations)await store.releaseRecent('fix',chat,r.eventKey,stamp);
@@ -120,10 +137,14 @@ export default {
     if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
     if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
       const row=await store.stmt('SELECT username,activated FROM runtime_config WHERE id=1').first();
-      return json({service:'KkInstafix',version:'2.0.11',hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,provider_options:Object.values(PROVIDERS).reduce((n,p)=>n+Object.keys(p.options).length,0),active:!!row?.activated,bot:row?.activated?row.username:undefined});
+      return json({service:'KkInstafix',version:'2.1.0',hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,provider_options:Object.values(PROVIDERS).reduce((n,p)=>n+Object.keys(p.options).length,0),active:!!row?.activated,bot:row?.activated?row.username:undefined});
     }
     if(request.method==='POST'&&url.pathname==='/setup') {
       try{return await activate(request,env,store);}catch{console.error(JSON.stringify({event:'setup_error'}));return json({error:'Setup could not complete. Try again.'},500);}
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/check-providers') {
+      if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
+      return json(await runHealthChecks(store,{stamp:now()}));
     }
     if(request.method==='POST'&&url.pathname==='/admin/status') {
       if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
@@ -132,7 +153,9 @@ export default {
       try {
         const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY));
         const [info,me]=await Promise.all([tg.call('getWebhookInfo'),tg.call('getMe')]);
-        return json({active:true,bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
+        const health=await store.health();
+        const healthRows=Object.values(health).flatMap(p=>Object.values(p));
+        return json({active:true,provider_health:{checked:healthRows.length,temporarily_skipped:healthRows.filter(r=>r.cooldown_until>now()).length,last_check:Math.max(0,...healthRows.map(r=>r.checked_at))},bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
           supports_inline_queries:me.supports_inline_queries},webhook:{
           url:(info.url??'').replace(/\d+:[A-Za-z0-9_-]+/g,'[redacted]'),pending_update_count:info.pending_update_count,
           last_error_date:info.last_error_date,last_error_message:info.last_error_message,
@@ -153,7 +176,7 @@ export default {
     try {
       const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY));
       tg.username=config.username;
-      if(update.inline_query)await inline(update.inline_query,tg);
+      if(update.inline_query)await inline(update.inline_query,tg,store);
       else if(update.callback_query)await callback(update.callback_query,store,tg);
       else {
         const msg=update.message??update.edited_message??update.channel_post??update.edited_channel_post;
@@ -174,5 +197,5 @@ export default {
       return json({error:'Temporarily unavailable'},503,code===429?{'Retry-After':String(error.retryAfter??30)}:{});
     }
   },
-  async scheduled(_event,env) {await new Store(env.DB).cleanup(now());},
+  async scheduled(_event,env) {const store=new Store(env.DB);await store.cleanup(now());await runHealthChecks(store,{stamp:now()});},
 };

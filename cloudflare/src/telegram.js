@@ -15,10 +15,13 @@ export class Telegram {
   }
   async send(chat,text,options={}) {return this.call('sendMessage',{chat_id:chat,text,disable_notification:true,...options});}
   async deliver(chat,html,plain,options={}) {
+    const {fallback_message,...deliveryOptions}=options;
+    options=deliveryOptions;
+    const fallback=fallback_message??{text:plain};
     const attempts=[{text:html,parse_mode:'HTML',...options},
-      {text:plain,...options,parse_mode:undefined,reply_markup:undefined},
-      {text:plain,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined},
-      {text:plain,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined,reply_parameters:undefined}];
+      {...fallback,...options,parse_mode:undefined,reply_markup:undefined},
+      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined},
+      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined,reply_parameters:undefined}];
     for (const attempt of attempts) {
       try {return await this.send(chat,attempt.text,attempt);}
       catch(error) {

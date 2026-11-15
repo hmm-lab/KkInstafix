@@ -12,13 +12,14 @@ export class Store {
   constructor(db) { this.db=db; }
   stmt(sql,...params) { return this.db.prepare(sql).bind(...params); }
   async settings(chat,user=0) {
-    const [settings,users,providers,overrides,optout,muted] = await this.db.batch([
+    const [settings,users,providers,overrides,optout,muted,health] = await this.db.batch([
       this.stmt('SELECT * FROM chat_settings WHERE chat_id=?',chat),
       this.stmt('SELECT key,value FROM user_settings WHERE chat_id=? AND user_id=?',chat,user),
       this.stmt('SELECT platform,provider FROM provider_settings WHERE chat_id=?',chat),
       this.stmt('SELECT platform,enabled FROM platform_overrides WHERE chat_id=?',chat),
       this.stmt('SELECT user_id FROM optout_users WHERE chat_id=? AND user_id=?',chat,user),
       this.stmt('SELECT user_id FROM blocked_users WHERE chat_id=? AND user_id=?',chat,user),
+      this.stmt('SELECT * FROM provider_health'),
     ]);
     const result={...DEFAULTS,...settings.results[0]};
     for (const row of users.results) {
@@ -27,7 +28,8 @@ export class Store {
     }
     return {settings:result, choices:Object.fromEntries(providers.results.filter(r=>PROVIDERS[r.platform]?.options[r.provider]).map(r=>[r.platform,r.provider])),
       overrides:Object.fromEntries(overrides.results.map(r=>[r.platform,r.enabled])),
-      optout:!!optout.results.length,muted:!!muted.results.length};
+      optout:!!optout.results.length,muted:!!muted.results.length,
+      health:Object.fromEntries(Object.keys(PROVIDERS).map(p=>[p,Object.fromEntries(health.results.filter(r=>r.platform===p).map(r=>[r.provider,r]))]))};
   }
   async setSetting(chat,key,value) {
     if (!validSetting(key,value)) throw new Error('Invalid setting');
@@ -58,13 +60,17 @@ export class Store {
       ON CONFLICT DO NOTHING RETURNING event_id`,chat,user,event,now,chat,user,now-window,limit).first();
     return !!row;
   }
-  async record(chat,id,raw,sender,platforms,user,now) {
+  async record(chat,id,raw,sender,platforms,user,now,details=null) {
     const stmts=[this.stmt('INSERT OR REPLACE INTO rewritten_messages VALUES(?,?,?,?,?)',chat,id,raw,sender,now)];
+    if(details)stmts.push(this.stmt('INSERT OR REPLACE INTO message_originals VALUES(?,?,?,?,?,?)',chat,id,JSON.stringify(details.original),details.platform??null,details.provider??null,now));
     for (const p of platforms) stmts.push(this.stmt(`INSERT INTO chat_stats VALUES(?,?,?,1,?)
       ON CONFLICT(chat_id,platform,sender_id) DO UPDATE SET count=count+1,last_ts=excluded.last_ts`,chat,p,user,now));
     await this.db.batch(stmts);
   }
   async rewrite(chat,id) {return this.stmt('SELECT * FROM rewritten_messages WHERE chat_id=? AND bot_msg_id=?',chat,id).first();}
+  async original(chat,id) {return this.stmt('SELECT * FROM message_originals WHERE chat_id=? AND bot_msg_id=?',chat,id).first();}
+  async updateProvider(chat,id,provider) {await this.stmt('UPDATE message_originals SET provider=? WHERE chat_id=? AND bot_msg_id=?',provider,chat,id).run();}
+  async health() {const rows=(await this.stmt('SELECT * FROM provider_health').all()).results;return Object.fromEntries(Object.keys(PROVIDERS).map(p=>[p,Object.fromEntries(rows.filter(r=>r.platform===p).map(r=>[r.provider,r]))]));}
   async export(chat) {
     const names=['chat_settings','provider_settings','blocked_users','platform_overrides','optout_users','user_settings'];
     const data=await this.db.batch(names.map(n=>this.stmt(`SELECT * FROM ${n} WHERE chat_id=?`,chat)));
@@ -80,6 +86,7 @@ export class Store {
       this.stmt('DELETE FROM recent_events WHERE ts<?',now-3600),
       this.stmt('DELETE FROM rate_events WHERE ts<?',now-3600),
       this.stmt('DELETE FROM rewritten_messages WHERE ts<?',now-7*86400),
+      this.stmt('DELETE FROM message_originals WHERE ts<?',now-7*86400),
     ]);
   }
 }

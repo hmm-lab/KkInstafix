@@ -5,6 +5,11 @@ import {createHash} from 'node:crypto';
 import {Miniflare} from 'miniflare';
 import {fixLink,processText,stripTracking,platformFor} from '../src/links.js';
 import {PROVIDERS} from '../src/config.js';
+import {Store} from '../src/store.js';
+import {entityHTML,rewriteEntities,captureOriginal} from '../src/formatting.js';
+import {runHealthChecks,probeURL,usableMetadata,probePlan,CONTENT_SAMPLES,OBSERVATION_SAMPLES} from '../src/health.js';
+import {pickHealthy,quarantined} from '../src/provider-policy.js';
+import {diagnosticURL} from '../src/diagnostics.js';
 import {messageSource,formatRepost} from '../src/messages.js';
 import {Telegram,TelegramError} from '../src/telegram.js';
 
@@ -60,7 +65,7 @@ for(const [raw,expected] of [
 ])test('link parity: '+raw,async()=>assert.equal((await fixLink(raw)).url,expected));
 
 test('disabled platforms remain completely unchanged',async()=>assert.equal((await fixLink('https://twitter.com/u/status/1?t=x',{}, {}, {twitter:0})).url,'https://twitter.com/u/status/1?t=x'));
-test('no-account frontend retains separate preview',async()=>assert.deepEqual(await fixLink('https://twitter.com/u/status/1',{}, {twitter:'xcancel'}),{url:'https://xcancel.com/u/status/1',preview:'https://vxtwitter.com/u/status/1',platform:'twitter',key:'xcancel',raw:'https://twitter.com/u/status/1'}));
+test('no-account frontend retains separate preview',async()=>assert.deepEqual(await fixLink('https://twitter.com/u/status/1',{}, {twitter:'xcancel'}),{url:'https://xcancel.com/u/status/1',preview:'https://vxtwitter.com/u/status/1',platform:'twitter',key:'xcancel',previewKey:'vx',raw:'https://twitter.com/u/status/1'}));
 test('multiple URLs keep message context, punctuation and fragments',async()=>{
   const r=await processText('See https://twitter.com/u/status/1, and https://example.com/a?utm_source=x#frag.',{}, {}, {});
   assert.equal(r.text,'See https://twitter.com/u/status/1, and https://example.com/a#frag.');
@@ -115,7 +120,7 @@ test('flood control requests Telegram retry without a burst or premature deletio
 });
 test('format rejection falls back to useful rewritten text',async()=>{
   failure={code:400,once:true};calls.length=0;await update(message('https://twitter.com/u/status/107',5,-1005));
-  const sends=calls.filter(c=>c.method==='sendMessage');assert.equal(sends.length,2);assert.match(sends[1].data.text,/https:\/\/twitter.com\//);assert.ok(!sends[1].data.parse_mode);
+  const sends=calls.filter(c=>c.method==='sendMessage');assert.equal(sends.length,2);assert.ok(sends[1].data.entities.some(e=>e.type==='text_link'&&e.url.startsWith('https://twitter.com/')));assert.ok(!sends[1].data.parse_mode);
 });
 test('delete permission failure does not resend or erase delivery',async()=>{
   deleteFail=true;calls.length=0;await update(message('https://twitter.com/u/status/108',5,-1006));
@@ -368,8 +373,8 @@ test('HTML fallback retains the destination of an unchanged hidden hyperlink',as
   const text='See details https://instagram.com/reel/FallbackEntity';
   await update(message(text,5,-5206,{entities:[{type:'text_link',offset:4,length:7,url:'https://example.com/details'}]}));
   const sends=calls.filter(c=>c.method==='sendMessage');
-  assert.equal(sends.length,2);assert.match(sends[1].data.text,/https:\/\/example.com\/details/);
-  assert.match(sends[1].data.text,/instagram.com/);
+  assert.equal(sends.length,2);assert.ok(sends[1].data.entities.some(e=>e.url==='https://example.com/details'));
+  assert.ok(sends[1].data.entities.some(e=>e.url?.includes('instagram.com')));
 });
 
 test('rewritten linked text retains its clickable label',async()=>{
@@ -431,7 +436,7 @@ test('plain fallback uses official Instagram and preserves the proxy preview',as
   calls.length=0;failure={code:400,once:true};
   await update(message('https://instagram.com/reel/FallbackOfficial/?dlrf=secret',5,-5303));
   const sends=calls.filter(c=>c.method==='sendMessage');
-  assert.equal(sends.length,2);assert.match(sends[1].data.text,/https:\/\/instagram.com\/reel\/FallbackOfficial\//);
+  assert.equal(sends.length,2);assert.ok(sends[1].data.entities.some(e=>e.url==='https://instagram.com/reel/FallbackOfficial/'));
   assert.ok(!sends[1].data.text.includes('eeinstagram.com'));assert.ok(!sends[1].data.text.includes('dlrf'));
   assert.equal(sends[1].data.link_preview_options.url,'https://eeinstagram.com/reel/FallbackOfficial/');
 });
@@ -727,5 +732,241 @@ test('YouTube canonicalization keeps playlist and playback settings on short lin
     assert.equal(q.get('list'),'PL123');assert.equal(q.get('index'),'2');
     assert.equal(q.get('t'),'30');assert.equal(q.get('start'),'20');assert.equal(q.get('end'),'90');
     assert.ok(!target.includes('secret'));
+  }
+});
+
+// Full-message formatting, inline delivery, recovery and read-only diagnostics.
+test('nested formatting and UTF-16 ranges survive URL shortening and emoji',async()=>{
+  const raw='https://instagram.com/reel/Nested/?xtok=secret';
+  const text='📷 Watch '+raw+' now';
+  const entities=[{type:'bold',offset:3,length:text.length-3},{type:'italic',offset:3,length:5},
+    {type:'underline',offset:9,length:raw.length},{type:'url',offset:9,length:raw.length}];
+  const result=await processText(messageSource({text,entities}),{}, {}, {});
+  const formatted=formatRepost({text,entities,plainText:result.text,links:result.links,label:'Alice'});
+  assert.match(formatted.html,/<b><i>Watch<\/i> /);assert.match(formatted.html,/<u>https:\/\/instagram.com\/reel\/Nested\/<\/u>/);
+  assert.ok(!formatted.html.includes('secret'));
+  const bold=formatted.fallback.entities.find(e=>e.type==='bold');
+  assert.equal(formatted.fallback.text.slice(bold.offset,bold.offset+bold.length),'Watch https://instagram.com/reel/Nested/ now');
+});
+for(const [type,expected] of [['bold','<b>label</b>'],['italic','<i>label</i>'],['underline','<u>label</u>'],
+  ['strikethrough','<s>label</s>'],['spoiler','<tg-spoiler>label</tg-spoiler>'],['code','<code>label</code>'],
+  ['pre','<pre>label</pre>'],['blockquote','<blockquote>label</blockquote>'],['expandable_blockquote','<blockquote expandable>label</blockquote>']])
+ test('preserves Telegram formatting: '+type,()=>assert.equal(entityHTML('label',[{type,offset:0,length:5}]),expected));
+test('language code, text mentions and custom emoji are escaped and preserved',()=>{
+  assert.equal(entityHTML('x < y',[{type:'pre',offset:0,length:5,language:'python'}]),'<pre><code class="language-python">x &lt; y</code></pre>');
+  assert.equal(entityHTML('Alice',[{type:'text_mention',offset:0,length:5,user:{id:5}}]),'<a href="tg://user?id=5">Alice</a>');
+  assert.equal(entityHTML('😀',[{type:'custom_emoji',offset:0,length:2,custom_emoji_id:'123'}]),'<tg-emoji emoji-id="123">😀</tg-emoji>');
+});
+test('code entities do not acquire forbidden nested URL entities',async()=>{
+  const text='https://instagram.com/reel/Code/?xtok=secret',entities=[{type:'code',offset:0,length:text.length}];
+  const result=await processText(messageSource({text,entities}),{}, {}, {});
+  const formatted=formatRepost({text,entities,plainText:result.text,links:result.links,label:''});
+  assert.equal(formatted.html,'<code>https://instagram.com/reel/Code/</code>');
+  assert.deepEqual(formatted.fallback.entities.map(e=>e.type),['code']);
+});
+test('spoiler link disables preview, attribution hyperlink and retry control',async()=>{
+  calls.length=0;const text='https://instagram.com/reel/SecretSpoiler/?xtok=secret';
+  await update(message(text,5,-6101,{entities:[{type:'spoiler',offset:0,length:text.length}]}));
+  const sent=calls.find(c=>c.method==='sendMessage');
+  assert.match(sent.data.text,/<tg-spoiler>https:\/\/instagram.com\/reel\/SecretSpoiler\/<\/tg-spoiler>/);
+  assert.equal(sent.data.link_preview_options.is_disabled,true);assert.ok(!sent.data.reply_markup);
+  assert.ok(!sent.data.text.includes('<a href='));
+});
+test('format fallback preserves spoilers through native entities rather than exposing text',async()=>{
+  calls.length=0;failure={code:400,once:true};
+  const text='Hidden https://instagram.com/reel/FallbackSpoiler/?xtok=secret';
+  await update(message(text,5,-6102,{entities:[{type:'spoiler',offset:0,length:text.length}]}));
+  const sends=calls.filter(c=>c.method==='sendMessage');assert.equal(sends.length,2);
+  assert.ok(sends[1].data.entities.some(e=>e.type==='spoiler'));
+  assert.ok(!sends[1].data.text.includes('secret'));assert.equal(sends[1].data.link_preview_options.is_disabled,true);
+  assert.ok(!('fallback_message' in sends[1].data));
+});
+test('inline mode preserves surrounding text and every supported URL',async()=>{
+  calls.length=0;await update({update_id:++id,inline_query:{id:'inline-context-all',from:{id:5},query:'Compare https://x.com/a/status/99?si=secret with https://instagram.com/reel/InlineMulti/?xtok=secret please.'}});
+  const content=calls.find(c=>c.method==='answerInlineQuery').data.results[0].input_message_content;
+  assert.equal(content.message_text,'Compare https://x.com/a/status/99 with https://instagram.com/reel/InlineMulti/ please.');
+  assert.equal(content.link_preview_options.show_above_text,true);
+});
+test('too many inline links return an explicit limit rather than just the first link',async()=>{
+  calls.length=0;await update({update_id:++id,inline_query:{id:'inline-limit',from:{id:5},query:Array.from({length:9},(_,i)=>`https://x.co/${i}`).join(' ')}});
+  const item=calls.find(c=>c.method==='answerInlineQuery').data.results[0];
+  assert.equal(item.id,'limit');assert.match(item.input_message_content.message_text,/8 links/);
+});
+test('undo restores the entire original message and its formatting',async()=>{
+  calls.length=0;const chat=-6110,text='📷 Remember this https://instagram.com/reel/FullUndo/?xtok=original';
+  const entities=[{type:'bold',offset:3,length:8},{type:'spoiler',offset:3,length:8}];
+  await update(message(text,5,chat,{entities}));
+  const stored=await db.prepare('SELECT * FROM message_originals WHERE chat_id=?').bind(chat).first();
+  assert.ok(stored);assert.equal(JSON.parse(stored.original_json).text,text);
+  calls.length=0;await update(message('/undo',5,chat,{reply_to_message:{message_id:stored.bot_msg_id}}));
+  const restored=calls.find(c=>c.method==='sendMessage');
+  assert.equal(restored.data.text,text);assert.deepEqual(restored.data.entities,entities);
+  assert.equal(restored.data.link_preview_options.is_disabled,true);assert.ok(!restored.data.parse_mode);
+});
+test('undo restores a captioned attachment using its Telegram file ID and spoiler flag',async()=>{
+  const chat=-6111,caption='Caption https://instagram.com/reel/CaptionUndo/';
+  const caption_entities=[{type:'italic',offset:0,length:7}];
+  calls.length=0;await update(message(undefined,5,chat,{caption,caption_entities,photo:[{file_id:'small-photo'},{file_id:'large-photo'}],has_media_spoiler:true}));
+  const stored=await db.prepare('SELECT * FROM message_originals WHERE chat_id=?').bind(chat).first();
+  calls.length=0;await update(message('/undo',5,chat,{reply_to_message:{message_id:stored.bot_msg_id}}));
+  const restored=calls.find(c=>c.method==='sendPhoto');
+  assert.equal(restored.data.photo,'large-photo');assert.equal(restored.data.caption,caption);
+  assert.deepEqual(restored.data.caption_entities,caption_entities);assert.equal(restored.data.has_spoiler,true);
+});
+test('undo snapshots are scoped to their original chat and expire after seven days',async()=>{
+  const store=new Store(db),stamp=Math.floor(Date.now()/1000);
+  await store.record(-6112,991,'https://example.com','Alice',[],5,stamp-8*86400,{original:{text:'old secret'},platform:null,provider:null});
+  calls.length=0;await update(message('/undo',5,-6113,{reply_to_message:{message_id:991}}));
+  assert.ok(!calls.find(c=>c.method==='sendMessage').data.text.includes('old secret'));
+  await store.cleanup(stamp);assert.equal(await store.original(-6112,991),null);
+});
+test('older rewritten messages retain URL-only undo compatibility',async()=>{
+  await db.prepare('INSERT INTO rewritten_messages VALUES(?,?,?,?,?)').bind(-6114,992,'https://example.com/old','Alice',Math.floor(Date.now()/1000)).run();
+  calls.length=0;await update(message('/undo',5,-6114,{reply_to_message:{message_id:992}}));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.match(sent.data.text,/older post/);assert.match(sent.data.text,/https:\/\/example.com\/old/);
+});
+test('diagnose redacts query values and does not claim dedup or rate slots',async()=>{
+  calls.length=0;const chat=-6120;
+  await update(message('/diagnose https://youtube.com/watch?v=privateVideo&t=30&si=privateShare&utm_future=privateCampaign',5,chat));
+  const sent=calls.find(c=>c.method==='sendMessage');
+  assert.match(sent.data.text,/would send/);assert.match(sent.data.text,/Removed parameters:<\/b> si, utm_future/);
+  assert.match(sent.data.text,/Retained parameters:<\/b> v, t/);
+  assert.ok(!/privateVideo|privateShare|privateCampaign/.test(sent.data.text));
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM rate_events WHERE chat_id=?').bind(chat).first()).n,0);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM recent_events WHERE chat_id=?').bind(chat).first()).n,0);
+  assert.ok(!diagnosticURL('https://user:password@example.com/a?token=private#secret').includes('password'));
+});
+test('diagnose explains per-user opt-out, muted senders and forwarded messages',async()=>{
+  const raw='https://instagram.com/reel/DiagnoseSkipped/';
+  await update(message('/optout',5,-6121));calls.length=0;await update(message('/diagnose '+raw,5,-6121));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/sender opted out/);
+  await db.prepare('INSERT INTO blocked_users VALUES(-6122,5)').run();
+  calls.length=0;await update(message('/diagnose',7,-6122,{reply_to_message:message(raw,5,-6122)}));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/sender is muted/);
+  calls.length=0;await update(message('/diagnose',7,-6123,{reply_to_message:message(raw,5,-6123,{forward_origin:{type:'user'}})}));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/forwarded posts are disabled/);
+});
+test('diagnose explains disabled platforms, deduplication and active rate limiting',async()=>{
+  const raw='https://instagram.com/reel/DiagnoseDedup/';
+  await db.prepare("INSERT INTO platform_overrides VALUES(-6124,'instagram',0)").run();
+  calls.length=0;await update(message('/diagnose '+raw,5,-6124));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/platform disabled/);
+  await update(message(raw,5,-6125));calls.length=0;await update(message('/diagnose '+raw,5,-6125));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/duplicate within/);
+  await db.prepare('INSERT INTO chat_settings(chat_id,rate_limit) VALUES(-6126,1)').run();
+  await update(message(raw,5,-6126));calls.length=0;await update(message('/diagnose https://instagram.com/reel/NewRateDiagnosis/',5,-6126));
+  assert.match(calls.find(c=>c.method==='sendMessage').data.text,/rate limit reached/);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM rate_events WHERE chat_id=-6126').first()).n,1);
+});
+test('a stored full original is used when diagnosing a rewritten message',async()=>{
+  const chat=-6127,text='See https://instagram.com/reel/DiagnoseOriginal/?xtok=private';
+  await update(message(text,5,chat));
+  const row=await db.prepare('SELECT * FROM message_originals WHERE chat_id=?').bind(chat).first();
+  calls.length=0;await update(message('/diagnose',7,chat,{reply_to_message:{message_id:row.bot_msg_id,text:'Shared by Alice',from:{id:123456,is_bot:true}}}));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.match(sent.data.text,/xtok/);assert.ok(!sent.data.text.includes('another bot'));
+});
+
+// Conservative background health policy: public samples only, never user posts.
+const publicCard=()=>new Response('<meta property="og:title" content="Author"><meta property="og:image" content="https://cdn.example/image.jpg">',{headers:{'Content-Type':'text/html'}});
+const healthStore=()=>new Store(db);
+async function resetHealthAt(platform,provider,stamp) {
+  await db.prepare('DELETE FROM provider_health').run();await db.prepare('DELETE FROM provider_probe_cursor').run();
+  const start=probePlan().findIndex(p=>p.platform===platform&&p.provider===provider);
+  assert.ok(start>=0);await db.prepare('INSERT INTO provider_probe_cursor VALUES(1,?,?)').bind(start,Math.floor(stamp/3600)-1).run();
+}
+test('three corroborated public-content failures are required before a temporary cooldown',async()=>{
+  const stamp=Math.floor(Date.now()/1000)-7200,store=healthStore();await resetHealthAt('instagram','vx',stamp);
+  const plan=probePlan(),start=plan.findIndex(p=>p.platform==='instagram'&&p.provider==='vx');
+  const net=async url=>new URL(url).hostname==='vxinstagram.com'?new Response('',{status:404}):publicCard();
+  for(let n=0;n<3;n++) {
+    if(n)await db.prepare('UPDATE provider_probe_cursor SET cursor=?').bind(start).run();
+    await runHealthChecks(store,{net,stamp:stamp+n*3600,batchSize:1});
+    const row=await db.prepare("SELECT * FROM provider_health WHERE platform='instagram' AND provider='vx'").first();
+    assert.equal(row.failures,n+1);assert.equal(quarantined(row,stamp+n*3600),n===2);
+  }
+  const row=await db.prepare("SELECT * FROM provider_health WHERE platform='instagram' AND provider='vx'").first();
+  assert.equal(row.cooldown_until,stamp+7200+6*3600);
+  await db.prepare('DELETE FROM provider_health').run();
+});
+test('403s, unconfirmed failures and profile observations cannot quarantine providers',async()=>{
+  const stamp=Math.floor(Date.now()/1000),store=healthStore();
+  for(const kind of ['blocked','all-failed','profile']) {
+    const platform=kind==='profile'?'facebook':'instagram',provider=kind==='profile'?'bed':'vx';
+    await resetHealthAt(platform,provider,stamp);
+    const index=probePlan().findIndex(p=>p.platform===platform&&p.provider===provider);
+    for(let n=0;n<3;n++) {
+      if(n)await db.prepare('UPDATE provider_probe_cursor SET cursor=?').bind(index).run();
+      await runHealthChecks(store,{net:async()=>new Response('',{status:kind==='blocked'?403:404}),stamp:stamp+n*3600,batchSize:1});
+    }
+    const row=await db.prepare('SELECT * FROM provider_health WHERE platform=? AND provider=?').bind(platform,provider).first();
+    assert.equal(row.failures,0);assert.equal(row.cooldown_until,0);
+  }
+  await db.prepare('DELETE FROM provider_health').run();
+});
+test('healthy samples recover a provider and repeated cron delivery is idempotent',async()=>{
+  const stamp=Math.floor(Date.now()/1000),store=healthStore();await resetHealthAt('instagram','vx',stamp);
+  await db.prepare("INSERT INTO provider_health VALUES('instagram','vx',3,?,?,0,404,'confirmed_sample_failure')").bind(stamp+3600,stamp-3600).run();
+  let count=0;const net=async()=>{count++;return publicCard();};
+  await runHealthChecks(store,{net,stamp,batchSize:1});const firstCount=count;
+  const row=await db.prepare("SELECT * FROM provider_health WHERE platform='instagram' AND provider='vx'").first();
+  assert.equal(row.failures,0);assert.equal(row.cooldown_until,0);assert.equal(row.last_success_at,stamp);
+  assert.equal((await runHealthChecks(store,{net,stamp,batchSize:1})).checked,0);assert.equal(count,firstCount);
+  await db.prepare('DELETE FROM provider_health').run();
+});
+test('health-based selection respects explicit fallback-off and no-account browser preferences',async()=>{
+  const stamp=Math.floor(Date.now()/1000),row={cooldown_until:stamp+3600,checked_at:stamp};
+  const health={twitter:{vx:row},instagram:{ee:row}};
+  const fallback=await fixLink('https://instagram.com/reel/HealthFallback/',{}, {},{},fetch,false,health);
+  assert.notEqual(fallback.preview,'https://eeinstagram.com/reel/HealthFallback/');
+  const forced=await fixLink('https://instagram.com/reel/HealthForced/',{provider_fallback:0},{},{},fetch,false,health);
+  assert.equal(forced.preview,'https://eeinstagram.com/reel/HealthForced/');
+  const browser=await fixLink('https://twitter.com/a/status/1',{}, {twitter:'xcancel'},{},fetch,false,health);
+  assert.equal(browser.url,'https://xcancel.com/a/status/1');assert.notEqual(browser.preview,'https://vxtwitter.com/a/status/1');
+  assert.equal(pickHealthy('instagram','ee',{ee:{...row,cooldown_until:stamp-1}},stamp),'ee');
+});
+test('runtime avoids quarantined previews and retry skips them without changing saved settings',async()=>{
+  const stamp=Math.floor(Date.now()/1000),chat=-6130;
+  await db.prepare('DELETE FROM provider_health').run();
+  await db.prepare("INSERT INTO provider_health VALUES('instagram','ee',3,?,?,0,404,'confirmed_sample_failure')").bind(stamp+3600,stamp).run();
+  calls.length=0;await update(message('https://instagram.com/reel/RuntimeHealth/',5,chat));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.ok(sent);assert.ok(!sent.data.link_preview_options.url.includes('eeinstagram.com'));
+  calls.length=0;await update({update_id:++id,callback_query:{id:'skip-health',from:{id:5},data:'e:instagram:1',message:{message_id:100,chat:{id:chat,type:'supergroup'},text:'https://instagram.com/reel/RuntimeHealth/'}}});
+  assert.ok(!calls.find(c=>c.method==='editMessageText').data.link_preview_options.url.includes('eeinstagram.com'));
+  assert.equal(await db.prepare('SELECT * FROM provider_settings WHERE chat_id=?').bind(chat).first(),null);
+  await db.prepare('DELETE FROM provider_health').run();
+});
+test('probe response reads are bounded and external redirects are never followed',async()=>{
+  let cancelled=false;
+  const body=new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('<meta property="og:video" content="https://cdn.example/v.mp4">'+'x'.repeat(200000)));},cancel(){cancelled=true;}});
+  const result=await probeURL('https://eeinstagram.com/reel/Test',async()=>new Response(body,{headers:{'Content-Type':'text/html'}}));
+  assert.equal(result.kind,'success');assert.equal(cancelled,true);
+  let callsCount=0;const redirect=await probeURL('https://eeinstagram.com/reel/Test',async()=>{callsCount++;return new Response(null,{status:302,headers:{location:'http://127.0.0.1/private'}});});
+  assert.equal(redirect.kind,'uncertain');assert.equal(callsCount,1);
+  assert.equal(usableMetadata('<meta property="og:title" content="Log in"><meta property="og:image" content="logo.jpg">'),false);
+});
+test('all configured platforms have a public observation or content sample and no private input is persisted in health state',()=>{
+  for(const platform of Object.keys(PROVIDERS))assert.ok(CONTENT_SAMPLES[platform]||OBSERVATION_SAMPLES[platform]);
+  assert.ok(probePlan().every(p=>p.provider!=='native'&&!Object.hasOwn(PROVIDERS[p.platform].noauth_embed??{},p.provider)));
+});
+
+test('oversized spoiler links keep the original and return a non-revealing explanation',async()=>{
+  const prefix='http://youtube.com/watch?v=abc&list=';
+  const text=prefix+'z'.repeat(4096-prefix.length);
+  calls.length=0;await update(message(text,5,-6140,{entities:[{type:'spoiler',offset:0,length:text.length}]}));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.ok(sent);
+  assert.match(sent.data.text,/original message was kept/);
+  assert.ok(!sent.data.text.includes('youtube.com'));assert.equal(sent.data.link_preview_options.is_disabled,true);
+  assert.equal(calls.filter(c=>c.method==='deleteMessage').length,0);
+});
+test('snapshot storage failure preserves the original after a confirmed replacement',async()=>{
+  await db.prepare('DROP TABLE message_originals').run();
+  try {
+    calls.length=0;const {response,body}=await update(message('https://instagram.com/reel/StorageFailure/',5,-6141));
+    assert.equal(response.status,200);assert.equal(calls.filter(c=>c.method==='sendMessage').length,1);
+    assert.equal(calls.filter(c=>c.method==='deleteMessage').length,0);
+    assert.equal((await db.prepare('SELECT state FROM deliveries WHERE update_id=?').bind(body.update_id).first()).state,'delivered');
+  }finally {
+    const migration=await readFile(new URL('../migrations/0002-improvements.sql',import.meta.url),'utf8');
+    for(const sql of migration.split(';').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();
   }
 });

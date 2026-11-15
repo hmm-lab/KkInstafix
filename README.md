@@ -6,7 +6,9 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.1.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+
+The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
 ## Features
 
@@ -37,7 +39,9 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 
 ## Default providers
 
-- Instagram: `kkclip`
+The shared catalogue and current evidence are documented in [the provider review](cloudflare/PROVIDER_REVIEW.md).
+
+- Instagram: `ee`
 - Twitter/X: `vx`
 - TikTok: `tnk`
 - Reddit: `vx`
@@ -67,7 +71,8 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - `/providers` — show current providers and options (active provider in bold).
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
-- `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
+- `/undo` — Cloudflare restores the original text and formatting, or a supported single attachment with its caption, for new rewrites (7-day retention). Older records and the legacy Python bot provide the original URL.
+- `/diagnose` — Cloudflare: inspect a link or replied-to message, showing cleanup, preview provider, skip reasons and cached health without consuming posting quotas. Query values are hidden.
 - `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
 - `/preview` — reply to a message (or pass a URL) to see what the link would become (rewritten link, platform/provider, and cleaned version) without reposting it publicly.
 - `/optout` — stop the bot from rewriting/reposting your own links in this chat (no admin needed). `/optin` resumes.

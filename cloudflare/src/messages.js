@@ -1,3 +1,4 @@
+import {rewriteEntities,entityHTML,hasProtectedLinks} from './formatting.js';
 import {trim,stripTracking,escapeHTML as h} from './links.js';
 
 // Telegram entity offsets use UTF-16 units, just like JavaScript string slices.
@@ -25,16 +26,12 @@ export function messageSource(msg) {
   }
   return text;
 }
+export function transformedMessage(text,entities=[],replacements=new Map()) {
+  return rewriteEntities(text,entities,messageLinks(text,entities),replacements);
+}
 export function renderLinkedText(text,entities,replacements=new Map()) {
-  let html='',offset=0;
-  for(const e of messageLinks(text,entities)) {
-    if(e.offset<offset)continue;
-    const url=replacements.get(e.url)??e.url;
-    html+=h(text.slice(offset,e.offset));
-    html+=e.type==='text_link'?`<a href="${h(url)}">${h(text.slice(e.offset,e.offset+e.length))}</a>`:h(url);
-    offset=e.offset+e.length;
-  }
-  return html+h(text.slice(offset));
+  const rich=transformedMessage(text,entities,replacements);
+  return entityHTML(rich.text,rich.entities);
 }
 export function providerMatches(raw,config) {
   try {
@@ -50,15 +47,25 @@ export function linkIdentity(raw,platform,clean=true) {
 }
 
 // One renderer for all providers, captions and multi-link posts.
-export function formatRepost({text,entities,plainText,links,label}) {
+export function formatRepost({text,entities=[],plainText,links,label}) {
   const first=links[0],url=trim(first.url)[0];
   const replacements=new Map(links.map(link=>[trim(link.original)[0],trim(link.url)[0]]));
-  const attribution=label?`<i>Shared by <a href="${h(url)}">${h(label)}</a></i>`:'';
-  const bare=links.length===1&&text.trim()===first.raw;
+  const protectedLinks=hasProtectedLinks(text,entities,messageLinks(text,entities));
+  const attribution=label?(protectedLinks?`<i>Shared by ${h(label)}</i>`:`<i>Shared by <a href="${h(url)}">${h(label)}</a></i>`):'';
+  const meaningful=entities.some(e=>['bold','italic','underline','strikethrough','spoiler','code','pre','blockquote','expandable_blockquote','custom_emoji'].includes(e.type));
+  const bare=!meaningful&&links.length===1&&text.trim()===first.raw;
+  const rich=bare?{text:label?'Shared by '+label:'Open link',entities:label?
+    [{type:'italic',offset:0,length:10+label.length},{type:'text_link',offset:10,length:label.length,url}]:
+    [{type:'text_link',offset:0,length:9,url}]}:transformedMessage(text,entities,replacements);
+  if(!bare&&label) {
+    const offset=rich.text.length+2;rich.text+='\n\nShared by '+label;
+    rich.entities.push({type:'italic',offset,length:10+label.length});
+    if(!protectedLinks)rich.entities.push({type:'text_link',offset:offset+10,length:label.length,url});
+  }
   return {
     html:bare?(attribution||`<a href="${h(url)}">Open link</a>`):
       renderLinkedText(text,entities,replacements)+(attribution?'\n\n'+attribution:''),
-    plain:bare?(label?`Shared by ${label}\n${plainText}`:plainText):
-      plainText+(label?'\n\nShared by '+label:''),
+    plain:bare?(label?`Shared by ${label}\n${plainText}`:plainText):plainText+(label?'\n\nShared by '+label:''),
+    fallback:rich,protectedLinks,
   };
 }
