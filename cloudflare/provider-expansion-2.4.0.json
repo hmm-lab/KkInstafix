@@ -1,0 +1,65 @@
+{
+  "checked_at": "2026-11-15",
+  "version": "2.4.0",
+  "catalogue": {
+    "platforms": 23,
+    "options": 57
+  },
+  "limits": "Public HTTP metadata observations only; no Telegram playback test, no downloaded media. Generic pages are not verification. Responses may differ by region or time.",
+  "observations": [
+    {
+      "candidate": "furtrack.owo.lgbt",
+      "url": "https://furtrack.owo.lgbt/p/826598",
+      "status": 200,
+      "title": "Eigen rovak",
+      "media_host": "orca2.furtrack.com",
+      "decision": "enabled_photo_paths"
+    },
+    {
+      "candidate": "furtrack.owo.lgbt",
+      "url": "https://furtrack.owo.lgbt/p/1730526",
+      "status": 200,
+      "title": "Proxy (rabbit)",
+      "media_host": "orca2.furtrack.com",
+      "decision": "enabled_photo_paths"
+    },
+    {
+      "candidate": "furtrack.owo.lgbt",
+      "url": "https://furtrack.owo.lgbt/p/1",
+      "status": 200,
+      "description": "Post not found.",
+      "decision": "reject_error_metadata"
+    },
+    {
+      "candidate": "imgurez.com",
+      "url": "https://imgurez.com/CAvBSVj",
+      "status": 200,
+      "final_url": "https://embedez.com/download?q=https://imgur.com/CAvBSVj",
+      "title": "Unknown",
+      "decision": "not_enabled_generic_metadata"
+    },
+    {
+      "candidate": "imgurez.com",
+      "url": "https://imgurez.com/gallery/MPJKjrb",
+      "status": 200,
+      "final_url": "https://embedez.com/download?q=https://imgur.com/gallery/MPJKjrb",
+      "decision": "not_enabled_no_metadata_in_prefix"
+    },
+    {
+      "candidate": "song.link",
+      "source": "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8",
+      "status": 200,
+      "final_url": "https://song.link/s/4PTG3Z6ehGkBFwjybzWkR8",
+      "title": "Never Gonna Give You Up by Rick Astley",
+      "decision": "optional_redirect_sharing"
+    },
+    {
+      "candidate": "album.link",
+      "source": "https://open.spotify.com/album/4C4LvbYS0pxXLW5sGD9EK5",
+      "status": 200,
+      "final_url": "https://album.link/s/4C4LvbYS0pxXLW5sGD9EK5",
+      "title": "Whenever You Need Somebody (Deluxe Edition - 2022 Remaster) by Rick Astley",
+      "decision": "optional_redirect_sharing"
+    }
+  ]
+}

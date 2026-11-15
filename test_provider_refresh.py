@@ -75,3 +75,10 @@ def test_provider_hosts_use_original_platform_specific_cleanup_rules():
     from bot import clean_url, apply_provider
     assert clean_url("https://pinterestez.com/pin/1?rs=secret&amp=secret&keep=needed") == "https://pinterestez.com/pin/1?keep=needed"
     assert apply_provider("https://pinterest.com/pin/1?rs=secret&amp=secret&keep=needed", "pinterest", "ez") == "https://pinterestez.com/pin/1?keep=needed"
+
+
+def test_furtrack_verified_photo_paths_and_profiles():
+    from bot import get_platform, apply_provider
+    assert get_platform("www.furtrack.com", "/p/826598") == "furtrack"
+    assert get_platform("furtrack.com", "/user/Aero") is None
+    assert apply_provider("https://furtrack.com/p/826598?utm_source=secret", "furtrack", "fix") == "https://furtrack.owo.lgbt/p/826598"

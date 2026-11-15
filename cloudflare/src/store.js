@@ -8,6 +8,8 @@ export function validSetting(key,value) {
   if (key==='sender_mode') return ['first_name','username','full_name','none'].includes(value);
   return key==='caption_style' && value==='reply';
 }
+export const APPEARANCE=Object.freeze({attribution:1,preview_size:'large'});
+export function validAppearance(key,value) {return key==='attribution'?[0,1].includes(value):key==='preview_size'&&['compact','large'].includes(value);}
 export class Store {
   constructor(db,cache=null) { this.db=db;this.cache=cache; }
   stmt(sql,...params) { return this.db.prepare(sql).bind(...params); }
@@ -15,15 +17,24 @@ export class Store {
   async settings(chat,user=0,{includeHealth=true}={}) {
     const [settings,users,mappings,flags]=await this.db.batch([
       this.stmt('SELECT * FROM chat_settings WHERE chat_id=?',chat),
-      this.stmt('SELECT key,value FROM user_settings WHERE chat_id=? AND user_id=?',chat,user),
+      this.stmt('SELECT chat_id,key,value FROM user_settings WHERE user_id=? AND chat_id IN (0,?) ORDER BY CASE WHEN chat_id=0 THEN 0 ELSE 1 END',user,chat),
       this.stmt("SELECT platform,provider,NULL AS enabled,'provider' AS kind FROM provider_settings WHERE chat_id=? UNION ALL SELECT platform,NULL,enabled,'override' FROM platform_overrides WHERE chat_id=?",chat,chat),
       this.stmt('SELECT EXISTS(SELECT 1 FROM optout_users WHERE chat_id=? AND user_id=?) AS optout,EXISTS(SELECT 1 FROM blocked_users WHERE chat_id=? AND user_id=?) AS muted',chat,user,chat,user),
     ]);
-    const result={...DEFAULTS,...settings.results[0]};
-    for(const row of users.results) {const value=['sender_mode','caption_style'].includes(row.key)?row.value:Number(row.value);if(validSetting(row.key,value))result[row.key]=value;}
+    const result={...DEFAULTS,...settings.results[0],...APPEARANCE};
+    for(const row of users.results) {const value=['sender_mode','caption_style','preview_size'].includes(row.key)?row.value:Number(row.value);if(validAppearance(row.key,value)||(row.chat_id===chat&&validSetting(row.key,value)))result[row.key]=value;}
     return {settings:result,choices:Object.fromEntries(mappings.results.filter(r=>r.kind==='provider'&&PROVIDERS[r.platform]?.options[r.provider]).map(r=>[r.platform,r.provider])),
       overrides:Object.fromEntries(mappings.results.filter(r=>r.kind==='override').map(r=>[r.platform,r.enabled])),
       optout:!!flags.results[0]?.optout,muted:!!flags.results[0]?.muted,health:includeHealth?await this.health():{}};
+  }
+  async appearance(user) {
+    const rows=await this.stmt('SELECT key,value FROM user_settings WHERE user_id=? AND chat_id=0',user).all(),result={...APPEARANCE};
+    for(const row of rows.results){const value=row.key==='attribution'?Number(row.value):row.value;if(validAppearance(row.key,value))result[row.key]=value;}
+    return result;
+  }
+  async setAppearance(chat,user,key,value) {
+    if(!validAppearance(key,value))throw new Error('Invalid appearance');
+    await this.stmt('INSERT OR REPLACE INTO user_settings VALUES(?,?,?,?)',user,chat,key,String(value)).run();
   }
   async setSetting(chat,key,value) {
     if (!validSetting(key,value)) throw new Error('Invalid setting');

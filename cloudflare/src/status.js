@@ -24,3 +24,10 @@ export async function permissionStatus(msg,tg) {
   lines.push('Preview playback still depends on Telegram and the selected provider.');
   return lines.join('\n');
 }
+
+export function budgetStatus(budget) {
+  if(!budget)return '';
+  const {usage:p,soft_limits:l,day,paused}=budget.snapshot(),remaining=(value,max)=>Math.max(0,max-(value??0)).toLocaleString('en-GB');
+  const reset=new Date(Date.parse(day+'T00:00:00Z')+86400000).toISOString().replace('T',' ').replace('.000Z',' UTC');
+  return `\n\n<b>Bot safety allowances${paused?' · paused':''}</b>\nRequests remaining: ${remaining(p.requests,l.dailyRequests)}\nDatabase rows read remaining: ${remaining(p.rows_read,l.rowsRead)}\nDatabase rows written remaining: ${remaining(p.rows_written,l.rowsWritten)}\nDaily reset: ${reset}\nStorage remaining: ${Math.floor(Math.max(0,l.storageBytes-budget.storageBytes)/1048576)} MiB (does not reset daily)\nThese are this bot’s conservative allowances, not account-wide Cloudflare usage.`;
+}

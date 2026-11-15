@@ -14,6 +14,7 @@ export const CONTENT_SAMPLES={
 };
 // These are observation-only samples; landing/profile pages cannot justify a quarantine.
 export const OBSERVATION_SAMPLES={
+  furtrack:'https://furtrack.com/p/826598',
   reddit:'https://reddit.com/r/announcements/',facebook:'https://facebook.com/NASA',threads:'https://threads.com/@zuck',
   piviv:'https://pixiv.net/en',tumblr:'https://tumblr.com/staff',bilibili:'https://bilibili.com/video/BV1xx411c7mD',
   snapchat:'https://snapchat.com/add/team.snapchat',spotify:'https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8',
@@ -39,6 +40,7 @@ export function usableMetadata(body,type='text/html') {
   }
   const title=values['og:title']||values['twitter:title']||'';
   if(/^(?:fxinstagram|embed fixer|embed fixes|embedez)$/i.test(title)&&!values['og:video']&&!values['og:video:url'])return false;
+  if((/^FurTrack$/i.test(title)&&/post not found/i.test(values['og:description']??''))||(/^Unknown$/i.test(title)&&/purpose of EmbedEZ/i.test(values['og:description']??'')))return false;
   if(/log\s*in|sign\s*up|not found|unavailable|access denied|something went wrong|^notice$/i.test(title))return false;
   return !!((title&&(values['og:image']||values['og:image:url']||values['twitter:image']||values['og:description']||values['twitter:description']))||values['og:video']||values['og:video:url']||values['twitter:player:stream']);
 }

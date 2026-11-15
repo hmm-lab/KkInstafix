@@ -298,6 +298,7 @@ PLATFORM_EMOJI = {
     "twitch": "🎮",
     "ifunny": "😂",
     "furaffinity": "🐾",
+    "furtrack": "🐾",
     "deviantart": "🖌",
     "dribbble": "🏀",
     "kick": "🟢",
@@ -329,6 +330,7 @@ SAMPLE_URLS = {
     "twitch": "https://www.twitch.tv/nasa",
     "snapchat": "https://www.snapchat.com/add/team.snapchat",
     "deviantart": "https://www.deviantart.com/team",           # official DeviantArt account
+    "furtrack": "https://furtrack.com/p/826598",
     "furaffinity": "https://www.furaffinity.net/user/fender/",  # FA mascot account
     "dribbble": "https://dribbble.com/dribbble",
     "kick": "https://kick.com/xqc",
@@ -460,6 +462,8 @@ def get_platform(netloc: str, path: str) -> Optional[str]:
         return "youtube_watch"
     for plat, cfg in PROVIDERS.items():
         if plat == "youtube" and path != "/watch":
+            continue
+        if plat == "furtrack" and not re.fullmatch(r"/p/\d+/?", path):
             continue
         for dom in cfg["domains"]:
             if host == dom or host.endswith("." + dom):

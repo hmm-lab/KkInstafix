@@ -1,12 +1,14 @@
 import {VERSION} from './version.js';
 import {postCallback} from './posts.js';
+import {musicLink} from './music.js';
+import {budgetStatus} from './status.js';
 import {permissionStatus} from './status.js';
 import {hasProtectedLinks} from './formatting.js';
 import {diagnose} from './diagnostics.js';
 import {nextHealthy,healthLabel} from './provider-policy.js';
 import {PROVIDERS,PLATFORM_EMOJI,PROVIDER_REVISION} from './config.js';
 import {processText,urls,fixedFor,escapeHTML as h,senderLabel} from './links.js';
-import {DEFAULTS,validSetting} from './store.js';
+import {DEFAULTS,validSetting,validAppearance} from './store.js';
 import {readBounded,hash} from './security.js';
 import {messageSource,messageLinks,renderLinkedText,providerMatches,linkIdentity} from './messages.js';
 
@@ -32,7 +34,7 @@ function providerKeyboard(platform,chosen) {
   return {inline_keyboard:[...Object.entries(PROVIDERS[platform].options).map(([k,host])=>[{text:`${k===chosen?'✓ ':''}${k==='native'?'Native':k.toUpperCase()} · ${host}`,callback_data:`m:s:${platform}:${k}`}]),[{text:'‹ Platforms',callback_data:'m:back'}]]};
 }
 const HELP=`<b>KkInstafix</b>\nSend a social link to fix its Telegram preview. Tap “Retry preview” to try another provider. On multi-link posts, the sender or an admin can select which link gets the preview.\n\n`+
-  `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/refresh — reply to a fixed post to refresh the same provider\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
+  `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/refresh — reply to a fixed post to refresh the same provider\n/repair — reply to check alternatives on demand\n/music &lt;url&gt; — share across music services\n/appearance — your attribution and compact preview settings\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
   `<b>Admin controls</b>\n/menu · /enable · /disable\n/setprovider &lt;platform&gt; &lt;key&gt;\n/platform &lt;name&gt; on|off\n/setsendermode first_name|username|full_name|none\n/setdedup &lt;seconds&gt;\n/setratelimit &lt;count&gt; &lt;seconds&gt;\n/ignoreforwards on|off · /fallback on|off · /textspam on|off\n/muteuser · /unmuteuser · /listmuted\n/resetproviders · /resetstats · /testall\n/export · /import\n\nUse @KkInstaFixBot &lt;link&gt; inline in any chat.`;
 async function importBackup(msg,store,tg,reply) {
   const doc=(msg.reply_to_message??msg).document;
@@ -81,9 +83,9 @@ async function importBackup(msg,store,tg,reply) {
   }
   if (!Array.isArray(data.user_settings??[])) return reply('Invalid user settings in backup.');
   for (const row of data.user_settings??[]) {
-    const value=['sender_mode','caption_style'].includes(row.key)?row.value:Number(row.value);
+    const value=['sender_mode','caption_style','preview_size'].includes(row.key)?row.value:Number(row.value);
     if (!Number.isSafeInteger(row.user_id)||row.user_id<=0 ||
-      (row.chat_id!==undefined && row.chat_id!==msg.chat.id) || !validSetting(row.key,value)) return reply('Invalid user setting in backup.');
+      (row.chat_id!==undefined && row.chat_id!==msg.chat.id) || !(validSetting(row.key,value)||validAppearance(row.key,value))) return reply('Invalid user setting in backup.');
     stmts.push(store.stmt('INSERT OR REPLACE INTO user_settings VALUES(?,?,?,?)',row.user_id,msg.chat.id,row.key,String(value)));
   }
   if (stmts.length>32) return reply('Backup is too large for one free-tier import. Restore fewer settings at a time.');
@@ -109,11 +111,25 @@ export async function command(msg,store,tg,state,ctx={}) {
     await store.opt(chat,user,name==='optout');
     return reply(name==='optout'?'Your links will be left unchanged in this chat. Others can still use the bot.':'Your links will be fixed again in this chat.');
   }
-  if (name==='status'||name==='config') return reply((await permissionStatus(msg,tg))+'\n\n'+Object.entries(state.settings).filter(([key])=>key!=='chat_id').map(([key,value])=>`<b>${h(key)}</b>: ${h(value)}`).join('\n')+`\nYour links: ${state.optout?'opted out':'enabled'}`);
+  if (name==='status'||name==='config') return reply((await permissionStatus(msg,tg))+budgetStatus(ctx.budget)+'\n\n'+Object.entries(state.settings).filter(([key])=>key!=='chat_id').map(([key,value])=>`<b>${h(key)}</b>: ${h(value)}`).join('\n')+`\nYour links: ${state.optout?'opted out':'enabled'}`);
   if (name==='providers') return reply(`<b>Providers updated ${PROVIDER_REVISION}</b>\n\n`+Object.entries(PROVIDERS).map(([p,cfg])=>`${PLATFORM_EMOJI[p]??''} <b>${p}</b>: ${h(state.choices[p]??cfg.default)}\n  ${Object.keys(cfg.options).map(k=>k+(healthLabel(state.health[p]?.[cfg.noauth_embed?.[k]??k])==='temporarily skipped'?' ⚠':'')).join(', ')}`).join('\n'));
-  if(name==='refresh') {
-    if(!msg.reply_to_message?.message_id)return reply('Reply to a fixed post with /refresh to request a fresh preview.');
-    const handled=await postCallback({from:msg.from,data:'r:refresh',message:{...msg.reply_to_message,chat:msg.chat,message_thread_id:msg.message_thread_id},command_id:msg.message_id},store,tg,ctx);
+  if(name==='appearance') {
+    if(!user)return reply('This command needs an identifiable user.');
+    const scope=msg.chat.type==='private'?0:chat;
+    if(p==='reset'){await store.stmt("DELETE FROM user_settings WHERE user_id=? AND chat_id=? AND key IN ('attribution','preview_size')",user,scope).run();return reply('Your appearance overrides were reset. Future posts use the inherited defaults.');}
+    const key=p==='attribution'?'attribution':p==='preview'?'preview_size':null,value=key==='attribution'?onOff(k):k;
+    if(key&&validAppearance(key,value)){await store.setAppearance(scope,user,key,value);return reply('Your appearance was updated for future posts'+(scope===0?' in all chats (group overrides take priority).':' in this chat.'));}
+    return reply(`Your appearance: attribution ${state.settings.attribution?'on':'off'}, preview ${h(state.settings.preview_size)}.\n/appearance attribution on|off\n/appearance preview compact|large\n/appearance reset\nOnly your posts change. Set defaults in private chat, or overrides in a group.`);
+  }
+  if(name==='music') {
+    const source=parts.slice(1).join(' ')||messageSource(msg.reply_to_message??{}),links=urls(source);
+    const universal=links.map(raw=>musicLink(raw)).find(Boolean);
+    if(!universal)return reply('Use /music &lt;track or album URL&gt;, or reply to one. Supported: Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud, Pandora and Amazon Music.');
+    return reply(`<a href="${h(universal)}">Listen on your music service</a>`,{link_preview_options:{is_disabled:false,url:universal,prefer_large_media:state.settings.preview_size!=='compact',prefer_small_media:state.settings.preview_size==='compact'}});
+  }
+  if(name==='refresh'||name==='repair') {
+    if(!msg.reply_to_message?.message_id)return reply(`Reply to a fixed post with /${name} to ${name==='repair'?'check up to three preview providers':'request a fresh preview'}.`);
+    const handled=await postCallback({from:msg.from,data:name==='repair'?'a:repair':'r:refresh',message:{...msg.reply_to_message,chat:msg.chat,message_thread_id:msg.message_thread_id},command_id:msg.message_id},store,tg,ctx);
     if(!handled)return reply('Reply to a fixed post from the last seven days. Older posts can use Retry preview.');
     return;
   }

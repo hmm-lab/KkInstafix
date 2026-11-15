@@ -141,6 +141,7 @@ export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fe
   if (!platform) return {url:stripTracking(expanded)+tail,preview:stripTracking(expanded),raw:trimmed};
   if ((overrides[platform]??(platform==='weibo'?0:1))===0) return {url:raw};
   if (platform==='instagram' && !instagramContentPath.test(new URL(expanded).pathname) && !/^\/(s|share)\//i.test(new URL(expanded).pathname)) return {url:stripTracking(expanded,platform)+tail,preview:stripTracking(expanded,platform),raw:trimmed};
+  if(platform==='furtrack'&&!/^\/p\/\d+\/?$/.test(new URL(expanded).pathname))return {url:stripTracking(expanded,platform)+tail,preview:stripTracking(expanded,platform),raw:trimmed};
   const p = PROVIDERS[platform], preferred = p.options[choices[platform]]?choices[platform]:p.default;
   const preferredPreview=p.noauth_embed?.[preferred]??preferred;
   const previewKey=settings.provider_fallback===0?preferredPreview:pickHealthy(platform,preferredPreview,health[platform]);

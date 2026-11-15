@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.4.0] - 2026-11-15
+
+### Added
+
+- On-demand `/repair` checks up to three configured providers, respects spoilers and a per-user/chat cooldown, and safely edits the existing post using the recovery journal. Inconclusive results keep the post unchanged.
+- Inline provider choices preserve surrounding text and all clean links, with at most 24 results and no inline health probes.
+- Optional `/music` and inline Songlink/Albumlink sharing with locally generated redirects; ordinary Spotify previews retain their default provider.
+- Sender-specific attribution and compact preview settings through `/appearance`, with private defaults, group overrides and layout retained across retries.
+- In-Telegram remaining bot allowances and UTC reset time in `/status`, including bounded authenticated inspection during a normal pause.
+- FurTrack photo previews after two public metadata checks; cleaned official destinations remain clickable. Imgur investigated and left disabled because samples returned generic download pages.
+
+### Changed
+
+- Reject missing FurTrack/error metadata during probes. Extend sanitisation fixtures and runtime regression coverage to the new behaviour.
+- Keep existing Free plan, safety thresholds, hourly probe schedule and single Retry control. No paid service or schema migration required.
+
 ## [2.3.1] - 2026-11-15
 
 ### Added

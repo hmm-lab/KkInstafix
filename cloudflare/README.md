@@ -39,6 +39,17 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Features in 2.4.0
+
+- Reply to a recent fixed post with `/repair` to try up to three configured preview backends. Each check reads at most 8 KiB of metadata and follows at most one same-host HTTPS redirect (at most six fetches total). A success edits the existing post using the durable operation journal. Inconclusive checks keep the current post; a blocked response is not a global provider failure. Checks run only on request, with a 30-second cooldown per user/chat. No media is downloaded. Metadata does not guarantee Telegram playback.
+- Inline mode offers the default preview for each link first, then alternative providers, up to 24 choices. Each selection retains the full message and all cleaned destinations. It does not probe providers while typing. Browser-only aliases are not duplicated as preview choices.
+- `/music <track or album URL>` (or reply to one) builds a Songlink/Albumlink redirect. An extra universal music result is available inline; ordinary Spotify rewriting is unchanged. Supported input services: Spotify (including its share hosts), Apple Music, YouTube Music, Tidal, Deezer, SoundCloud, Pandora and Amazon Music. Artist pages and Spotify playlists are excluded. There is no Worker API lookup, API key, subscription or music download. Resolution and service availability depend on Songlink; not every catalogue item is supported.
+- `/appearance attribution off|on` and `/appearance preview compact|large` affect only the sender’s future posts. `/appearance reset` removes their overrides. Set defaults in a private chat; group settings override those defaults in that group. Inline mode uses private defaults. Layout is stored with each post, so someone else’s retry preserves it. Telegram may ignore media-size hints for some content. No redundant Instagram button is added.
+- `/status` and `/config` show remaining conservative bot request/read/write allowances, storage headroom and the next midnight UTC daily reset. Storage has no daily reset. These are bot ledger estimates, not account-wide Cloudflare usage or a billing cap. During a normal pause, authenticated status commands can use bounded inspection headroom (until 10,100 counted operations or the maintenance read/write thresholds); other updates stay paused. Status requests longer than 8 KiB do not use this exception. Administrative status remains available as before.
+- FurTrack `/p/<photo-id>` posts use `furtrack.owo.lgbt` for previews and keep a cleaned official clickable URL. Profiles and other paths stay native. The proxy returned photo metadata for two public posts. Imgur’s candidate returned generic download pages in our samples, so it remains disabled. See [provider review](PROVIDER_REVIEW.md#provider-expansion-and-music-240) and [verification observations](provider-expansion-2.4.0.json).
+
+These features reuse existing D1 tables and per-invocation guards. Repair adds no background polling, inline alternatives add no provider requests, and music sharing builds redirect links locally. The feature commands are specific to the Cloudflare runtime; the Python rollback runtime shares the provider catalogue and photo-path restriction.
+
 ## Free-tier safeguards in 2.3.1
 
 Cloudflare's documented Free allowances (checked 15 November 2026) include 100,000
@@ -237,7 +248,7 @@ Before upgrading, apply the additive `migrations/0003-post-controls.sql` after
 the README files and dated changelog; runtime changes require documentation, and
 provider changes require audit notes. It also verifies generated configuration
 and schema. CI runs it alongside the Worker suite and Python 3.11/3.12 suites.
-The sanitisation fixture corpus covers all 22 platforms and checks every provider
+The sanitisation fixture corpus covers all 23 platforms and checks every provider
 option, pasted proxy paths, idempotent cleaning and functional parameters.
 
 `.github/workflows/release.yml` is a manual release workflow that runs all checks,

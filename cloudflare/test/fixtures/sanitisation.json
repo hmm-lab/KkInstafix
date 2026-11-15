@@ -154,5 +154,11 @@
     "platform": "reddit",
     "input": "https://www.reddit.com/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/?share_id=4qxWDRvIIZ4U13bdUE0xf&context=3&sort=new&depth=2#comment",
     "expected": "https://www.reddit.com/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/?context=3&sort=new&depth=2#comment"
+  },
+  {
+    "name": "FurTrack public photo",
+    "platform": "furtrack",
+    "input": "https://www.furtrack.com/p/826598?utm_source=secret&si=secret",
+    "expected": "https://www.furtrack.com/p/826598"
   }
 ]

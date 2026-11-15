@@ -14,12 +14,15 @@ import {runHealthChecks,probeURL,usableMetadata,probePlan,CONTENT_SAMPLES,OBSERV
 import {pickHealthy,quarantined} from '../src/provider-policy.js';
 import {diagnosticURL} from '../src/diagnostics.js';
 import {messageSource,formatRepost} from '../src/messages.js';
+import {musicLink} from '../src/music.js';
+import {postCallback} from '../src/posts.js';
 import {permissionStatus} from '../src/status.js';
 import {Telegram,TelegramError} from '../src/telegram.js';
 
 const bootstrap='private-test-setup-key-32-characters';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const token='123456:abcdefghijklmnopqrstuvwxyz123456789';
+const providerCalls=[];let providerResponse=null;
 const calls=[];let failure=null,editFailure=null,deleteFail=false,backup={};
 const mf=new Miniflare({modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,
   // The installed workerd binary supports compatibility through 2026-08-06.
@@ -27,6 +30,7 @@ const mf=new Miniflare({modules:true,scriptPath:new URL('../dist/worker.js',impo
   bindings:{CONFIG_KEY:'a1'.repeat(32),SETUP_HASH:hash(bootstrap),WEBHOOK_SECRET:'webhook-test-secret',WEBHOOK_URL:'https://bot.example/webhook'},
   outboundService:async request=>{
     const url=new URL(request.url);
+    if(url.host!=='api.telegram.org'&&providerResponse){providerCalls.push(url.href);return providerResponse(url);}
     assert.equal(url.host,'api.telegram.org','tests must not make external provider requests');
     if(url.pathname.startsWith('/file/'))return Response.json(backup);
     const method=url.pathname.split('/').at(-1),data=await request.json();calls.push({method,data});
@@ -1067,7 +1071,7 @@ test('post controls enforce chat scoping, expiry and a per-post edit lease',asyn
 });
 test('inline multi-link results let the sender select each preview without losing surrounding text',async()=>{
   calls.length=0;await update({update_id:++id,inline_query:{id:'inline-choice',from:{id:5},query:'Compare https://x.com/a/status/InlineChoice with https://instagram.com/reel/InlineChoice/ please.'}});
-  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(results.length,2);assert.notEqual(results[0].input_message_content.link_preview_options.url,results[1].input_message_content.link_preview_options.url);assert.equal(results[0].input_message_content.message_text,results[1].input_message_content.message_text);assert.match(results[1].input_message_content.message_text,/Compare.*please/);
+  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.ok(results.length>2&&results.length<=24);assert.notEqual(results[0].input_message_content.link_preview_options.url,results[1].input_message_content.link_preview_options.url);assert.equal(results[0].input_message_content.message_text,results[1].input_message_content.message_text);assert.match(results[1].input_message_content.message_text,/Compare.*please/);
 });
 
 const sanitisationCases=JSON.parse(await readFile(new URL('./fixtures/sanitisation.json',import.meta.url),'utf8'));
@@ -1399,4 +1403,102 @@ test('storage safety carries across UTC days while daily row allowances reset',a
     await db.prepare('INSERT INTO free_daily_usage VALUES(?,1,0,0,?)').bind(day,FREE_BUDGET.storageBytes).run();
     const budget=new InvocationBudget();budget.day='2099-06-02';assert.equal(await budget.admit(db),false);assert.equal(await budget.admit(db,true),true);
   }finally{await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();}
+});
+
+// 2.4: on-demand repair, inline choices, personal layout and music.
+test('repair checks alternatives and edits once, preserving the original destination and undo',async()=>{
+  const chat=-7401,sent=await createPost('Context https://instagram.com/reel/RepairMe/?share_id=secret',chat),store=new Store(db);
+  const before=await store.original(chat,sent.botId);providerCalls.length=0;calls.length=0;
+  providerResponse=url=>url.hostname==='uuinstagram.com'?new Response('<meta property="og:title" content="A real post"><meta property="og:image" content="https://cdn.example/photo.jpg">',{headers:{'Content-Type':'text/html'}}):new Response('',{status:403});
+  try {
+    const response=await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(response.response.status,200);
+    assert.equal(providerCalls.length,1);const edit=calls.find(c=>c.method==='editMessageText');assert.ok(edit);assert.match(edit.data.text,/href="https:\/\/instagram.com\/reel\/RepairMe\/"/);
+    assert.equal(edit.data.link_preview_options.url,'https://uuinstagram.com/reel/RepairMe/');assert.ok(!calls.some(c=>c.method==='deleteMessage'));
+    assert.equal((await store.original(chat,sent.botId)).original_json,before.original_json);
+    assert.match(calls.at(-1).data.text,/repaired/);
+    await db.prepare('DELETE FROM post_activity WHERE chat_id=?').bind(chat).run();calls.length=0;await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/30 seconds/);assert.equal(providerCalls.length,1);
+  }finally{providerResponse=null;}
+});
+test('inconclusive repair probes at most three providers and leaves the saved post unchanged',async()=>{
+  const chat=-7402,sent=await createPost('https://instagram.com/reel/RepairBlocked/',chat),store=new Store(db),before=await store.post(chat,sent.botId);
+  providerCalls.length=0;providerResponse=()=>new Response('',{status:429});calls.length=0;
+  try {await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,3);assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.equal((await store.post(chat,sent.botId)).state_json,before.state_json);assert.match(calls.at(-1).data.text,/Could not verify/);}
+  finally{providerResponse=null;}
+});
+test('repair never probes spoiler links',async()=>{
+  const chat=-7403,url='https://instagram.com/reel/RepairSpoiler/',sent=await createPost(url,chat,{entities:[{type:'spoiler',offset:0,length:url.length}]});
+  calls.length=0;providerCalls.length=0;providerResponse=()=>{throw new Error('must not probe');};
+  try{await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,0);assert.match(calls.at(-1).data.text,/spoiler/);}
+  finally{providerResponse=null;}
+});
+test('repair replay reconciles its frozen edit without probing the providers again',async()=>{
+  const chat=-7404,sent=await createPost('https://instagram.com/reel/RepairReplay/',chat),store=new Store(db),query={from:{id:5},command_id:987,message:{message_id:sent.botId,chat:{id:chat,type:'supergroup'}},data:'a:repair'};
+  let probes=0,edits=0;const tg={net:async()=>{probes++;return new Response('<meta property="og:title" content="Photo"><meta property="og:image" content="https://cdn.example/image">');},call:async()=>{edits++;},send:async()=>{}};
+  const original=store.commitOperation.bind(store);let fail=true;store.commitOperation=async op=>{if(fail){fail=false;throw new Error('database temporarily unavailable');}return original(op);};
+  await assert.rejects(postCallback(query,store,tg,{operation_id:'repair-replay'}));await postCallback(query,store,tg,{operation_id:'repair-replay'});assert.equal(probes,1);assert.equal(edits,2);assert.equal((await store.operation('repair-replay')).state,'done');
+});
+test('appearance overrides apply only to the sender and survive someone else retrying',async()=>{
+  const chat=-7405;await update(message('/appearance attribution off',5,chat));await update(message('/appearance preview compact',5,chat));
+  const sent=await createPost('https://x.com/a/status/PersonalLayout',chat);assert.ok(!sent.text.includes('Shared by'));assert.equal(sent.post.preview_size,'compact');
+  calls.length=0;await click(sent,chat,sent.keyboard.inline_keyboard.flat().find(b=>b.callback_data.startsWith('e:')).callback_data,6);
+  const edit=calls.find(c=>c.method==='editMessageText').data;assert.equal(edit.link_preview_options.prefer_small_media,true);assert.ok(!edit.text.includes('Shared by'));
+  await update(message('https://x.com/a/status/OtherLayout',6,chat));const other=calls.filter(c=>c.method==='sendMessage').at(-1).data;assert.ok(other.text.includes('Shared by'));assert.equal(other.link_preview_options.prefer_large_media,true);
+  await update(message('/appearance reset',5,chat));assert.equal((await new Store(db).settings(chat,5)).settings.attribution,1);
+});
+test('private appearance defaults inherit into groups and inline, while group overrides win',async()=>{
+  const user=84,chat=-7406;await update(message('/appearance preview compact',user,user,{chat:{id:user,type:'private'}}));
+  const store=new Store(db);assert.equal((await store.settings(chat,user)).settings.preview_size,'compact');assert.equal((await store.settings(chat,user+1)).settings.preview_size,'large');
+  await update(message('/appearance preview large',user,chat));assert.equal((await store.settings(chat,user)).settings.preview_size,'large');
+  calls.length=0;await update({update_id:++id,inline_query:{id:'personal-inline',from:{id:user},query:'https://instagram.com/reel/PersonalInline/'}});
+  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.ok(results.length>1);assert.ok(results.every(r=>r.input_message_content.link_preview_options.prefer_small_media));
+  await store.stmt('DELETE FROM user_settings WHERE user_id=?',user).run();
+});
+test('inline alternatives preserve all text and official links and avoid provider fetches',async()=>{
+  calls.length=0;providerCalls.length=0;providerResponse=()=>{throw new Error('inline must not probe');};
+  try {await update({update_id:++id,inline_query:{id:'provider-choices',from:{id:5},query:'Here https://instagram.com/reel/InlineProviders/?igsh=secret and https://x.com/a/status/InlineProviders?s=20 thanks'}});
+    const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(providerCalls.length,0);assert.ok(results.some(r=>r.title==='instagram · EE'));assert.ok(results.some(r=>r.title==='instagram · VX'));
+    assert.ok(results.every(r=>r.input_message_content.message_text==='Here https://instagram.com/reel/InlineProviders/ and https://x.com/a/status/InlineProviders thanks'));assert.ok(new Set(results.map(r=>r.id)).size===results.length);
+  }finally{providerResponse=null;}
+});
+test('inline cap keeps a default result for every link',async()=>{
+  calls.length=0;await update({update_id:++id,inline_query:{id:'many-choices',from:{id:5},query:Array.from({length:8},(_,n)=>`https://instagram.com/reel/Inline${n}/`).join(' ')}});
+  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(results.length,24);for(let n=0;n<8;n++)assert.equal(results[n].input_message_content.link_preview_options.url,`https://eeinstagram.com/reel/Inline${n}/`);
+});
+test('music sharing removes tracking, selects albums and retains Apple song identifiers',()=>{
+  const song=musicLink('https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8?si=private&utm_source=private');assert.equal(song,'https://song.link/'+encodeURIComponent('https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8'));
+  assert.ok(musicLink('https://open.spotify.com/album/abc?si=secret').startsWith('https://album.link/'));
+  assert.equal(decodeURIComponent(musicLink('https://music.apple.com/gb/album/name/123?i=456&at=secret')).split('https://song.link/')[1],'https://music.apple.com/gb/album/name/123?i=456');
+  for(const u of ['https://evil.example/track/abc','https://open.spotify.com.evil.example/track/abc','https://open.spotify.com/user/a','https://a:b@open.spotify.com/track/abc'])assert.equal(musicLink(u),null);
+});
+test('music command and inline universal option require no API calls and leave normal Spotify default intact',async()=>{
+  calls.length=0;await update(message('/music https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8?si=secret',5,-7407));assert.match(calls[0].data.text,/song.link/);assert.ok(!calls[0].data.text.includes('secret'));assert.equal(calls.length,1);
+  calls.length=0;await update({update_id:++id,inline_query:{id:'music-share',from:{id:5},query:'Listen https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8?si=secret'}});const results=calls[0].data.results;
+  assert.equal(results[0].input_message_content.link_preview_options.url,'https://fxspotify.com/track/4PTG3Z6ehGkBFwjybzWkR8');assert.ok(results.some(r=>r.title==='Listen on your music service'&&r.input_message_content.message_text.startsWith('Listen https://song.link/')));
+});
+test('status reports remaining bot allowances even during a normal processing pause',async()=>{
+  const day=new Date().toISOString().slice(0,10),prior=await db.prepare('SELECT * FROM free_daily_usage WHERE day=?').bind(day).first();
+  try{
+    await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,10000,0,25000,1000)').bind(day).run();calls.length=0;
+    const response=await update(message('/status',5,-7408));assert.equal(response.response.status,200);const text=calls.find(c=>c.method==='sendMessage').data.text;
+    assert.match(text,/Bot safety allowances · paused/);assert.match(text,/Requests remaining: 0/);assert.match(text,/written remaining: 0/);assert.match(text,/00:00:00 UTC/);assert.match(text,/not account-wide/);
+    calls.length=0;const paused=await update(message('/music https://open.spotify.com/track/abc',5,-7408));assert.equal((await paused.response.json()).paused,true);assert.equal(calls.length,0);
+    const forged=await dispatch('/webhook',{update_id:++id,message:message('/status')});assert.equal((await forged.json()).paused,true);assert.equal(calls.length,0);
+    await db.prepare('UPDATE free_daily_usage SET requests=10100 WHERE day=?').bind(day).run();const exhausted=await update(message('/status',5,-7408));assert.equal((await exhausted.response.json()).paused,true);assert.equal(calls.length,0);
+  }finally{if(prior)await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,?,?,?,?)').bind(prior.day,prior.requests,prior.rows_read,prior.rows_written,prior.storage_bytes).run();else await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();}
+});
+test('FurTrack photos use the verified proxy while profiles stay native and missing metadata is rejected',async()=>{
+  const fixed=await fixLink('https://www.furtrack.com/p/826598?utm_source=secret');assert.equal(fixed.url,'https://www.furtrack.com/p/826598');assert.equal(fixed.preview,'https://furtrack.owo.lgbt/p/826598');
+  const profile=await fixLink('https://furtrack.com/user/Aero');assert.equal(profile.platform,undefined);assert.equal(profile.preview,'https://furtrack.com/user/Aero');
+  assert.equal(usableMetadata('<meta property="og:title" content="FurTrack"><meta property="og:description" content="Post not found.">'),false);
+});
+
+test('inline alternatives keep sentence punctuation outside preview URLs and music replacements',async()=>{
+  calls.length=0;await update({update_id:++id,inline_query:{id:'punctuated-choice',from:{id:5},query:'Photo https://instagram.com/reel/Punctuation/. Music https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8?si=secret.'}});
+  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;
+  for(const article of results.filter(r=>r.title.startsWith('instagram')))assert.ok(article.input_message_content.link_preview_options.url.endsWith('/Punctuation/'));
+  const music=results.find(r=>r.title==='Listen on your music service');assert.ok(music);assert.ok(music.input_message_content.message_text.endsWith('.'));assert.ok(!music.input_message_content.link_preview_options.url.endsWith('.'));assert.match(music.input_message_content.message_text,/Punctuation\/\. Music/);
+});
+test('music share short hosts are passed to Songlink without fetching them',()=>{
+  assert.equal(musicLink('https://spotify.link/abc123?si=secret'),'https://song.link/'+encodeURIComponent('https://spotify.link/abc123'));
+  assert.equal(musicLink('https://open.spotify.com/playlist/abc'),null);
 });

@@ -18,7 +18,7 @@ export class InvocationBudget {
     await db.prepare(`INSERT INTO free_daily_usage VALUES(?,1,?,?,?) ON CONFLICT(day) DO UPDATE SET requests=requests+1,rows_read=rows_read+excluded.rows_read,rows_written=rows_written+excluded.rows_written,storage_bytes=CASE WHEN excluded.storage_bytes>0 THEN excluded.storage_bytes ELSE storage_bytes END`)
       .bind(this.day,this.rowsRead+4,this.rowsWritten+2,this.storageBytes).run();
   }
-  snapshot(){return {day:this.day,usage:this.prior,soft_limits:this.limits,scope:'This bot; account-wide traffic and billing are separate'};}
+  snapshot(){return {paused:!!this.paused,day:this.day,usage:this.prior,soft_limits:this.limits,scope:'This bot; account-wide traffic and billing are separate'};}
 }
 class Statement {
   constructor(raw,budget){this.statement=raw;this.budget=budget;}

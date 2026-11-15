@@ -182,3 +182,34 @@ Metadata prefix reads stop at 8 KiB; if that prefix is truncated and contains no
 usable metadata, the result is uncertain rather than a failure. This preserves
 conservative quarantine rules while reducing CPU/network work. No catalogue
 mapping or default changed.
+
+## Provider expansion and music (2.4.0)
+
+The catalogue now has 23 platforms / 57 options. Added FurTrack `fix` →
+`furtrack.owo.lgbt` for `/p/<numeric photo ID>` only. Two real posts returned HTTP
+200 with distinct titles, photographer attribution and `og:image` URLs on
+FurTrack’s own image host. This is metadata evidence, not proof of playback or
+long-term availability. Invalid `/p/1` returned “Post not found”, which the checker
+now rejects. Other FurTrack paths stay native. The hourly rotating health check
+uses a single observation sample and does not quarantine this sole backend.
+
+Candidate Imgur `imgurez.com` was not added: the single-image example and a gallery
+redirected to `embedez.com/download`, with generic/missing metadata. This observation
+does not prove the service is permanently broken; a valid working post is needed
+before enabling it. Native Imgur links continue receiving generic tracking cleanup.
+
+Songlink and Albumlink encoded redirect URLs were verified using Spotify track
+`4PTG3Z6ehGkBFwjybzWkR8` and album `4C4LvbYS0pxXLW5sGD9EK5` respectively. The
+returned titles matched the requested song/album. This implementation deliberately
+uses redirects rather than the music API. No new automatic music rewrite default
+is introduced. Input validation accepts supported service content paths only;
+Spotify short share hosts are passed to Songlink for resolution, without Worker
+fetches. See `provider-expansion-2.4.0.json` for exact public test URLs and limitations.
+
+Primary references: [FurTrack photo](https://www.furtrack.com/p/826598),
+[FurTrack proxy](https://furtrack.owo.lgbt/p/826598),
+[EmbedEZ coverage](https://embedez.com/coverage),
+[Songlink redirect documentation](https://github.com/kweiberth/songlink-docs),
+and [Songlink/Odesli](https://odesli.co/). The comparison bot’s
+[configuration](https://github.com/campfred/tg-previewsynth-bot) supplied candidate
+hosts; provider responses, rather than its list alone, determined activation.

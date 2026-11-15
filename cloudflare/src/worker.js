@@ -1,9 +1,11 @@
 import {InvocationBudget,BudgetedDB,BudgetError} from './budget.js';
 import {JsonCache} from './cache.js';
+import {musicLink} from './music.js';
+import {quarantined} from './provider-policy.js';
 import {VERSION} from './version.js';
 import {makePost,postView,syncEdit} from './posts.js';
 import {PROVIDERS,PROVIDER_REVISION} from './config.js';
-import {processText,urls,trim,senderLabel,escapeHTML as h} from './links.js';
+import {processText,fixedFor,urls,trim,senderLabel,escapeHTML as h} from './links.js';
 import {captureOriginal} from './formatting.js';
 import {runHealthChecks} from './health.js';
 import {messageSource,formatRepost} from './messages.js';
@@ -46,7 +48,8 @@ async function activate(request,env,store) {
 async function inline(query,tg,store) {
   const source=query.query??'';
   if(!urls(source).length)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'hint',title:'Paste a social link',input_message_content:{message_text:'Paste a link after the bot username.'}}]});
-  const result=await processText(source,DEFAULTS,{},{},tg.net,false,await store.health(),store.cache);
+  const health=await store.health(),appearance=await store.appearance(query.from?.id??0);
+  const result=await processText(source,DEFAULTS,{},{},tg.net,false,health,store.cache);
   if(result.tooMany)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'limit',title:'Use up to 8 links per message',input_message_content:{message_text:'Use up to 8 links per inline message, then try again.',link_preview_options:{is_disabled:true}}}]});
   const first=result.links[0];
   const link=first?.url??urls(source)[0];
@@ -54,10 +57,20 @@ async function inline(query,tg,store) {
   if(result.text.length>4096)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'too-long',title:'Message is too long — shorten it first',input_message_content:{message_text:'This message exceeds Telegram’s limit. Shorten it and try again.',link_preview_options:{is_disabled:true}}}]});
   const previews=(result.allLinks??result.links).filter(candidate=>{try{return ['http:','https:'].includes(new URL(candidate.url).protocol);}catch{return false;}});
   if(!previews.length)previews.push({url:link,preview:link});
+  // Defaults for every link come first; alternatives never discard the rest of the message.
+  const alternatives=[];
+  for(const candidate of previews){
+    if(candidate.platform)for(const key of Object.keys(PROVIDERS[candidate.platform].options)){
+      if(key===candidate.previewKey||Object.hasOwn(PROVIDERS[candidate.platform].noauth_embed??{},key)||quarantined(health[candidate.platform]?.[key]))continue;
+      alternatives.push({...candidate,...fixedFor(trim(candidate.url)[0],candidate.platform,key),previewKey:key});
+    }
+    const music=musicLink(candidate.url);if(music)alternatives.push({...candidate,preview:music,previewKey:'music',music});
+  }
+  previews.push(...alternatives.slice(0,24-previews.length));
   return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:10,is_personal:true,results:previews.map((candidate,index)=>({
-    type:'article',id:index===0?'fixed':`fixed-${index}`,title:previews.length>1?`Preview ${index+1} · ${candidate.platform??new URL(candidate.url).hostname}`:first?'Fixed links':'Clean links',description:candidate.url,
-    input_message_content:{message_text:result.text,link_preview_options:{is_disabled:false,url:candidate.preview??candidate.url,show_above_text:true,prefer_large_media:true}},
-  }))});
+    type:'article',id:index===0?'fixed':`fixed-${index}`,title:candidate.music?'Listen on your music service':`${candidate.platform??new URL(candidate.url).hostname} · ${(candidate.previewKey??'original').toUpperCase()}`,description:candidate.url,
+    input_message_content:{message_text:candidate.music?result.text.replace(/https?:\/\/[^\s<>]+/gi,token=>{const [url,tail]=trim(token);return url===trim(candidate.url)[0]?candidate.music+tail:token;}):result.text,link_preview_options:{is_disabled:false,url:candidate.preview??candidate.url,show_above_text:true,prefer_large_media:appearance.preview_size!=='compact',prefer_small_media:appearance.preview_size==='compact'}},
+  })).filter(article=>article.input_message_content.message_text.length<=4096)});
 }
 async function rewrite(msg,update,store,tg,ctx) {
   const chat=msg.chat.id,user=msg.from?.id??0,stamp=now(),text=messageSource(msg).trim();
@@ -93,12 +106,12 @@ async function rewrite(msg,update,store,tg,ctx) {
       if(await store.claimRecent('fix',chat,key,settings.dedup_window,stamp))reservations.push({...link,eventKey:key});
     }
     if(!reservations.length)return;
-    const first=result.links[0],label=senderLabel(msg.from,settings.sender_mode);
+    const first=result.links[0],label=settings.attribution===0?'':senderLabel(msg.from,settings.sender_mode);
     let {html,plain,fallback,protectedLinks}=formatRepost({text:msg.text??msg.caption??'',
       entities:msg.text!==undefined?msg.entities:msg.caption_entities,
       plainText:result.text,links:result.links,label});
-    const post=await makePost(msg,result,label),view=await postView(post,{html,plain,fallback,protectedLinks});
-    const preview=protectedLinks?{is_disabled:true}:first.preview?{is_disabled:false,url:first.preview,prefer_large_media:true,show_above_text:true}:undefined;
+    const post=await makePost(msg,result,label,null,settings),view=await postView(post,{html,plain,fallback,protectedLinks});
+    const preview=view.preview;
     let keyboard=view.keyboard.inline_keyboard.length?view.keyboard:undefined;
     // A companion reply preserves the full original when expansion exceeds
     // Telegram's limit. Very long URLs use short clickable labels instead.
@@ -179,7 +192,7 @@ const worker = {
     const claim=await store.claimUpdate(update.update_id,now());
     if(claim==='busy')return json({error:'Update is still processing'},503,{'Retry-After':'5'});
     if(claim==='duplicate')return json({ok:true,duplicate:true});
-    const ctx={sent:false,operation_id:'update:'+update.update_id};
+    const ctx={sent:false,operation_id:'update:'+update.update_id,budget:env.INVOCATION_BUDGET};
     try {
       const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY),env.REQUEST_FETCH??fetch);
       tg.username=config.username;
@@ -210,7 +223,14 @@ const worker = {
 export default {
   async fetch(request,env) {
     const budget=new InvocationBudget(),db=new BudgetedDB(env.DB,budget),protectedRequest=request.method==='POST';
-    if(protectedRequest&&!await budget.admit(env.DB)&&new URL(request.url).pathname!=='/admin/status')return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
+    if(protectedRequest&&!await budget.admit(env.DB)) {
+      budget.paused=true;
+      let inspection=false;
+      if(new URL(request.url).pathname==='/webhook'&&request.headers.get('X-Telegram-Bot-Api-Secret-Token')===env.WEBHOOK_SECRET&&(budget.prior.requests??0)<budget.limits.dailyRequests+100&&(budget.prior.rows_read??0)<budget.limits.maintenanceRead&&(budget.prior.rows_written??0)<budget.limits.maintenanceWrite){
+        try{const update=JSON.parse(new TextDecoder().decode(await readBounded(request.clone().body,8192)));inspection=/^\/(status|config)(?:@[A-Za-z0-9_]+)?\s*$/i.test(update.message?.text??'');}catch{}
+      }
+      if(!inspection&&new URL(request.url).pathname!=='/admin/status')return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
+    }
     try {return await worker.fetch(request,{...env,DB:db,INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});}
     catch(error){if(error instanceof BudgetError)return json({error:'Free-tier request budget reached. Original messages are preserved.'},503,{'Retry-After':'60'});throw error;}
     finally {if(protectedRequest)try{await budget.persist(env.DB);}catch{console.error(JSON.stringify({event:'usage_accounting_unavailable'}));}}

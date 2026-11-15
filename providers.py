@@ -29,6 +29,7 @@ PLATFORM_EMOJI = {
     "xiaohongshu": "📕",
     "linkedin": "💼",
     "pinterest": "📌",
+    "furtrack": "🐾",
 }
 
 # Provider configurations. See cloudflare/PROVIDER_REVIEW.md for refresh evidence.
@@ -113,6 +114,7 @@ PROVIDERS = {'youtube': {'default': 'native', 'domains': ['youtube.com', 'youtu.
  'xiaohongshu': {'default': 'xky',
                  'domains': ['xhslink.com'],
                  'options': {'xky': 'xhslink.xky.us'}},
+ 'furtrack': {'default': 'fix', 'domains': ['furtrack.com'], 'options': {'fix': 'furtrack.owo.lgbt'}},
  'pinterest': {'default': 'ez', 'domains': ['pinterest.com'], 'options': {'ez': 'pinterestez.com'}}}
 
 

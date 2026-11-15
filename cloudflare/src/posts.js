@@ -1,3 +1,4 @@
+import {probeURL} from './health.js';
 import {PROVIDERS} from './config.js';
 import {captureOriginal,entityHTML,hasProtectedLinks} from './formatting.js';
 import {fixedFor,processText,senderLabel,trim,stripTracking} from './links.js';
@@ -8,7 +9,7 @@ import {hash} from './security.js';
 const stamp=()=>Math.floor(Date.now()/1000);
 const backend=(p,k)=>PROVIDERS[p]?.noauth_embed?.[k]??k;
 const identity=l=>l.platform+':'+linkIdentity(l.url,l.platform);
-export async function makePost(msg,result,label,previous=null) {
+export async function makePost(msg,result,label,previous=null,appearance={}) {
   const revision=(await hash(JSON.stringify(captureOriginal(msg)))).slice(0,12);
   const links=(result.allLinks??result.links).filter(l=>{try{return ['https:','http:'].includes(new URL(l.url).protocol);}catch{return false;}}).map(l=>({...l,url:trim(l.url)[0],browserKey:Object.hasOwn(PROVIDERS[l.platform]?.noauth_embed??{},l.key)?l.key:previous?.links?.find(old=>old.platform===l.platform&&old.url===trim(l.url)[0])?.browserKey}));
   const tried={};
@@ -18,7 +19,7 @@ export async function makePost(msg,result,label,previous=null) {
   }
   const old=previous?.links?.[previous.preview_index??0];
   const selected=old?links.findIndex(l=>l.platform===old.platform&&l.url===old.url):-1;
-  return {original:captureOriginal(msg),links,label,preview_index:selected>=0?selected:Math.max(0,links.findIndex(l=>l.original===result.links[0]?.original)),tried,revision,edit_date:msg.edit_date??0};
+  return {original:captureOriginal(msg),links,label,preview_size:appearance.preview_size??previous?.preview_size??'large',preview_index:selected>=0?selected:Math.max(0,links.findIndex(l=>l.original===result.links[0]?.original)),tried,revision,edit_date:msg.edit_date??0};
 }
 export async function postView(post,existingRender=null) {
   const original=post.original,text=original.text??original.caption??'',entities=original.entities??original.caption_entities??[];
@@ -40,7 +41,7 @@ export async function postView(post,existingRender=null) {
       keyboard.inline_keyboard.push([{text:`↻ Retry · ${active==='native'?'Native':active.toUpperCase()} · ${Math.max(0,backends.indexOf(active))+1}/${backends.length}`,callback_data:`e:${selected.platform}:${(idx+1)%keys.length}:${(await hash(linkIdentity(selected.url,selected.platform))).slice(0,12)}`}]);
     }
   }
-  return {...rendered,preview:rendered.protectedLinks?{is_disabled:true}:{is_disabled:false,url:selected.preview??selected.url,prefer_large_media:true,show_above_text:true},keyboard};
+  return {...rendered,preview:rendered.protectedLinks?{is_disabled:true}:{is_disabled:false,url:selected.preview??selected.url,prefer_large_media:post.preview_size!=='compact',prefer_small_media:post.preview_size==='compact',show_above_text:true},keyboard};
 }
 export async function editPost(tg,chat,id,view) {
   const base={chat_id:chat,message_id:id,link_preview_options:view.preview,reply_markup:view.keyboard};
@@ -88,7 +89,7 @@ export async function applyOperation(op,store,tg,ctx={}) {
   return post;
 }
 export async function postCallback(query,store,tg,ctx={}) {
-  if(!/^[epr]:/.test(query.data??''))return false;
+  if(!/^[epra]:/.test(query.data??''))return false;
   const msg=query.message,chat=msg?.chat?.id;
   if(!chat)return false;
   const row=await store.post(chat,msg.message_id);
@@ -119,6 +120,20 @@ export async function postCallback(query,store,tg,ctx={}) {
       if(query.from?.id!==fresh.user_id&&!await tg.admin(chat,query.from?.id,msg.chat.type)){await answer('Only the original sender or a chat admin can choose the preview.');return true;}
       if(post.preview_index===Number(arg)){await answer('This link is already selected.');return true;}
       post.preview_index=Number(arg);sanitisePost(post);
+    } else if(kind==='a') {
+      const link=post.links[post.preview_index??0];
+      if(!link?.platform){await answer('This link has no alternative preview providers.');return true;}
+      if(!await store.claimRecent('repair',chat,String(query.from?.id??0),30,stamp())){await answer('Wait 30 seconds before another repair in this chat.');return true;}
+      sanitisePost(post);
+      const p=link.platform,health=await store.health(),keys=Object.keys(PROVIDERS[p].options),idx=keys.indexOf(link.key);
+      let selected=null,fixed=null;
+      // At most three alternatives / six fetches; no media download or global health change.
+      const candidates=Array.from({length:keys.length},(_,i)=>keys[(idx+i+1)%keys.length]).filter(k=>!Object.hasOwn(PROVIDERS[p].noauth_embed??{},k)&&!quarantined(health[p]?.[k])).slice(0,3);
+      for(const key of candidates){const candidate=fixedFor(link.url,p,key);if((await probeURL(candidate.preview,tg.net)).kind==='success'){selected=key;fixed=candidate;break;}}
+      if(!fixed){await answer('Could not verify an alternative preview. The current post was kept; a blocked or slow response does not mean a provider is broken.');return true;}
+      if(!link.browserKey)link.url=fixed.url;
+      link.key=selected;link.previewKey=selected;link.preview=fixed.preview;
+      post.tried[identity(link)]=[...new Set([...(post.tried[identity(link)]??[]),selected])];
     } else if(kind==='r') {
       sanitisePost(post);const link=post.links[post.preview_index];
       if(!link){await answer('No link is available to refresh.');return true;}
@@ -146,7 +161,7 @@ export async function postCallback(query,store,tg,ctx={}) {
     }
     const op=await store.prepareOperation(opid,chat,msg.message_id,post,'callback');
     await applyOperation(op,store,tg,ctx);
-    await answer(kind==='r'?'Preview refresh requested. Telegram may reuse its cached preview.':kind==='p'?`Preview: link ${post.preview_index+1}`:`Provider: ${post.links[post.preview_index].previewKey}`);
+    await answer(kind==='a'?'Preview repaired using verified metadata. Playback still depends on Telegram.':kind==='r'?'Preview refresh requested. Telegram may reuse its cached preview.':kind==='p'?`Preview: link ${post.preview_index+1}`:`Provider: ${post.links[post.preview_index].previewKey}`);
     return true;
   } catch(error) {
     if([400,403].includes(error.code)){await answer('Telegram could not update this preview. Try again or send the link again.');return true;}
@@ -177,7 +192,7 @@ export async function syncEdit(msg,row,store,tg,state,ctx) {
       const old=previous.links.find(l=>l.platform===link.platform&&l.url===trim(link.url)[0]);
       if(old&&link.platform&&!quarantined(state.health[link.platform]?.[old.previewKey])){const fixed=fixedFor(link.url,link.platform,old.key);link.preview=fixed.preview;link.key=old.key;link.previewKey=old.previewKey;}
     }
-    const post=await makePost(msg,result,senderLabel(msg.from,state.settings.sender_mode),previous),view=await postView(post);
+    const post=await makePost(msg,result,state.settings.attribution===0?'':senderLabel(msg.from,state.settings.sender_mode),previous,state.settings),view=await postView(post);
     if(post.revision===previous.revision){previous.edit_date=Math.max(previous.edit_date??0,msg.edit_date??0);await store.savePost(msg.chat.id,row.bot_msg_id,msg.message_id,row.user_id,previous,fresh.ts);return;}
     if((view.fallback?.text.length??0)>4096)return editLimitNotice(msg,store,tg,'This edit exceeds Telegram’s message limit.',ctx);
     await applyOperation(await store.prepareOperation(ctx.operation_id,msg.chat.id,row.bot_msg_id,post,'source'),store,tg,ctx);

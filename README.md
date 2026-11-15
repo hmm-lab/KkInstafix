@@ -4,13 +4,15 @@
 
 Telegram bot that rewrites social media links so Telegram previews work better.
 
-It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
+It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, Xiaohongshu (RED), Pinterest, YouTube and FurTrack.
 
-Current Cloudflare version: **2.3.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.4.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
 The bot has conservative daily database allowances and per-request safety budgets. It pauses new processing at its soft cap rather than enabling paid services. See [free-tier safeguards](cloudflare/README.md#free-tier-safeguards-in-231) for limits, shared-account caveats and pause behaviour.
+
+Cloudflare 2.4.0 adds on-demand `/repair`, inline provider choices that preserve the whole message, universal `/music` links, `/appearance` preferences and remaining bot allowances in `/status`. FurTrack photo posts are supported; Imgur remains unverified and is not enabled. See the [2.4.0 runtime guide](cloudflare/README.md#features-in-240).
 
 ## Features
 
@@ -78,6 +80,9 @@ The shared catalogue and current evidence are documented in [the provider review
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
 - `/undo` — Cloudflare restores the original text and formatting, or a supported single attachment with its caption, for new rewrites (7-day retention). Older records and the legacy Python bot provide the original URL.
+- `/repair` — Cloudflare: reply to a fixed post to check up to three providers and edit it when metadata is verified (30-second per-user/chat cooldown).
+- `/music <url>` — Cloudflare: share a track or album through Songlink/Albumlink, also available as an inline choice; no music API calls.
+- `/appearance` — Cloudflare: `/appearance attribution off|on`, `/appearance preview compact|large`, or `/appearance reset`. Private chat sets your defaults; group commands override only your posts there.
 - `/refresh` — Cloudflare: reply to a fixed post to request a same-provider preview refresh without changing its clean destination.
 - `/diagnose` — Cloudflare: inspect a link or replied-to message, showing cleanup, preview provider, skip reasons and cached health without consuming posting quotas. Query values are hidden.
 - `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
