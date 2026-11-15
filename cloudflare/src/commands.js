@@ -14,18 +14,25 @@ const ADMIN=new Set(['ping','menu','enable','disable','muteuser','unmuteuser','l
   'setprovider','platform','setsendermode','setdedup','setratelimit','ignoreforwards','fallback','textspam',
   'resetstats','testall','export','import']);
 const onOff=s=>['on','true','yes','1'].includes(s)?1:['off','false','no','0'].includes(s)?0:null;
-export function cycleKeyboard(platform,index,target='') {
-  const retry={text:'↻ Retry preview',callback_data:`e:${platform}:${index}${target?':'+target:''}`};
+export function cycleKeyboard(platform,index,target='',active=null) {
+  const keys=Object.keys(PROVIDERS[platform]?.options??{}).filter(k=>!Object.hasOwn(PROVIDERS[platform].noauth_embed??{},k));
+  const effective=PROVIDERS[platform]?.noauth_embed?.[active]??active;
+  const retry={text:active?`↻ Retry · ${effective==='native'?'Native':effective.toUpperCase()} · ${Math.max(0,keys.indexOf(effective))+1}/${keys.length}`:'↻ Retry preview',callback_data:`e:${platform}:${index}${target?':'+target:''}`};
   return {inline_keyboard:[[retry]]};
 }
-function platformKeyboard(choices) {
-  return {inline_keyboard:Object.keys(PROVIDERS).sort().map(p=>[{text:`${PLATFORM_EMOJI[p]??''} ${p}: ${choices[p]??PROVIDERS[p].default}`,callback_data:`m:p:${p}`}])};
+const platformName=p=>({twitter:'X / Twitter',piviv:'Pixiv',xiaohongshu:'Xiaohongshu (RED)',youtube:'YouTube',tiktok:'TikTok',ifunny:'iFunny',furaffinity:'FurAffinity'}[p]??p[0].toUpperCase()+p.slice(1));
+function platformKeyboard(choices,page=0) {
+  const platforms=Object.keys(PROVIDERS).sort((a,b)=>platformName(a).localeCompare(platformName(b))),pages=Math.ceil(platforms.length/6);
+  page=Math.max(0,Math.min(pages-1,Number.isInteger(page)?page:0));
+  const rows=platforms.slice(page*6,page*6+6).map(p=>[{text:`${platformName(p)} · ${(choices[p]??PROVIDERS[p].default).toUpperCase()}`,callback_data:`m:p:${p}`}]);
+  rows.push([...(page>0?[{text:'‹ Previous',callback_data:`m:list:${page-1}`}]:[]),{text:`${page+1}/${pages}`,callback_data:`m:list:${page}`},...(page<pages-1?[{text:'Next ›',callback_data:`m:list:${page+1}`}]:[])]);
+  return {inline_keyboard:rows};
 }
 function providerKeyboard(platform,chosen) {
-  return {inline_keyboard:[...Object.keys(PROVIDERS[platform].options).map(k=>[{text:`${k===chosen?'✅ ':''}${k}`,callback_data:`m:s:${platform}:${k}`}]),[{text:'⬅ Back',callback_data:'m:back'}]]};
+  return {inline_keyboard:[...Object.entries(PROVIDERS[platform].options).map(([k,host])=>[{text:`${k===chosen?'✓ ':''}${k==='native'?'Native':k.toUpperCase()} · ${host}`,callback_data:`m:s:${platform}:${k}`}]),[{text:'‹ Platforms',callback_data:'m:back'}]]};
 }
 const HELP=`<b>KkInstafix</b>\nSend a social link to fix its Telegram preview. Tap “Retry preview” to try another provider. On multi-link posts, the sender or an admin can select which link gets the preview.\n\n`+
-  `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
+  `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/refresh — reply to a fixed post to refresh the same provider\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
   `<b>Admin controls</b>\n/menu · /enable · /disable\n/setprovider &lt;platform&gt; &lt;key&gt;\n/platform &lt;name&gt; on|off\n/setsendermode first_name|username|full_name|none\n/setdedup &lt;seconds&gt;\n/setratelimit &lt;count&gt; &lt;seconds&gt;\n/ignoreforwards on|off · /fallback on|off · /textspam on|off\n/muteuser · /unmuteuser · /listmuted\n/resetproviders · /resetstats · /testall\n/export · /import\n\nUse @KkInstaFixBot &lt;link&gt; inline in any chat.`;
 async function importBackup(msg,store,tg,reply) {
   const doc=(msg.reply_to_message??msg).document;
@@ -48,7 +55,7 @@ async function importBackup(msg,store,tg,reply) {
   for (const [k,v] of Object.entries(data.settings??{})) {
     if (k==='chat_id') continue;
     if (!validSetting(k,v)) return reply(`Invalid setting: ${h(k)}`);
-    stmts.push(store.stmt(`INSERT INTO chat_settings(chat_id,${k}) VALUES(?,?) ON CONFLICT(chat_id) DO UPDATE SET ${k}=excluded.${k}`,msg.chat.id,v));
+    stmts.push(store.stmt(`INSERT INTO chat_settings(chat_id,${k}${k==='text_spam'?'':',text_spam'}) VALUES(?,?${k==='text_spam'?'':',0'}) ON CONFLICT(chat_id) DO UPDATE SET ${k}=excluded.${k}`,msg.chat.id,v));
   }
   for (const [p,k] of Object.entries(data.providers??{})) {
     if(p==='linkedin'&&['vx','ez'].includes(k)){migrated=true;continue;}
@@ -83,7 +90,7 @@ async function importBackup(msg,store,tg,reply) {
   if (stmts.length) await store.db.batch(stmts);
   return reply('✅ Settings restored.'+(migrated?' Retired providers were replaced with current defaults; removed platforms were skipped.':''));
 }
-export async function command(msg,store,tg,state) {
+export async function command(msg,store,tg,state,ctx={}) {
   const text=(msg.text??msg.caption??'').trim(), parts=text.split(/\s+/), name=parts[0].split('@')[0].slice(1).toLowerCase();
   const addressed=parts[0].split('@')[1];
   if(addressed&&addressed.toLowerCase()!==tg.username?.toLowerCase())return;
@@ -104,6 +111,12 @@ export async function command(msg,store,tg,state) {
   }
   if (name==='status'||name==='config') return reply((await permissionStatus(msg,tg))+'\n\n'+Object.entries(state.settings).filter(([key])=>key!=='chat_id').map(([key,value])=>`<b>${h(key)}</b>: ${h(value)}`).join('\n')+`\nYour links: ${state.optout?'opted out':'enabled'}`);
   if (name==='providers') return reply(`<b>Providers updated ${PROVIDER_REVISION}</b>\n\n`+Object.entries(PROVIDERS).map(([p,cfg])=>`${PLATFORM_EMOJI[p]??''} <b>${p}</b>: ${h(state.choices[p]??cfg.default)}\n  ${Object.keys(cfg.options).map(k=>k+(healthLabel(state.health[p]?.[cfg.noauth_embed?.[k]??k])==='temporarily skipped'?' ⚠':'')).join(', ')}`).join('\n'));
+  if(name==='refresh') {
+    if(!msg.reply_to_message?.message_id)return reply('Reply to a fixed post with /refresh to request a fresh preview.');
+    const handled=await postCallback({from:msg.from,data:'r:refresh',message:{...msg.reply_to_message,chat:msg.chat,message_thread_id:msg.message_thread_id},command_id:msg.message_id},store,tg,ctx);
+    if(!handled)return reply('Reply to a fixed post from the last seven days. Older posts can use Retry preview.');
+    return;
+  }
   if(name==='diagnose')return diagnose(msg,parts.slice(1).join(' '),store,tg);
   if (name==='menu') return reply('<b>Provider menu</b>',{reply_markup:platformKeyboard(state.choices)});
   if (name==='setprovider') {
@@ -154,7 +167,7 @@ export async function command(msg,store,tg,state) {
   if (['clean','preview'].includes(name)) {
     const source=msg.reply_to_message?messageSource(msg.reply_to_message):parts.slice(1).join(' ');
     if (!urls(source).length) return reply(`Reply to a link or use /${name} &lt;url&gt;.`);
-    const result=await processText(source,state.settings,state.choices,state.overrides,fetch,name==='clean',state.health);
+    const result=await processText(source,state.settings,state.choices,state.overrides,fetch,name==='clean',state.health,store.cache);
     return reply(h(result.text),{link_preview_options:{is_disabled:true}});
   }
   if (name==='testall') {
@@ -174,13 +187,15 @@ export async function command(msg,store,tg,state) {
   if (name==='import') return importBackup(msg,store,tg,reply);
   return reply('Unknown command. Use /help.');
 }
-export async function callback(query,store,tg) {
+export async function callback(query,store,tg,ctx={}) {
   const data=query.data??'',msg=query.message,chat=msg?.chat?.id;
+  if(chat&&await store.isMuted(chat,query.from?.id??0))return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Preview controls are unavailable while you are muted in this chat.'});
   if (data==='test') return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'✅ Callback works!',show_alert:true});
   if (!msg||!chat) return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Message no longer accessible.'});
-  if(await postCallback(query,store,tg))return;
+  if(await postCallback(query,store,tg,ctx))return;
   if(data.startsWith('p:'))return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'These preview controls have expired. Send the link again.'});
   if (data.startsWith('e:')) {
+    if(!await store.tapAllowed(chat,msg.message_id))return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Preview just updated. Wait a moment before trying again.'});
     const [,p,index,target]=data.split(':'),options=Object.keys(PROVIDERS[p]?.options??{}),idx=Number(index);
     if (!options.length || !Number.isInteger(idx)||idx<0) return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Invalid provider.'});
     const row=await store.rewrite(chat,msg.message_id);
@@ -203,8 +218,8 @@ export async function callback(query,store,tg) {
       current??=candidates.length===1?candidates[0].url:undefined;
     }
     if(!current)return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Could not identify the post. Please send the link again.'});
-    const state=await store.settings(chat,query.from?.id??0);
-    const selected=nextHealthy(p,idx,state.health[p]);
+    const health=await store.health();
+    const selected=nextHealthy(p,idx,health[p]);
     const selectedIndex=options.indexOf(selected);
     const fixed=fixedFor(current,p,selected);
     const nextTarget=(await hash(linkIdentity(fixed.url,p))).slice(0,12);
@@ -222,18 +237,20 @@ export async function callback(query,store,tg) {
         }
       }
     }
-    await tg.call('answerCallbackQuery',{callback_query_id:query.id,text:`Provider: ${selected}`});
     try {await tg.call('editMessageText',{chat_id:chat,message_id:msg.message_id,text,parse_mode:'HTML',
-      link_preview_options:{url:fixed.preview,is_disabled:false,prefer_large_media:true,show_above_text:true},reply_markup:cycleKeyboard(p,(selectedIndex+1)%options.length,nextTarget)});}
-    catch(error) {if(!/not modified/i.test(error.message))throw error;}
-    await store.updateProvider(chat,msg.message_id,PROVIDERS[p].noauth_embed?.[selected]??selected);
+      link_preview_options:{url:fixed.preview,is_disabled:false,prefer_large_media:true,show_above_text:true},reply_markup:cycleKeyboard(p,(selectedIndex+1)%options.length,nextTarget,selected)});}
+    catch(error) {if(!/not modified/i.test(error.message)){if([400,403].includes(error.code))return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Telegram could not update this preview. Try again.'});throw error;}}
+    await store.recordLegacyAction(chat,msg.message_id,PROVIDERS[p].noauth_embed?.[selected]??selected);
+    ctx.sent=true;
+    await tg.call('answerCallbackQuery',{callback_query_id:query.id,text:`Provider: ${selected}`});
     return;
   }
   if (!await tg.admin(chat,query.from?.id,msg.chat.type)) return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Only admins can change chat settings.',show_alert:true});
   await tg.call('answerCallbackQuery',{callback_query_id:query.id});
-  const state=await store.settings(chat,query.from.id);
-  let text='<b>Provider menu</b>',keyboard=platformKeyboard(state.choices);
-  if(data.startsWith('m:p:')) {const p=data.slice(4);if(!PROVIDERS[p])return;text=`<b>${h(p)}</b>`;keyboard=providerKeyboard(p,state.choices[p]??PROVIDERS[p].default);}
-  if(data.startsWith('m:s:')) {const [,,p,k]=data.split(':');if(!PROVIDERS[p]?.options[k])return;await store.choose(chat,p,k);text=`<b>${h(p)}</b> — ${h(k)}`;keyboard=providerKeyboard(p,k);}
+  const state=await store.settings(chat,query.from.id,{includeHealth:false});
+  const page=data.startsWith('m:list:')?Number(data.slice(7)):0;
+  let text='<b>Choose a platform</b>',keyboard=platformKeyboard(state.choices,page);
+  if(data.startsWith('m:p:')) {const p=data.slice(4);if(!PROVIDERS[p])return;text=`<b>${h(platformName(p))}</b>`;keyboard=providerKeyboard(p,state.choices[p]??PROVIDERS[p].default);}
+  if(data.startsWith('m:s:')) {const [,,p,k]=data.split(':');if(!PROVIDERS[p]?.options[k])return;await store.choose(chat,p,k);text=`<b>${h(platformName(p))}</b> — ${h(k.toUpperCase())}`;keyboard=providerKeyboard(p,k);}
   await tg.call('editMessageText',{chat_id:chat,message_id:msg.message_id,text,parse_mode:'HTML',reply_markup:keyboard});
 }

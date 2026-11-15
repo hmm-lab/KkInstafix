@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current Cloudflare version: **2.2.2** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.3.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
@@ -21,13 +21,13 @@ The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deplo
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone. Platform-specific tracking is also stripped for Amazon, eBay, AliExpress, LinkedIn, Pinterest, Apple Music, Vimeo, and SoundCloud.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
-- Per-message **↻ Retry preview** cycles through preview backends and starts another round after the last one. Multi-link posts let the original sender or a chat admin select the preview.
-- Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
+- The single Retry button shows the current provider and its position, keeps cycling, and coalesces rapid taps. `/refresh` requests a fresh preview from the same provider. Multi-link posts let the original sender or a chat admin select the preview.
+- Deduplicates repeated links, stickers and GIFs. Plain-text spam deletion is opt-in for new chats; existing saved settings are preserved.
 - Per-user rate limiting.
 - Inline mode retains surrounding text and multiple links, with a result for each preview choice.
 - Edits to surviving originals update their existing repost, preserving formatting and refreshing undo.
 - `/status` checks Telegram permissions and explains how to fix missing access.
-- Interactive `/menu` for admins to change providers with inline buttons.
+- Compact `/menu` pages with friendly platform/provider names for admins.
 - Per-platform control: admins can disable rewriting for individual platforms (e.g. leave Spotify links alone) while keeping the rest on.
 - Commands are intentionally hidden from the Telegram "/" autocomplete menu to keep the UI uncluttered — they still work when typed.
 - Admin-only moderation and config commands.
@@ -76,6 +76,7 @@ The shared catalogue and current evidence are documented in [the provider review
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
 - `/undo` — Cloudflare restores the original text and formatting, or a supported single attachment with its caption, for new rewrites (7-day retention). Older records and the legacy Python bot provide the original URL.
+- `/refresh` — Cloudflare: reply to a fixed post to request a same-provider preview refresh without changing its clean destination.
 - `/diagnose` — Cloudflare: inspect a link or replied-to message, showing cleanup, preview provider, skip reasons and cached health without consuming posting quotas. Query values are hidden.
 - `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
 - `/preview` — reply to a message (or pass a URL) to see what the link would become (rewritten link, platform/provider, and cleaned version) without reposting it publicly.

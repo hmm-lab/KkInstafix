@@ -13,6 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.3.0] - 2026-11-15
+
+### Fixed
+
+- Report preview success only after confirmed edits and saved state, explain rejected edits, and block muted users from all callbacks.
+- Journal desired post edits and atomically commit control/undo metadata with an operation receipt. Redelivery safely reconciles partial failures and ambiguous edit timeouts without advancing providers twice or sending duplicate reposts.
+- Preserve valid preview controls during formatting fallback, retaining spoiler suppression in every attempt.
+- Explain oversized source edits without exposing their URLs or silently leaving a stale repost.
+
+### Added
+
+- One-second per-post tap coalescing, current provider/position on the existing Retry button, and `/refresh` for a same-provider preview refresh while keeping official destinations clean.
+- Paginated six-platform menus with friendly names, provider keys and hostnames.
+- Regional, expiring Cache API entries for provider health (30 seconds) and successful short-link expansion (5 minutes, 8 KiB per entry), with no cached mute/user preferences.
+
+### Changed
+
+- Reduced settings loading from seven SQL queries to four and removed unnecessary health/preference loads from plain messages and preview retries.
+- Bounded message-wide short-link network expansion to sixteen requests while retaining a four-request per-URL limit.
+- Made plain-text spam deletion opt-in for new chats in both runtimes, preserving existing saved choices.
+- Kept completed recovery receipts minimal and expired recovery/activity records with their post.
+
+### Deployment
+
+- Added additive D1 migration `cloudflare/migrations/0004-edit-recovery.sql`, required before the Worker upload.
+
+### Validation
+
+- Passed 302 Worker tests and 251 Python tests (553 total), including injected post-edit storage failures, atomic undo recovery, repeated callbacks, ambiguous timeouts, mute protection, caching, rapid taps, refresh and menu pagination.
+
 ## [2.2.2] - 2026-11-15
 
 ### Changed

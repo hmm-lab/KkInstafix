@@ -18,10 +18,12 @@ export class Telegram {
     const {fallback_message,...deliveryOptions}=options;
     options=deliveryOptions;
     const fallback=fallback_message??{text:plain};
+    const safePreview=options.link_preview_options?.is_disabled?{is_disabled:true}:undefined;
     const attempts=[{text:html,parse_mode:'HTML',...options},
+      {...fallback,...options,parse_mode:undefined},
       {...fallback,...options,parse_mode:undefined,reply_markup:undefined},
-      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined},
-      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:undefined,reply_parameters:undefined}];
+      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:safePreview},
+      {...fallback,...options,parse_mode:undefined,reply_markup:undefined,link_preview_options:safePreview,reply_parameters:undefined}];
     for (const attempt of attempts) {
       try {return await this.send(chat,attempt.text,attempt);}
       catch(error) {

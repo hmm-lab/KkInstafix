@@ -94,6 +94,7 @@ export async function runHealthChecks(store,{net=fetch,stamp=Math.floor(Date.now
     statements.push(store.stmt('INSERT OR REPLACE INTO provider_health VALUES(?,?,?,?,?,?,?,?)',item.platform,item.provider,failures,cooldown,stamp,lastSuccess,results[0]?.status??null,evidence));
   }
   if(statements.length)await store.db.batch(statements);
+  await store.cache?.remove('health','all');
   console.log(JSON.stringify({event:'provider_health_batch',checked:statements.length}));
   return {checked:statements.length};
 }

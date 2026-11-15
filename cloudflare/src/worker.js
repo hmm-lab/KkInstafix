@@ -1,3 +1,4 @@
+import {JsonCache} from './cache.js';
 import {VERSION} from './version.js';
 import {makePost,postView,syncEdit} from './posts.js';
 import {PROVIDERS,PROVIDER_REVISION} from './config.js';
@@ -44,7 +45,7 @@ async function activate(request,env,store) {
 async function inline(query,tg,store) {
   const source=query.query??'';
   if(!urls(source).length)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'hint',title:'Paste a social link',input_message_content:{message_text:'Paste a link after the bot username.'}}]});
-  const result=await processText(source,DEFAULTS,{},{},fetch,false,await store.health());
+  const result=await processText(source,DEFAULTS,{},{},fetch,false,await store.health(),store.cache);
   if(result.tooMany)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'limit',title:'Use up to 8 links per message',input_message_content:{message_text:'Use up to 8 links per inline message, then try again.',link_preview_options:{is_disabled:true}}}]});
   const first=result.links[0];
   const link=first?.url??urls(source)[0];
@@ -60,9 +61,9 @@ async function inline(query,tg,store) {
 async function rewrite(msg,update,store,tg,ctx) {
   const chat=msg.chat.id,user=msg.from?.id??0,stamp=now(),text=messageSource(msg).trim();
   if(msg.from?.is_bot)return;
-  const state=await store.settings(chat,user);
+  const state=await store.settings(chat,user,{includeHealth:urls(text).length>0||/^\/(providers|preview|clean)(?:@|\s|$)/i.test(text)});
   if(state.muted) {await tg.remove(chat,msg.message_id);return;}
-  if(text.startsWith('/')) {await command(msg,store,tg,state);return;}
+  if(text.startsWith('/')) {await command(msg,store,tg,state,ctx);return;}
   const settings=state.settings;
   if(!settings.enabled||state.optout||(settings.ignore_forwards&&msg.forward_origin))return;
   if(update.edited_message||update.edited_channel_post) {
@@ -77,7 +78,7 @@ async function rewrite(msg,update,store,tg,ctx) {
     }
     return;
   }
-  const result=await processText(text,settings,state.choices,state.overrides,fetch,false,state.health);
+  const result=await processText(text,settings,state.choices,state.overrides,fetch,false,state.health,store.cache);
   if(result.tooMany||!result.links.length)return;
   if(!await store.rate(chat,user,update.update_id,settings.rate_limit,settings.rate_window,stamp)) {
     if(await store.claimRecent('ratewarn',chat,String(user),settings.rate_window,stamp)) await tg.send(chat,'⏱ Slow down — link rate limit reached.');
@@ -138,7 +139,7 @@ async function rewrite(msg,update,store,tg,ctx) {
 }
 export default {
   async fetch(request,env) {
-    const url=new URL(request.url),store=new Store(env.DB);
+    const url=new URL(request.url),store=new Store(env.DB,new JsonCache(caches.default));
     if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
     if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
       const row=await store.stmt('SELECT username,activated FROM runtime_config WHERE id=1').first();
@@ -177,12 +178,12 @@ export default {
     const claim=await store.claimUpdate(update.update_id,now());
     if(claim==='busy')return json({error:'Update is still processing'},503,{'Retry-After':'5'});
     if(claim==='duplicate')return json({ok:true,duplicate:true});
-    const ctx={sent:false};
+    const ctx={sent:false,operation_id:'update:'+update.update_id};
     try {
       const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY));
       tg.username=config.username;
       if(update.inline_query)await inline(update.inline_query,tg,store);
-      else if(update.callback_query)await callback(update.callback_query,store,tg);
+      else if(update.callback_query)await callback(update.callback_query,store,tg,ctx);
       else {
         const msg=update.message??update.edited_message??update.channel_post??update.edited_channel_post;
         if(msg?.chat)await rewrite(msg,update,store,tg,ctx);
@@ -202,5 +203,5 @@ export default {
       return json({error:'Temporarily unavailable'},503,code===429?{'Retry-After':String(error.retryAfter??30)}:{});
     }
   },
-  async scheduled(_event,env) {const store=new Store(env.DB);await store.cleanup(now());await runHealthChecks(store,{stamp:now()});},
+  async scheduled(_event,env) {const store=new Store(env.DB,new JsonCache(caches.default));await store.cleanup(now());await runHealthChecks(store,{stamp:now()});},
 };

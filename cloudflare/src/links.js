@@ -103,36 +103,39 @@ function canonical(raw) {
 }
 // Expand known share links only, following at most four redirects and never
 // fetching arbitrary user-supplied hosts. Each hop has its own bounded deadline.
-export async function expand(raw, net=fetch) {
+export async function expand(raw, net=fetch, cache=null) {
   const first = new URL(raw), h = hostOf(first);
   if (!SHORT_LINK_DOMAINS.includes(h) && !(
     (h==='instagram.com' && /^\/share\//i.test(first.pathname)) ||
     (h==='tiktok.com' && /^\/t\//i.test(first.pathname)) ||
     (h==='reddit.com' && /^\/r\/[^/]+\/s\//i.test(first.pathname)))) return raw;
+  const cached=await cache?.get('expand',raw);
+  if(typeof cached==='string')return cached;
   let current = raw;
+  const finish=async value=>{if(value!==raw&&value.length<=8192)await cache?.put('expand',raw,value,300);return value;};
   for (let i=0;i<4;i++) {
     const u = new URL(current), host = hostOf(u);
     if (!(SHORT_LINK_DOMAINS.includes(host) || platformFor(u))) return current;
     try {
       const r = await net(current,{redirect:'manual',headers:{'User-Agent':'TelegramBot (like TwitterBot)'},signal:AbortSignal.timeout(2000)});
       await r.body?.cancel();
-      if (r.status<300 || r.status>=400 || !r.headers.get('location')) return current;
+      if (r.status<300 || r.status>=400 || !r.headers.get('location')) return r.ok?finish(current):current;
       const next = new URL(r.headers.get('location'),current);
       if (!['https:','http:'].includes(next.protocol) || next.username || next.password) return raw;
       current = next.href;
-      if (hostOf(next) !== host && !SHORT_LINK_DOMAINS.includes(hostOf(next))) return current;
+      if (hostOf(next) !== host && !SHORT_LINK_DOMAINS.includes(hostOf(next))) return finish(current);
     } catch { return current; }
   }
   return current;
 }
-export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fetch, clean=false, health={}) {
+export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fetch, clean=false, health={},cache=null) {
   const [trimmed,tail] = trim(raw);
   let input;
   try {input = new URL(trimmed);} catch {return {url:raw};}
   if (!['https:','http:'].includes(input.protocol) || input.username || input.password) return {url:raw};
   const originalPlatform = rewritePlatform(input);
   if (!clean && originalPlatform && (overrides[originalPlatform]??(originalPlatform==='weibo'?0:1))===0) return {url:raw};
-  const expanded = canonical(await expand(canonical(trimmed),net));
+  const expanded = canonical(await expand(canonical(trimmed),net,cache));
   const platform = rewritePlatform(new URL(expanded));
   if (clean) return {url:stripTracking(expanded,platform)+tail};
   if (!platform) return {url:stripTracking(expanded)+tail,preview:stripTracking(expanded),raw:trimmed};
@@ -149,11 +152,13 @@ export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fe
   if(preserveBrowser&&previewKey!==preferredPreview)fixed.preview=applyProvider(expanded,platform,previewKey);
   return {...fixed,url:fixed.url+tail,platform,key:selected,previewKey,raw:trimmed};
 }
-export async function processText(text, settings, choices, overrides, net=fetch, clean=false, health={}) {
+export async function processText(text, settings, choices, overrides, net=fetch, clean=false, health={},cache=null) {
   const tokens = [...new Set(text.match(/https?:\/\/[^\s<>]+/gi)??[])];
   // Bound external calls below Workers Free's subrequest limit.
   if (tokens.length>8) return {text,links:[],tooMany:true};
-  const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,net,clean,health)})));
+  let requests=0;
+  const boundedNet=(...args)=>{if(requests++>=16)throw new Error('Short-link expansion budget reached');return net(...args);};
+  const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,boundedNet,clean,health,cache)})));
   const changed = results.filter(r=>r.original!==r.url || r.platform==='youtube' || (r.platform&&r.preview&&r.preview!==trim(r.url)[0]));
   const replacements = new Map(changed.map(r=>[r.original,r.url]));
   return {text:text.replace(/https?:\/\/[^\s<>]+/gi,m=>replacements.get(m)??m),links:changed,allLinks:results};

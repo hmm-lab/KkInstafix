@@ -259,7 +259,7 @@ DEFAULT_CHAT_SETTINGS = {
     "ignore_forwards": 1,
     "provider_fallback": 1,
     "caption_style": "reply",
-    "text_spam": 1,
+    "text_spam": 0,
 }
 
 # Import-validation rules for chat settings. Every key in DEFAULT_CHAT_SETTINGS

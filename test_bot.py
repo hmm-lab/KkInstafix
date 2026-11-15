@@ -1226,7 +1226,7 @@ def test_migrate_chat_settings_adds_missing_columns():
     # Pre-existing row gets the new columns at their declared defaults.
     row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = -1").fetchone()
     assert row["caption_style"] == "reply"
-    assert row["text_spam"] == 1
+    assert row["text_spam"] == 0
 
 
 def test_migrate_chat_settings_is_idempotent():

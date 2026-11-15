@@ -5,6 +5,8 @@ import {createHash} from 'node:crypto';
 import {Miniflare} from 'miniflare';
 import {fixLink,processText,stripTracking,platformFor} from '../src/links.js';
 import {PROVIDERS} from '../src/config.js';
+import {JsonCache} from '../src/cache.js';
+import {VERSION} from '../src/version.js';
 import {Store} from '../src/store.js';
 import {entityHTML,rewriteEntities,captureOriginal} from '../src/formatting.js';
 import {runHealthChecks,probeURL,usableMetadata,probePlan,CONTENT_SAMPLES,OBSERVATION_SAMPLES} from '../src/health.js';
@@ -49,6 +51,8 @@ const dispatch=(path,body,headers={})=>mf.dispatchFetch('https://bot.example'+pa
 let id=0;
 const message=(text,user=5,chat=-1001,extra={})=>({message_id:++id,chat:{id:chat,type:'supergroup'},from:{id:user,first_name:'Alice <3 & Bob'},text,...extra});
 const update=async m=>{
+  // Tests mutate D1 health rows directly; invalidate the edge copy to observe those writes.
+  await mf.purgeCache();
   const body=m.update_id?m:{update_id:++id,message:m};
   const response=await dispatch('/webhook',body,{'X-Telegram-Bot-Api-Secret-Token':'webhook-test-secret'});
   return {response,body};
@@ -145,7 +149,7 @@ test('admin provider choice persists and is applied',async()=>{
 });
 test('per-message provider button edits the bot post',async()=>{
   calls.length=0;await update({update_id:++id,callback_query:{id:'callback1',from:{id:5},data:'e:twitter:1',message:{message_id:1000,chat:{id:-2010,type:'supergroup'},text:'https://vxtwitter.com/u/status/112'}}});
-  assert.deepEqual(calls.map(c=>c.method),['answerCallbackQuery','editMessageText']);assert.equal(calls[1].data.link_preview_options.url,'https://fxtwitter.com/u/status/112');assert.match(calls[1].data.text,/twitter.com/);
+  assert.deepEqual(calls.map(c=>c.method),['editMessageText','answerCallbackQuery']);assert.equal(calls[0].data.link_preview_options.url,'https://fxtwitter.com/u/status/112');assert.match(calls[0].data.text,/twitter.com/);
 });
 test('inline links are answered without membership or deleting anything',async()=>{
   calls.length=0;await update({update_id:++id,inline_query:{id:'inline1',from:{id:5},query:'https://twitter.com/u/status/113'}});
@@ -515,7 +519,7 @@ test('Instagram preview appears above linked attribution with only a retry butto
   assert.equal(sent.data.reply_markup.inline_keyboard[0].length,1);
   const [retry]=sent.data.reply_markup.inline_keyboard[0];
   assert.ok(!retry.url);
-  assert.equal(retry.text,'↻ Retry preview');assert.match(retry.callback_data,/^e:instagram:/);
+  assert.match(retry.text,/^↻ Retry · EE · 2\/8$/);assert.match(retry.callback_data,/^e:instagram:/);
 });
 test('Instagram layout preserves surrounding text before sender attribution',async()=>{
   calls.length=0;await update(message('Please watch https://instagram.com/reel/ContextLayout/ before Friday.',5,-5502));
@@ -532,7 +536,7 @@ test('retry keeps preview above text and removes the duplicate Instagram button'
   const edit=calls.find(c=>c.method==='editMessageText');
   assert.equal(edit.data.link_preview_options.show_above_text,true);
   assert.equal(edit.data.reply_markup.inline_keyboard[0].length,1);
-  assert.equal(edit.data.reply_markup.inline_keyboard[0][0].text,'↻ Retry preview');
+  assert.match(edit.data.reply_markup.inline_keyboard[0][0].text,/^↻ Retry · VX · 1\/8$/);
   assert.ok(!edit.data.reply_markup.inline_keyboard[0][0].url);
   assert.match(edit.data.text,/Shared by <a href="https:\/\/instagram.com\/reel\/RetryLayout\/">elSapo<\/a>/);
 });
@@ -974,8 +978,12 @@ test('snapshot storage failure preserves the original after a confirmed replacem
 });
 
 // 2.2: durable post controls and edit synchronisation.
-const click=async(sent,chat,data,user=5)=>update({update_id:++id,callback_query:{id:'post-'+id,from:{id:user},data,
-  message:{message_id:sent.botId,chat:{id:chat,type:'supergroup'},text:sent.text??'Shared by Alice'}}});
+const click=async(sent,chat,data,user=5,{rapid=false}={})=>{
+  // Existing interaction tests model deliberate, spaced clicks; rapid-tap tests opt out.
+  if(!rapid)await db.prepare('DELETE FROM post_activity WHERE chat_id=? AND bot_msg_id=?').bind(chat,sent.botId).run();
+  return update({update_id:++id,callback_query:{id:'post-'+id,from:{id:user},data,
+    message:{message_id:sent.botId,chat:{id:chat,type:'supergroup'},text:sent.text??'Shared by Alice'}}});
+};
 async function createPost(text,chat,extra={}) {
   calls.length=0;const source=message(text,5,chat,extra);await update(source);
   const send=calls.find(c=>c.method==='sendMessage');assert.ok(send);
@@ -1186,4 +1194,146 @@ test('cycling skips quarantined backends on every round and resumes after recove
     await db.prepare('DELETE FROM provider_health WHERE platform=?').bind('twitter').run();
     for(const r of rows.results)await db.prepare('INSERT INTO provider_health VALUES(?,?,?,?,?,?,?,?)').bind(r.platform,r.provider,r.failures,r.cooldown_until,r.checked_at,r.last_success_at,r.last_status,r.evidence).run();
   }
+});
+
+// 2.3: actionable feedback, idempotent edit recovery, bounded caching and compact UI.
+test('failed retry reports failure after rejected edits and never announces provider success',async()=>{
+  const chat=-7201,sent=await createPost('https://x.com/a/status/FailedNotice',chat);calls.length=0;editFailure={code:400};
+  try {
+    await click(sent,chat,'e:twitter:0');
+    assert.deepEqual(calls.map(c=>c.method),['editMessageText','editMessageText','answerCallbackQuery']);
+    assert.match(calls.at(-1).data.text,/could not update/);
+    assert.equal(JSON.parse((await new Store(db).post(chat,sent.botId)).state_json).links[0].previewKey,'vx');
+  } finally {editFailure=null;}
+});
+for(const data of ['e:twitter:0','p:0:old','m:back','test'])test('muted users cannot operate callback '+data,async()=>{
+  const chat=-7220-['e:twitter:0','p:0:old','m:back','test'].indexOf(data),sent=await createPost('https://x.com/a/status/MutedButtons',chat);await new Store(db).mute(chat,6,true);calls.length=0;
+  await click(sent,chat,data,6);assert.deepEqual(calls.map(c=>c.method),['answerCallbackQuery']);assert.match(calls[0].data.text,/muted/);
+});
+async function withCommitFault(chat,task) {
+  await db.prepare(`CREATE TRIGGER fail_operation_commit BEFORE UPDATE ON message_originals WHEN OLD.chat_id=${chat} BEGIN SELECT RAISE(FAIL,'simulated storage outage'); END`).run();
+  try {await task();}finally {await db.prepare('DROP TRIGGER fail_operation_commit').run();}
+}
+test('a post-edit database failure replays the same desired provider and commits all snapshots atomically',async()=>{
+  const chat=-7203,sent=await createPost('https://x.com/a/status/CommitRecovery',chat),store=new Store(db);
+  const body={update_id:++id,callback_query:{id:'recover-callback',from:{id:5},data:'e:twitter:0',message:{message_id:sent.botId,chat:{id:chat,type:'supergroup'}}}};
+  calls.length=0;
+  await withCommitFault(chat,async()=>{
+    assert.equal((await update(body)).response.status,503);
+    assert.equal(calls.filter(c=>c.method==='editMessageText').length,1);
+    assert.ok(!calls.some(c=>c.method==='answerCallbackQuery'));
+    assert.equal(JSON.parse((await store.post(chat,sent.botId)).state_json).links[0].previewKey,'vx');
+    assert.equal((await store.operation('callback:recover-callback')).state,'pending');
+  });
+  calls.length=0;assert.equal((await update(body)).response.status,200);
+  assert.match(calls.find(c=>c.method==='editMessageText').data.link_preview_options.url,/fxtwitter/);
+  assert.equal(JSON.parse((await store.post(chat,sent.botId)).state_json).links[0].previewKey,'fx');
+  assert.equal((await store.original(chat,sent.botId)).provider,'fx');
+  assert.equal((await store.operation('callback:recover-callback')).state,'done');
+  assert.equal(calls.at(-1).method,'answerCallbackQuery');
+  // Even if final webhook acknowledgement storage was lost, the operation receipt prevents another edit.
+  await db.prepare('DELETE FROM deliveries WHERE update_id=?').bind(body.update_id).run();calls.length=0;await update(body);
+  assert.ok(!calls.some(c=>c.method==='editMessageText'));
+});
+test('source-edit recovery refreshes undo and controls together after a storage failure',async()=>{
+  const chat=-7204,sent=await createPost(undefined,chat,{caption:'Original https://x.com/a/status/UndoRecovery',photo:[{file_id:'recover-photo'}]}),store=new Store(db);
+  const body={update_id:++id,edited_message:{...sent.source,caption:'Updated https://x.com/a/status/UndoRecovery',edit_date:200}};
+  await withCommitFault(chat,async()=>{assert.equal((await update(body)).response.status,503);assert.match(JSON.parse((await store.original(chat,sent.botId)).original_json).caption,/^Original/);});
+  calls.length=0;await update(body);assert.equal(calls.filter(c=>c.method==='editMessageText').length,1);
+  assert.match(JSON.parse((await store.original(chat,sent.botId)).original_json).caption,/^Updated/);
+  assert.match(JSON.parse((await store.post(chat,sent.botId)).state_json).original.caption,/^Updated/);
+});
+test('ambiguous Telegram edit timeout is safely reconciled without advancing a second provider',async()=>{
+  const chat=-7205,sent=await createPost('https://x.com/a/status/TimeoutRecovery',chat);
+  const body={update_id:++id,callback_query:{id:'timeout-recovery',from:{id:5},data:'e:twitter:0',message:{message_id:sent.botId,chat:{id:chat,type:'supergroup'}}}};
+  calls.length=0;editFailure={code:0,once:true};try{assert.equal((await update(body)).response.status,503);}finally{editFailure=null;}
+  calls.length=0;assert.equal((await update(body)).response.status,200);
+  assert.match(calls.find(c=>c.method==='editMessageText').data.link_preview_options.url,/fxtwitter/);
+  assert.equal(JSON.parse((await new Store(db).post(chat,sent.botId)).state_json).links[0].previewKey,'fx');
+});
+test('rapid taps are coalesced while later intentional clicks keep cycling',async()=>{
+  const chat=-7206,sent=await createPost('https://x.com/a/status/TapCooldown',chat);
+  await click(sent,chat,'e:twitter:0');calls.length=0;await click(sent,chat,'e:twitter:0',5,{rapid:true});
+  assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/Wait a moment/);
+  assert.equal(await new Store(db).tapAllowed(chat,sent.botId,Date.now()+1001),true);
+  calls.length=0;await click(sent,chat,'e:twitter:0');assert.ok(calls.some(c=>c.method==='editMessageText'));
+});
+test('formatting fallback retains valid controls and disabled spoiler previews throughout retries',async()=>{
+  const requests=[];let count=0;const tg=new Telegram('test',async(_url,init)=>{const data=JSON.parse(init.body);requests.push(data);return Response.json(++count===1?{ok:false,error_code:400,description:'bad entities'}:{ok:true,result:{message_id:1}});});
+  const keyboard={inline_keyboard:[[{text:'Retry',callback_data:'e:test:0'}]]};
+  await tg.deliver(1,'<bad>text</bad>','text',{reply_markup:keyboard,link_preview_options:{is_disabled:true},fallback_message:{text:'text',entities:[{type:'spoiler',offset:0,length:4}]}});
+  assert.deepEqual(requests[1].reply_markup,keyboard);assert.equal(requests[1].link_preview_options.is_disabled,true);assert.equal(requests[1].entities[0].type,'spoiler');
+});
+test('same-provider /refresh changes only preview URL and preserves original destinations',async()=>{
+  const chat=-7207,sent=await createPost('https://instagram.com/reel/RefreshSame/?share=tracking',chat),before=JSON.parse((await new Store(db).post(chat,sent.botId)).state_json);
+  calls.length=0;await update(message('/refresh',5,chat,{reply_to_message:{message_id:sent.botId}}));
+  const edit=calls.find(c=>c.method==='editMessageText');assert.ok(edit);assert.ok(new URL(edit.data.link_preview_options.url).searchParams.has('_kk_refresh'));assert.ok(!edit.data.text.includes('_kk_refresh'));
+  const after=JSON.parse((await new Store(db).post(chat,sent.botId)).state_json);assert.equal(after.links[0].previewKey,before.links[0].previewKey);assert.equal(after.links[0].url,before.links[0].url);assert.deepEqual(after.original,before.original);
+  assert.match(calls.at(-1).data.text,/refresh requested/);
+});
+test('new chats leave ordinary duplicate messages alone until textspam is explicitly enabled',async()=>{
+  const chat=-7208,store=new Store(db);await store.setSetting(chat,'enabled',1);
+  assert.equal((await store.settings(chat)).settings.text_spam,0);
+  calls.length=0;await update(message('thanks',5,chat));await update(message('thanks',6,chat));assert.ok(!calls.some(c=>c.method==='deleteMessage'));
+  await store.setSetting(chat,'text_spam',1);calls.length=0;await update(message('thanks again',5,chat));await update(message('thanks again',6,chat));assert.equal(calls.filter(c=>c.method==='deleteMessage').length,1);
+});
+test('oversized edits explain the limit once without replacing or leaking their links',async()=>{
+  const chat=-7209,sent=await createPost('https://x.com/a/status/LimitEdit',chat);
+  const source=Array.from({length:9},(_,n)=>`https://x.com/a/status/${n}?share_id=private`).join(' ');
+  calls.length=0;await update({update_id:++id,edited_message:{...sent.source,text:source,edit_date:200}});
+  assert.ok(!calls.some(c=>c.method==='editMessageText'));const notice=calls.find(c=>c.method==='sendMessage');assert.match(notice.data.text,/more than eight/);assert.ok(!notice.data.text.includes('private'));
+  calls.length=0;await update({update_id:++id,edited_message:{...sent.source,text:source,edit_date:201}});assert.ok(!calls.some(c=>c.method==='sendMessage'));
+});
+test('provider menus have six friendly platform choices per page and complete navigation',async()=>{
+  const chat=-7210;calls.length=0;await update(message('/menu',7,chat));
+  const first=calls.find(c=>c.method==='sendMessage').data.reply_markup.inline_keyboard;
+  assert.equal(first.length,7);assert.ok(first.at(-1).some(b=>b.callback_data==='m:list:1'));
+  const seen=new Set(first.flat().filter(b=>b.callback_data.startsWith('m:p:')).map(b=>b.callback_data));
+  for(let page=1;page<4;page++){
+    calls.length=0;await update({update_id:++id,callback_query:{id:'menu-page-'+page,from:{id:7},data:'m:list:'+page,message:{message_id:100,chat:{id:chat,type:'supergroup'}}}});
+    const rows=calls.find(c=>c.method==='editMessageText').data.reply_markup.inline_keyboard;
+    for(const b of rows.flat().filter(b=>b.callback_data.startsWith('m:p:')))seen.add(b.callback_data);
+  }
+  assert.equal(seen.size,Object.keys(PROVIDERS).length);
+});
+function memoryCache() {
+  const entries=new Map();return {entries,match:async req=>entries.get(req.url)?.clone(),put:async(req,res)=>entries.set(req.url,res.clone()),delete:async req=>entries.delete(req.url)};
+}
+test('short-link cache expires, hashes keys, bounds entry size and does not cache failed expansions',async()=>{
+  let clock=1000,requests=0;const backing=memoryCache(),cache=new JsonCache(backing,'https://bot.example',()=>clock);
+  const net=async()=>{requests++;return new Response(null,{status:302,headers:{location:'https://www.tiktok.com/@u/video/123'}});};
+  const raw='https://vm.tiktok.com/CacheProof?token=private';
+  await fixLink(raw,{}, {},{},net,false,{},cache);await fixLink(raw,{}, {},{},net,false,{},cache);assert.equal(requests,1);
+  assert.ok([...backing.entries.keys()].every(k=>!k.includes('private')));
+  clock+=301000;await fixLink(raw,{}, {},{},net,false,{},cache);assert.equal(requests,2);
+  await cache.put('test','large','x'.repeat(9000),60);assert.equal(await cache.get('test','large'),null);
+  let blocked=0;const blockedNet=async()=>{blocked++;return new Response(null,{status:403});};
+  await fixLink('https://vm.tiktok.com/Blocked',{}, {},{},blockedNet,false,{},cache);await fixLink('https://vm.tiktok.com/Blocked',{}, {},{},blockedNet,false,{},cache);assert.equal(blocked,2);
+});
+test('database health caching avoids repeat scans while settings use four queries and live mute checks',async()=>{
+  const cache=new JsonCache(memoryCache(),'https://bot.example'),real=new Store(db,cache);let batches=[],scans=0;
+  const wrapped={prepare:sql=>{if(sql==='SELECT * FROM provider_health')scans++;return db.prepare(sql);},batch:async statements=>{batches.push(statements.length);return db.batch(statements);}};
+  const store=new Store(wrapped,cache);await store.settings(-7211,5,{includeHealth:false});assert.deepEqual(batches,[4]);assert.equal(scans,0);
+  await store.health();await store.health();assert.equal(scans,1);
+  await real.mute(-7211,5,true);assert.equal(await store.isMuted(-7211,5),true);await real.mute(-7211,5,false);assert.equal(await store.isMuted(-7211,5),false);
+});
+
+test('spoiler preview suppression survives every delivery fallback attempt',async()=>{
+  const requests=[];const tg=new Telegram('test',async(_url,init)=>{requests.push(JSON.parse(init.body));return Response.json(requests.length<5?{ok:false,error_code:400,description:'rejected'}:{ok:true,result:{message_id:1}});});
+  await tg.deliver(1,'<tg-spoiler>https://example.com/secret</tg-spoiler>','hidden',{link_preview_options:{is_disabled:true},fallback_message:{text:'https://example.com/secret',entities:[{type:'spoiler',offset:0,length:26}]}});
+  assert.equal(requests.length,5);assert.ok(requests.every(r=>r.link_preview_options?.is_disabled===true));
+});
+test('short-link expansion has a shared request budget across a multi-link message',async()=>{
+  let requests=0;const net=async raw=>{requests++;const u=new URL(raw);return new Response(null,{status:302,headers:{location:u.origin+u.pathname+'x'}});};
+  const text=Array.from({length:8},(_,i)=>'https://bit.ly/chain'+i).join(' ');
+  const result=await processText(text,{}, {},{},net);assert.equal(requests,16);assert.ok(!result.tooMany);
+});
+
+test('completed edit receipts omit original text and expire with their post',async()=>{
+  const chat=-7212,sent=await createPost('Private words https://x.com/a/status/ReceiptRetention',chat),store=new Store(db);
+  await click(sent,chat,'e:twitter:0');const row=await db.prepare('SELECT * FROM post_operations WHERE chat_id=?').bind(chat).first();
+  assert.equal(row.state,'done');assert.ok(!row.desired_json.includes('Private words'));assert.ok(!row.desired_json.includes('https://'));
+  await db.prepare('UPDATE post_controls SET ts=0 WHERE chat_id=?').bind(chat).run();await store.cleanup(Math.floor(Date.now()/1000));
+  assert.equal(await db.prepare('SELECT * FROM post_operations WHERE chat_id=?').bind(chat).first(),null);
+  assert.equal(await db.prepare('SELECT * FROM post_activity WHERE chat_id=?').bind(chat).first(),null);
 });

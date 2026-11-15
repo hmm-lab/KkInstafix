@@ -35,7 +35,9 @@ export async function postView(post) {
     }
     if(selected.platform&&Object.keys(PROVIDERS[selected.platform].options).length>1) {
       const keys=Object.keys(PROVIDERS[selected.platform].options),idx=keys.indexOf(selected.key);
-      keyboard.inline_keyboard.push([{text:'↻ Retry preview',callback_data:`e:${selected.platform}:${(idx+1)%keys.length}:${(await hash(linkIdentity(selected.url,selected.platform))).slice(0,12)}`}]);
+      const backends=keys.filter(k=>!Object.hasOwn(PROVIDERS[selected.platform].noauth_embed??{},k));
+      const active=selected.previewKey??backend(selected.platform,selected.key);
+      keyboard.inline_keyboard.push([{text:`↻ Retry · ${active==='native'?'Native':active.toUpperCase()} · ${Math.max(0,backends.indexOf(active))+1}/${backends.length}`,callback_data:`e:${selected.platform}:${(idx+1)%keys.length}:${(await hash(linkIdentity(selected.url,selected.platform))).slice(0,12)}`}]);
     }
   }
   return {...rendered,preview:rendered.protectedLinks?{is_disabled:true}:{is_disabled:false,url:selected.preview??selected.url,prefer_large_media:true,show_above_text:true},keyboard};
@@ -66,83 +68,118 @@ export function sanitisePost(post) {
   }
   return changed;
 }
-export async function postCallback(query,store,tg) {
-  if(!/^[ep]:/.test(query.data??''))return false;
+async function answerAction(query,tg,text) {
+  try {
+    if(query.id)await tg.call('answerCallbackQuery',{callback_query_id:query.id,text});
+    else await tg.send(query.message.chat.id,text,{reply_parameters:{message_id:query.command_id,allow_sending_without_reply:true},message_thread_id:query.message.message_thread_id});
+  }catch{console.warn(JSON.stringify({event:'preview_notice_unavailable'}));}
+}
+export async function applyOperation(op,store,tg,ctx={}) {
+  if(op.state==='done'){ctx.sent=true;return JSON.parse(op.desired_json);}
+  const post=JSON.parse(op.desired_json);
+  try {await editPost(tg,op.chat_id,op.bot_msg_id,await postView(post));}
+  catch(error) {
+    if([400,403].includes(error.code))await store.failOperation(op.operation_id);
+    // Edits are idempotent: safely replay the frozen desired state after an ambiguous timeout.
+    if(error.code===0)throw new Error('Preview edit outcome needs reconciliation');
+    throw error;
+  }
+  await store.commitOperation(op);ctx.sent=true;
+  return post;
+}
+export async function postCallback(query,store,tg,ctx={}) {
+  if(!/^[epr]:/.test(query.data??''))return false;
   const msg=query.message,chat=msg?.chat?.id;
   if(!chat)return false;
   const row=await store.post(chat,msg.message_id);
-  if(!row)return false; // Historical buttons continue through the legacy handler.
-  const answer=text=>tg.call('answerCallbackQuery',{callback_query_id:query.id,text});
-  if(!await store.lockPost(chat,msg.message_id,stamp())){await answer('Another update is in progress. Try again shortly.');return true;}
+  if(!row)return false;
+  const answer=text=>answerAction(query,tg,text),opid=query.id?'callback:'+query.id:ctx.operation_id;
+  if(!opid)throw new Error('Missing preview operation identity');
+  const existing=await store.operation(opid);
+  if(!existing&&!await store.tapAllowed(chat,msg.message_id)){await answer('Preview just updated. Wait a moment before trying again.');return true;}
+  if(!await store.lockPost(chat,msg.message_id,stamp())){
+    if(existing?.state==='pending')throw new Error('Preview recovery is busy');
+    await answer('Another update is in progress. Try again shortly.');return true;
+  }
   try {
-    const fresh=await store.post(chat,msg.message_id),post=JSON.parse(fresh.state_json);
-    const [kind,arg,target]=query.data.split(':');
+    if(existing?.state==='failed'){await answer('Telegram could not update this preview. Try again or send the link again.');return true;}
+    if(existing) {
+      const recovered=await applyOperation(existing,store,tg,ctx);
+      await answer(`Provider: ${recovered.links[recovered.preview_index]?.previewKey??'original'}`);return true;
+    }
+    const pending=await store.pendingOperation(chat,msg.message_id);
+    if(pending){await applyOperation(pending,store,tg,ctx);await answer('Previous preview update recovered. Tap again to continue.');return true;}
+    const fresh=await store.post(chat,msg.message_id);
+    if(!fresh){await answer('These controls have expired. Send the link again.');return true;}
+    const post=JSON.parse(fresh.state_json),[kind,arg,target]=query.data.split(':');
     const view=await postView(post);
     if(view.protectedLinks){await answer('This link is hidden by a spoiler; preview remains disabled.');return true;}
     if(kind==='p') {
       if(target!==post.revision||!/^\d+$/.test(arg)||!post.links[Number(arg)]){await answer('This preview choice is outdated. Use the latest buttons.');return true;}
       if(query.from?.id!==fresh.user_id&&!await tg.admin(chat,query.from?.id,msg.chat.type)){await answer('Only the original sender or a chat admin can choose the preview.');return true;}
       if(post.preview_index===Number(arg)){await answer('This link is already selected.');return true;}
-      post.preview_index=Number(arg);
-      sanitisePost(post);
+      post.preview_index=Number(arg);sanitisePost(post);
+    } else if(kind==='r') {
+      sanitisePost(post);const link=post.links[post.preview_index];
+      if(!link){await answer('No link is available to refresh.');return true;}
+      const preview=new URL(link.preview??link.url);preview.searchParams.set('_kk_refresh',(await hash(opid)).slice(0,12));link.preview=preview.href;
     } else {
-      const link=post.links[post.preview_index??0],p=arg;
-      const fingerprint=query.data.split(':')[3];
+      const link=post.links[post.preview_index??0],p=arg,fingerprint=query.data.split(':')[3];
       if(!link?.platform||link.platform!==p||(fingerprint&&(await hash(linkIdentity(link.url,p))).slice(0,12)!==fingerprint&&(await hash(linkIdentity(link.url,p,false))).slice(0,12)!==fingerprint)) {
         await answer('This retry button is outdated. Use the latest buttons.');return true;
       }
-      const cleaned=sanitisePost(post);
-      const state=await store.settings(chat,query.from?.id??0),keys=Object.keys(PROVIDERS[p].options);
-      let tried=post.tried[identity(link)]??[];
-      const idx=keys.indexOf(link.key);
-      const next=()=>{
-        for(let n=1;n<=keys.length;n++) {
-          const key=keys[(idx+n)%keys.length],effective=backend(p,key);
-          // Browser aliases share preview backends and must not replace an official destination.
-          if(Object.hasOwn(PROVIDERS[p].noauth_embed??{},key))continue;
-          if(!tried.includes(effective)&&!quarantined(state.health[p]?.[effective]))return key;
-        }
-      };
-      let selected=next();
-      // A completed round starts again on this click, including previously exhausted records.
-      if(!selected){tried=[];selected=next();}
+      const cleaned=sanitisePost(post),health=await store.health(),keys=Object.keys(PROVIDERS[p].options);
+      let tried=post.tried[identity(link)]??[];const idx=keys.indexOf(link.key);
+      const next=()=>{for(let n=1;n<=keys.length;n++){const key=keys[(idx+n)%keys.length],effective=backend(p,key);
+        if(Object.hasOwn(PROVIDERS[p].noauth_embed??{},key))continue;
+        if(!tried.includes(effective)&&!quarantined(health[p]?.[effective]))return key;
+      }};
+      let selected=next();if(!selected){tried=[];selected=next();}
       if(!selected){
-        if(cleaned){await editPost(tg,chat,msg.message_id,await postView(post));await store.savePost(chat,msg.message_id,fresh.source_msg_id,fresh.user_id,post,fresh.ts);}
+        if(cleaned)await applyOperation(await store.prepareOperation(opid,chat,msg.message_id,post,'callback'),store,tg,ctx);
         await answer((cleaned?'Tracking removed. ':'')+'Preview providers are temporarily unavailable. Try again later.');return true;
       }
       const fixed=fixedFor(link.url,p,selected);
-      // Preserve an explicitly chosen browser frontend while changing only its preview.
       if(!link.browserKey)link.url=fixed.url;
       link.preview=fixed.preview;link.previewKey=backend(p,selected);link.key=selected;
       post.tried[identity(link)]=[...new Set([...tried,link.previewKey])];
     }
-    const updated=await postView(post);
-    await answer(kind==='p'?`Preview: link ${post.preview_index+1}`:`Provider: ${post.links[post.preview_index].previewKey}`);
-    await editPost(tg,chat,msg.message_id,updated);
-    await store.savePost(chat,msg.message_id,fresh.source_msg_id,fresh.user_id,post,fresh.ts);
-    const active=post.links[post.preview_index];
-    await store.updateProvider(chat,msg.message_id,active?.previewKey??null);
+    const op=await store.prepareOperation(opid,chat,msg.message_id,post,'callback');
+    await applyOperation(op,store,tg,ctx);
+    await answer(kind==='r'?'Preview refresh requested. Telegram may reuse its cached preview.':kind==='p'?`Preview: link ${post.preview_index+1}`:`Provider: ${post.links[post.preview_index].previewKey}`);
     return true;
+  } catch(error) {
+    if([400,403].includes(error.code)){await answer('Telegram could not update this preview. Try again or send the link again.');return true;}
+    throw error;
   } finally {await store.unlockPost(chat,msg.message_id);}
+}
+async function editLimitNotice(msg,store,tg,reason,ctx) {
+  if(await store.claimRecent('editwarn',msg.chat.id,String(msg.from?.id??0),60,stamp())) {
+    await tg.send(msg.chat.id,reason+' The existing preview was kept. Shorten the original message and edit it again.',
+      {message_thread_id:msg.message_thread_id,link_preview_options:{is_disabled:true},reply_parameters:{message_id:msg.message_id,allow_sending_without_reply:true}});
+    ctx.sent=true;
+  }
 }
 export async function syncEdit(msg,row,store,tg,state,ctx) {
   if(row.user_id!==(msg.from?.id??0))return;
   if(!await store.lockPost(msg.chat.id,row.bot_msg_id,stamp()))throw new Error('Post edit is busy');
   try {
-    const fresh=await store.post(msg.chat.id,row.bot_msg_id),previous=JSON.parse(fresh.state_json);
+    const existing=await store.operation(ctx.operation_id);
+    if(existing){if(existing.state!=='failed')await applyOperation(existing,store,tg,ctx);return;}
+    const pending=await store.pendingOperation(msg.chat.id,row.bot_msg_id);
+    if(pending)await applyOperation(pending,store,tg,{});
+    const fresh=await store.post(msg.chat.id,row.bot_msg_id);if(!fresh)return;
+    const previous=JSON.parse(fresh.state_json);
     if((msg.edit_date??0)<(previous.edit_date??0))return;
-    const result=await processText(messageSource(msg).trim(),state.settings,state.choices,state.overrides,fetch,false,state.health);
-    if(result.tooMany)return; // Keep the original and existing repost on oversized edits.
-    // Reuse a manually selected backend for a post whose identity survives the edit.
+    const result=await processText(messageSource(msg).trim(),state.settings,state.choices,state.overrides,fetch,false,state.health,store.cache);
+    if(result.tooMany)return editLimitNotice(msg,store,tg,'This edit contains more than eight links.',ctx);
     for(const link of result.allLinks??result.links) {
       const old=previous.links.find(l=>l.platform===link.platform&&l.url===trim(link.url)[0]);
       if(old&&link.platform&&!quarantined(state.health[link.platform]?.[old.previewKey])){const fixed=fixedFor(link.url,link.platform,old.key);link.preview=fixed.preview;link.key=old.key;link.previewKey=old.previewKey;}
     }
     const post=await makePost(msg,result,senderLabel(msg.from,state.settings.sender_mode),previous),view=await postView(post);
     if(post.revision===previous.revision){previous.edit_date=Math.max(previous.edit_date??0,msg.edit_date??0);await store.savePost(msg.chat.id,row.bot_msg_id,msg.message_id,row.user_id,previous,fresh.ts);return;}
-    if((view.fallback?.text.length??0)>4096)return;
-    await editPost(tg,msg.chat.id,row.bot_msg_id,view);ctx.sent=true;
-    await store.refreshOriginal(msg.chat.id,row.bot_msg_id,post);
-    await store.savePost(msg.chat.id,row.bot_msg_id,msg.message_id,row.user_id,post,fresh.ts);
+    if((view.fallback?.text.length??0)>4096)return editLimitNotice(msg,store,tg,'This edit exceeds Telegram’s message limit.',ctx);
+    await applyOperation(await store.prepareOperation(ctx.operation_id,msg.chat.id,row.bot_msg_id,post,'source'),store,tg,ctx);
   } finally {await store.unlockPost(msg.chat.id,row.bot_msg_id);}
 }

@@ -240,6 +240,7 @@ def test_handle_message_admin_command_allowed_for_admin():
 
 def test_handle_message_dedupes_repeated_text():
     cid = -1107
+    bot.update_chat_setting(cid, "text_spam", 1)
     fb = FakeBot()
 
     def mk(mid):

@@ -9,7 +9,7 @@
             ignore_forwards INTEGER NOT NULL DEFAULT 1,
             provider_fallback INTEGER NOT NULL DEFAULT 1,
             caption_style TEXT NOT NULL DEFAULT 'reply',
-            text_spam INTEGER NOT NULL DEFAULT 1
+            text_spam INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS provider_settings (
@@ -86,3 +86,8 @@ CREATE TABLE IF NOT EXISTS provider_probe_cursor (id INTEGER PRIMARY KEY CHECK(i
 
 CREATE TABLE IF NOT EXISTS post_controls (chat_id INTEGER NOT NULL, bot_msg_id INTEGER NOT NULL, source_msg_id INTEGER NOT NULL, user_id INTEGER NOT NULL, state_json TEXT NOT NULL, ts INTEGER NOT NULL, lock_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(chat_id,bot_msg_id), UNIQUE(chat_id,source_msg_id));
 CREATE INDEX IF NOT EXISTS idx_post_controls_ts ON post_controls(ts);
+
+CREATE TABLE IF NOT EXISTS post_operations (operation_id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, bot_msg_id INTEGER NOT NULL, desired_json TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_post_operations_message ON post_operations(chat_id,bot_msg_id,state);
+CREATE INDEX IF NOT EXISTS idx_post_operations_ts ON post_operations(ts);
+CREATE TABLE IF NOT EXISTS post_activity (chat_id INTEGER NOT NULL, bot_msg_id INTEGER NOT NULL, last_action_at INTEGER NOT NULL, PRIMARY KEY(chat_id,bot_msg_id));

@@ -165,3 +165,12 @@ The fixture corpus now includes that post path and checks every Reddit option.
 Runtime tests cover official links, inline output, `/clean`, and cleanup of
 already stored targets on retry, including exhausted provider history. This is a
 cleanup correction; provider selections and availability claims are unchanged.
+
+## Retry UX and cached health (2.3.0)
+
+No provider mappings changed. Retry displays the active backend and position,
+continues cycling, and preserves explicit browser destinations. Cached background
+health expires after thirty seconds; it remains sampled evidence rather than a
+playback guarantee. `/refresh` changes only the selected preview request URL and
+does not claim to force Telegram to regenerate its cache. User opt-outs/mutes and
+other preferences are not cached. See the runtime README for recovery semantics.

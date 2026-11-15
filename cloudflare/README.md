@@ -39,6 +39,68 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Reliability, performance and UX in 2.3.0
+
+The single Retry button now shows its active backend and position, for example
+`↻ Retry · EE · 2/8`. Cycling remains continuous. Successful edits have a one-second
+per-post cooldown to absorb rapid taps; pending work remains serialized. Muted
+users cannot use retry, selection, test or menu callbacks. Notifications report
+success only after Telegram and the state commit succeed, and rejected edits
+receive a failure explanation. Historical retries also confirm edits first.
+
+Reply to a fixed post with `/refresh` to request the same provider again. A stable
+per-operation `_kk_refresh` value is added only to the fetched preview URL, never
+to the clean clickable destination or undo data. This attempts another crawl;
+Telegram or a provider may still reuse its own cache. Spoiler links cannot be
+refreshed into a visible preview. There is no additional URL button.
+
+Preview/source edits first save the complete intended state in `post_operations`.
+On success a D1 batch commits controls, the original/undo snapshot, legacy
+metadata and the operation receipt together. If storage fails after a Telegram
+edit, webhook replay applies the same desired message instead of choosing another
+provider. Ambiguous edit timeouts are safely replayed because edits are
+idempotent; sends retain the existing no-blind-retry policy. Repeated callbacks
+with a completed receipt do not edit again. Confirmed Telegram rejection marks
+that operation failed and keeps the previous state. Source edits never send a
+second replacement post. Pending reconciliation is attempted before another post
+action. Completed receipts store only minimal provider information, and recovery
+records expire with their post's seven-day retention window.
+
+Settings now use four SQL queries in one batch instead of seven. Plain messages
+and most commands skip provider-health reads. Retry reads health directly rather
+than reloading all preferences. Provider health is cached regionally for thirty
+seconds and invalidated locally by background checks; mute and user preferences
+remain live D1 reads. Cache failures fall back to D1/network behaviour.
+
+Successful known-short-link expansion is cached for five minutes using hashed
+keys and an 8 KiB entry-size bound. Access blocks, timeouts and unchanged failures
+are not cached. There is no arbitrary-site probing or global mutable request
+cache. Cache API entries are regional and may be evicted sooner. Each URL still
+has at most four redirect requests, with sixteen expansion requests shared across
+one message to leave room for other Worker operations. Extremely long chains
+can therefore remain partially expanded.
+
+Formatting fallback first tries native entities with the existing valid keyboard
+and preview settings. Only later fallbacks remove the keyboard; spoiler preview
+suppression is retained throughout. Oversized source edits receive a short,
+rate-limited explanation without quoting their URLs, and leave the original and
+existing repost intact.
+
+`/menu` shows six friendly platform choices per page with navigation. Provider
+choices include the provider key and hostname so unfamiliar abbreviations are
+clear. Old menu callbacks remain supported.
+
+Plain-text spam deletion is off for new chats in both runtimes. The Worker
+explicitly inserts that default when creating settings in an existing D1 schema.
+Existing saved chat/user choices are preserved; admins can use `/textspam off` to
+disable it in an existing chat, or `/textspam on` to opt in. Link, sticker and GIF
+deduplication retain their previous behaviour.
+
+Before uploading 2.3.0, apply `migrations/0004-edit-recovery.sql` after earlier
+migrations. It adds recovery receipts and tap activity without modifying existing
+chat data. Clean installs use the regenerated schema. Configuration exports
+exclude message content, operation journals and cache entries.
+
 ## Continuous retries in 2.2.2
 
 Retry preview starts another provider cycle after exhausting a round, including
@@ -235,7 +297,7 @@ token in its API URL path. No activation key is put in an HTTP URL query string;
 the browser consumes it from a URL fragment and clears its history entry.
 
 Free-tier limits still apply. The Worker bounds link expansion to eight URLs per
-message and four redirects per URL, within the Free subrequest budget. Cleanup
+message and four redirects per URL, with a shared sixteen-request expansion budget. Cleanup
 limits delivery history and undo records to seven days. If free quotas are
 exceeded, service can stop until they reset; this setup does not upgrade a plan.
 

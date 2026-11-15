@@ -34,7 +34,7 @@ export async function diagnose(msg,argumentsText,store,tg) {
     reply_parameters:{message_id:msg.message_id,allow_sending_without_reply:true}});
   if(!input.length)return reply('Reply to a message containing links or use /diagnose &lt;url&gt;.');
   if(input.length>8)return reply('Decision: left unchanged — more than 8 links. Use up to 8 links per message.');
-  const result=await processText(source,settings,state.choices,state.overrides,fetch,false,state.health);
+  const result=await processText(source,settings,state.choices,state.overrides,fetch,false,state.health,store.cache);
   let reason=bot?'ignored — another bot':state.muted?'ignored — sender is muted':!settings.enabled?'ignored — bot disabled in this chat':
     state.optout?'ignored — sender opted out':settings.ignore_forwards&&forwarded?'ignored — forwarded posts are disabled':null;
   const platforms=input.map(raw=>{try{return rewritePlatform(new URL(raw));}catch{return null;}});
