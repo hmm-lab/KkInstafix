@@ -221,7 +221,12 @@ To protect against loss:
 
 For a fully managed alternative, port the storage layer to Postgres.
 
-## Deploy on Railway
+## Deploy on Cloudflare (free)
+
+The Worker + D1 implementation, activation instructions, backup migration and
+tests are documented in [cloudflare/README.md](cloudflare/README.md).
+
+## Deploy on Railway (legacy alternative)
 
 1. Push the repo to GitHub.
 2. Create a new Railway project from the repo.

@@ -79,7 +79,11 @@ _TRACKING_SET = {t.lower() for t in TRACKING}
 # elsewhere (e.g. "t" is a YouTube timestamp), so they must not go in the global
 # TRACKING list. The embed providers need only the path, so dropping these is
 # always safe for a rewritten link.
+INSTAGRAM_CONTENT_QUERY = {"img_index"}
+INSTAGRAM_CONTENT_PATH = r"^/(?:(?:[^/?#]+/)?(?:p|reel|reels|tv)/|stories/)"
 PLATFORM_TRACKING = {
+    "youtube": {"feature", "is", "pp", "ab_channel", "source_ve_path", "embeds_referring_euri", "embeds_referring_origin"},
+    "instagram": {"psln", "dlrf", "xtok", "vrfl"},
     # Twitter/X share tokens: ?s=20&t=<token>, plus cxt context blobs.
     "twitter": {"t", "cxt"},
     # TikTok app/web session and referrer junk.
@@ -112,7 +116,7 @@ GENERIC_TRACKING = {
 # sites, so they are only removed when the host is YouTube. "feature" is a
 # documented YouTube share param that could be a legitimate flag elsewhere.
 YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com"}
-YOUTUBE_TRACKING = {"is", "feature", "pp"}
+YOUTUBE_TRACKING = {"is", "feature", "pp", "ab_channel", "source_ve_path", "embeds_referring_euri", "embeds_referring_origin"}
 
 # Amazon operates under many country TLDs; track all of them by this set.
 AMAZON_TLDS = {
@@ -274,6 +278,7 @@ RATE_LIMIT = 5       # links per user per window
 RATE_WINDOW = 30     # seconds
 
 PLATFORM_EMOJI = {
+    "youtube": "▶️",
     "instagram": "📷",
     "twitter": "🐦",
     "tiktok": "🎵",
@@ -304,6 +309,7 @@ PLATFORM_EMOJI = {
 # group are guaranteed live but are landing/profile pages — pass a real content
 # URL for a richer embed test: /testall <platform> <url>.
 SAMPLE_URLS = {
+    "youtube": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     # Iconic permanent posts.
     "instagram": "https://www.instagram.com/p/DBPVOg2TonD/",   # @natgeo post
     "twitter": "https://twitter.com/jack/status/20",           # the first-ever tweet
@@ -326,9 +332,8 @@ SAMPLE_URLS = {
     # Best-effort: live landing/share pages — pass a real content URL via /testall.
     "piviv": "https://www.pixiv.net/en",
     "ifunny": "https://ifunny.co/",
-    "xiaohongshu": "https://xhslink.com/a/exampleID",          # needs a real RED share link
-    "linkedin": "https://www.linkedin.com/in/username/",
-    "pinterest": "https://www.pinterest.com/pin/123456789/",
+    "xiaohongshu": "https://xhslink.com/",                    # requires a real note for a content test
+    "pinterest": "https://www.pinterest.com/",
 }
 
 ABOUT_TEXT = (
@@ -383,11 +388,22 @@ def strip_tracking(url: str, extra: Optional[Set[str]] = None) -> str:
     if not parsed.path and not parsed.query and not parsed.fragment:
         return url
 
-    drop = _TRACKING_SET if not extra else _TRACKING_SET | extra
+    drop = _TRACKING_SET | set(GENERIC_TRACKING) | (extra or set())
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    config = next((cfg for cfg in PROVIDERS.values()
+                   if host in cfg["options"].values() or any(host == d or host.endswith("." + d) for d in cfg["domains"])), None)
+    for domain, keys in HOST_TRACKING_MAP.items():
+        if host == domain or host.endswith("." + domain) or (config and any(d == domain or d.endswith("." + domain) for d in config["domains"])):
+            drop.update(keys)
+    instagram_content = (
+        (host == "instagram.com" or host.endswith(".instagram.com")
+         or host in PROVIDERS["instagram"]["options"].values())
+        and re.match(INSTAGRAM_CONTENT_PATH, parsed.path, re.IGNORECASE)
+    )
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
-        if k.lower() not in drop
+        if k.lower() not in drop and not k.lower().startswith("utm_") and (not instagram_content or k.lower() in INSTAGRAM_CONTENT_QUERY)
     }
     return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params,
@@ -413,7 +429,7 @@ def strip_generic_tracking(url: str) -> str:
     kept = {
         k: v
         for k, v in parse_qs(parsed.query, keep_blank_values=True).items()
-        if k.lower() not in drop_lower
+        if k.lower() not in drop_lower and not k.lower().startswith("utm_")
     }
     return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params,
@@ -439,6 +455,8 @@ def get_platform(netloc: str, path: str) -> Optional[str]:
     if host in YOUTUBE_WATCH_HOSTS and YOUTUBE_PATH_RE.match(path):
         return "youtube_watch"
     for plat, cfg in PROVIDERS.items():
+        if plat == "youtube" and path != "/watch":
+            continue
         for dom in cfg["domains"]:
             if host == dom or host.endswith("." + dom):
                 return plat
@@ -471,6 +489,10 @@ def clean_url(url: str) -> str:
     """
     parsed = urlparse(url)
     platform = get_platform(parsed.netloc, parsed.path)
+    if platform is None:
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        platform = next((name for name, config in PROVIDERS.items()
+                         if host in config["options"].values()), None)
     if platform and platform in PROVIDERS:
         return strip_tracking(url, extra=PLATFORM_TRACKING.get(platform))
     return strip_generic_tracking(url)
@@ -707,7 +729,7 @@ async def choose_provider_url(original_url: str, platform: str, preferred_key: s
 
 # Instagram paths that are actual posts/reels/stories - safe to convert
 INSTAGRAM_CONTENT_RE = re.compile(
-    r"^/(p|reel|tv|stories|s|share)/",
+    INSTAGRAM_CONTENT_PATH + r"|^/(?:s|share)/",
     re.IGNORECASE,
 )
 
@@ -2093,11 +2115,10 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
     await handlers.handle_error(update, context)
 
 
-def main() -> None:
-    validate_env()
-    app = Application.builder().token(TOKEN).post_init(on_startup).build()
+def register_update_handlers(app) -> None:
+    """Register disjoint update routes so edits and channel posts are reachable."""
     app.add_error_handler(handle_error)
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT, handle_message))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.TEXT, handle_edit))
     app.add_handler(
         MessageHandler(
@@ -2111,6 +2132,12 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & filters.TEXT, handle_channel_post))
     app.add_handler(InlineQueryHandler(handle_inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
+
+
+def main() -> None:
+    validate_env()
+    app = Application.builder().token(TOKEN).post_init(on_startup).build()
+    register_update_handlers(app)
     app.job_queue.run_repeating(periodic_cleanup, interval=3600, first=3600)
     _allowed = ["message", "edited_message", "callback_query", "inline_query", "channel_post"]
     if WEBHOOK_URL:

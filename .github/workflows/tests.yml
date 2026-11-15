@@ -32,3 +32,16 @@ jobs:
 
       - name: Provider checker smoke test (build URLs, no network)
         run: python -c "import tools.check_providers as c; assert len(list(c.build_check_urls())) > 0; print('check_providers OK')"
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+      - run: npm ci --prefix cloudflare
+      - run: npm run build --prefix cloudflare
+      - run: npm test --prefix cloudflare

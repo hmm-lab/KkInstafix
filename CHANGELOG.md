@@ -6,6 +6,129 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
+- Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
+
+## [2.0.11] - 2026-11-15
+
+### Changed
+
+- Applied one preview-first renderer and bottom linked “Shared by” attribution to all 22 supported platforms, including YouTube, captions and multi-link posts.
+- Used cleaned official-site destinations for normal provider choices, with proxies supplying previews. Explicit XCancel and Redlib browser choices retain their purpose.
+- Applied common campaign cleanup, including any `utm_` parameter, alongside platform and original-site rules on both official and proxy URLs.
+
+### Fixed
+
+- Recognised pasted proxy links across platforms, including Koutube short links.
+- Preserved YouTube video IDs, playlists, indexes and playback positions during short-link and Shorts normalisation.
+- Removed additional YouTube analytics fields while retaining functional Facebook comment IDs and Xiaohongshu access tokens.
+- Upgraded recorded legacy compact headers when their preview retry button is used.
+
+### Validation
+
+- Passed 194 Worker tests and 241 Python tests, including shared rendering and cleanup checks for all 56 configured provider options. These checks do not establish live availability of every external service.
+
+## [2.0.10] - 2026-11-15
+
+### Added
+
+- Added Instagram options `to` (`toinstagram.com`), `embeds` (`ig.embeds.now`), `revived` (`fkinstagram.com`) and `ins` (`ins.so`) after public-post checks.
+- Recognised username-prefixed Instagram post/reel paths and old Instagram7 URLs, with consistent tracking cleanup.
+- Recorded the Kyrela FIXERS.md review and probe evidence. Kept `ee` as the default and retained the single retry button.
+
+## [2.0.9] - 2026-11-15
+
+### Added
+
+- Added optional Koutube previews for YouTube, retaining native previews by default and official click-through URLs.
+- Added `boobsky.app` and restored `vxbsky.app` after fresh image/video metadata checks.
+- Documented the Lexedia gist review, rejected candidates and Koutube's public cache listing.
+
+## [2.0.8] - 2026-11-15
+
+### Removed
+
+- Removed Instagram `kkclip` and `kk` from provider menus and retry rotation following failed preview reports and checks.
+
+### Fixed
+
+- Fell back to `ee` for stale saved selections and migrated backups containing the retired options.
+- Retained the old domains as input aliases so existing proxy URLs can still be converted.
+
+## [2.0.7] - 2026-11-15
+
+### Removed
+
+- Removed the duplicate Instagram button because the linked attribution already opens the official post. Kept only “Retry preview”.
+
+## [2.0.6] - 2026-11-15
+
+### Changed
+
+- Placed single-post Instagram previews above the message and moved sender attribution underneath.
+- Preserved captions, surrounding text and the sender-mode setting.
+- Initially placed Instagram and retry buttons together; the redundant Instagram button was removed in 2.0.7.
+
+## [2.0.5] - 2026-11-15
+
+### Fixed
+
+- Removed changing Instagram share tokens such as `xtok` and `vrfl` by retaining only functional `img_index` queries on supported content paths.
+- Applied the cleanup to clickable targets, previews, inline results, `/clean` and provider switching, including older buttons.
+
+## [2.0.4] - 2026-11-15
+
+### Changed
+
+- Made Instagram click-through URLs open official Instagram, with the selected proxy used only for preview generation.
+- Kept official destinations during provider switching, inline replies and plain-text fallbacks.
+- Listed preview URLs in `/testall` so provider choices remain distinguishable.
+
+## [2.0.3] - 2026-11-15
+
+### Fixed
+
+- Processed Telegram text-link entities in messages and captions while preserving clickable labels and other hyperlinks.
+- Targeted retry actions to the intended post instead of the first unrelated URL in the message.
+- Handled near-limit URLs with compact linked labels while retaining the original; returned an explanation if Telegram rejects the URL.
+
+## [2.0.2] - 2026-11-15
+
+### Fixed
+
+- Preserved surrounding text in single-link rewrites and provider switching.
+- Ignored commands addressed to another bot and prevented muted users from invoking commands.
+- Kept originals when expanded messages require a companion reply to fit Telegram's limits.
+- Restored older backups containing known retired providers without discarding unrelated settings or opt-outs.
+- Removed Instagram `dlrf` share tokens from official and provider URLs.
+
+## [2.0.1] - 2026-11-15
+
+### Changed
+
+- Refreshed the shared provider catalogue using maintainer sources and public-content metadata checks.
+- Added Instagram `uu` and `zz`, corrected several provider hosts, and removed obsolete aliases and unverified LinkedIn rewriting.
+- Applied Instagram `psln` cleanup and safe fallback from retired selections.
+- Distinguished successful HTTP responses from evidence of usable embeds in provider checks.
+
+## [2.0.0] - 2026-11-15
+
+### Added
+
+- Migrated the running bot from Railway to Cloudflare Workers and D1, retaining the Python implementation for rollback.
+- Added private one-time activation, encrypted token storage, authenticated webhooks, readiness checks and protected diagnostics.
+- Persisted chat settings, opt-outs, provider choices, moderation state, rewrite records and delivery tracking in D1, with scheduled cleanup.
+
+### Fixed
+
+- Sent confirmed replacements before deleting originals and retained media captions as replies.
+- Added bounded delivery fallbacks, duplicate-update protection and rate-limit handling.
+- Stopped speculative provider probes from prematurely failing normal link rewrites.
+
 ## [1.54.0] - 2026-09-19
 
 ### Changed

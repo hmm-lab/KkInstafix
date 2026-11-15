@@ -32,3 +32,10 @@ Thumbs.db
 
 # Tar extraction artifacts
 @PaxHeader
+
+# Cloudflare local builds and secrets
+cloudflare/node_modules/
+cloudflare/dist/
+cloudflare/.mf/
+cloudflare/.dev.vars
+cloudflare/*migration*.sql

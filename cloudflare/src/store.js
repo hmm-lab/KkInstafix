@@ -1,0 +1,85 @@
+import {PROVIDERS} from './config.js';
+export const DEFAULTS = Object.freeze({enabled:1,sender_mode:'first_name',dedup_window:60,
+  rate_limit:5,rate_window:30,ignore_forwards:1,provider_fallback:1,caption_style:'reply',text_spam:1});
+export const SETTING_BOUNDS = Object.freeze({dedup_window:[5,3600],rate_limit:[1,100],rate_window:[5,3600]});
+export function validSetting(key,value) {
+  if (['enabled','ignore_forwards','provider_fallback','text_spam'].includes(key)) return value===0 || value===1;
+  if (SETTING_BOUNDS[key]) return Number.isInteger(value) && value>=SETTING_BOUNDS[key][0] && value<=SETTING_BOUNDS[key][1];
+  if (key==='sender_mode') return ['first_name','username','full_name','none'].includes(value);
+  return key==='caption_style' && value==='reply';
+}
+export class Store {
+  constructor(db) { this.db=db; }
+  stmt(sql,...params) { return this.db.prepare(sql).bind(...params); }
+  async settings(chat,user=0) {
+    const [settings,users,providers,overrides,optout,muted] = await this.db.batch([
+      this.stmt('SELECT * FROM chat_settings WHERE chat_id=?',chat),
+      this.stmt('SELECT key,value FROM user_settings WHERE chat_id=? AND user_id=?',chat,user),
+      this.stmt('SELECT platform,provider FROM provider_settings WHERE chat_id=?',chat),
+      this.stmt('SELECT platform,enabled FROM platform_overrides WHERE chat_id=?',chat),
+      this.stmt('SELECT user_id FROM optout_users WHERE chat_id=? AND user_id=?',chat,user),
+      this.stmt('SELECT user_id FROM blocked_users WHERE chat_id=? AND user_id=?',chat,user),
+    ]);
+    const result={...DEFAULTS,...settings.results[0]};
+    for (const row of users.results) {
+      const value = ['sender_mode','caption_style'].includes(row.key)?row.value:Number(row.value);
+      if (validSetting(row.key,value)) result[row.key]=value;
+    }
+    return {settings:result, choices:Object.fromEntries(providers.results.filter(r=>PROVIDERS[r.platform]?.options[r.provider]).map(r=>[r.platform,r.provider])),
+      overrides:Object.fromEntries(overrides.results.map(r=>[r.platform,r.enabled])),
+      optout:!!optout.results.length,muted:!!muted.results.length};
+  }
+  async setSetting(chat,key,value) {
+    if (!validSetting(key,value)) throw new Error('Invalid setting');
+    // Identifiers come only from the validated closed set above.
+    await this.stmt(`INSERT INTO chat_settings(chat_id,${key}) VALUES(?,?) ON CONFLICT(chat_id) DO UPDATE SET ${key}=excluded.${key}`,chat,value).run();
+  }
+  async choose(chat,platform,provider) {await this.stmt('INSERT OR REPLACE INTO provider_settings VALUES(?,?,?)',chat,platform,provider).run();}
+  async override(chat,platform,enabled) {await this.stmt('INSERT OR REPLACE INTO platform_overrides VALUES(?,?,?)',chat,platform,enabled).run();}
+  async opt(chat,user,value) {await this.stmt(value?'INSERT OR IGNORE INTO optout_users VALUES(?,?)':'DELETE FROM optout_users WHERE chat_id=? AND user_id=?',chat,user).run();}
+  async mute(chat,user,value) {await this.stmt(value?'INSERT OR IGNORE INTO blocked_users VALUES(?,?)':'DELETE FROM blocked_users WHERE chat_id=? AND user_id=?',chat,user).run();}
+  async claimUpdate(id,now) {
+    const row=await this.stmt(`INSERT INTO deliveries VALUES(?,'processing',?) ON CONFLICT(update_id)
+      DO UPDATE SET ts=excluded.ts WHERE deliveries.state='processing' AND deliveries.ts<? RETURNING update_id`,id,now,now-120).first();
+    if (row) return 'claimed';
+    const prior=await this.stmt('SELECT state FROM deliveries WHERE update_id=?',id).first();
+    return prior?.state==='processing'?'busy':'duplicate';
+  }
+  async finishUpdate(id,state,now) {await this.stmt('UPDATE deliveries SET state=?,ts=? WHERE update_id=?',state,now,id).run();}
+  async claimRecent(kind,chat,key,window,now) {
+    const row=await this.stmt(`INSERT INTO recent_events VALUES(?,?,?,?) ON CONFLICT(kind,chat_id,event_key)
+      DO UPDATE SET ts=excluded.ts WHERE recent_events.ts<=? RETURNING ts`,kind,chat,key,now,now-window).first();
+    return !!row;
+  }
+  async releaseRecent(kind,chat,key,ts) {await this.stmt('DELETE FROM recent_events WHERE kind=? AND chat_id=? AND event_key=? AND ts=?',kind,chat,key,ts).run();}
+  async rate(chat,user,event,limit,window,now) {
+    const row=await this.stmt(`INSERT INTO rate_events SELECT ?,?,?,? WHERE
+      (SELECT COUNT(*) FROM rate_events WHERE chat_id=? AND user_id=? AND ts>?) < ?
+      ON CONFLICT DO NOTHING RETURNING event_id`,chat,user,event,now,chat,user,now-window,limit).first();
+    return !!row;
+  }
+  async record(chat,id,raw,sender,platforms,user,now) {
+    const stmts=[this.stmt('INSERT OR REPLACE INTO rewritten_messages VALUES(?,?,?,?,?)',chat,id,raw,sender,now)];
+    for (const p of platforms) stmts.push(this.stmt(`INSERT INTO chat_stats VALUES(?,?,?,1,?)
+      ON CONFLICT(chat_id,platform,sender_id) DO UPDATE SET count=count+1,last_ts=excluded.last_ts`,chat,p,user,now));
+    await this.db.batch(stmts);
+  }
+  async rewrite(chat,id) {return this.stmt('SELECT * FROM rewritten_messages WHERE chat_id=? AND bot_msg_id=?',chat,id).first();}
+  async export(chat) {
+    const names=['chat_settings','provider_settings','blocked_users','platform_overrides','optout_users','user_settings'];
+    const data=await this.db.batch(names.map(n=>this.stmt(`SELECT * FROM ${n} WHERE chat_id=?`,chat)));
+    return {version:1,chat_id:chat,settings:{...DEFAULTS,...data[0].results[0]},
+      providers:Object.fromEntries(data[1].results.map(r=>[r.platform,r.provider])),
+      muted_users:data[2].results.map(r=>r.user_id),
+      platform_overrides:Object.fromEntries(data[3].results.map(r=>[r.platform,r.enabled])),
+      optout_users:data[4].results.map(r=>r.user_id),user_settings:data[5].results};
+  }
+  async cleanup(now) {
+    await this.db.batch([
+      this.stmt('DELETE FROM deliveries WHERE ts<?',now-7*86400),
+      this.stmt('DELETE FROM recent_events WHERE ts<?',now-3600),
+      this.stmt('DELETE FROM rate_events WHERE ts<?',now-3600),
+      this.stmt('DELETE FROM rewritten_messages WHERE ts<?',now-7*86400),
+    ]);
+  }
+}
