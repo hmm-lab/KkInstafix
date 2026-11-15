@@ -92,6 +92,7 @@ function canonical(raw) {
     // Preserve functional playlist, index and playback parameters; the shared
     // cleaner removes analytics after canonicalization.
     for(const [key,value] of u.searchParams)if(key.toLowerCase()!=='v')result.searchParams.append(key,value);
+    result.hash=u.hash;
     return result.href;
   }
   if (AMAZON_TLDS.includes(h)) {
@@ -155,7 +156,7 @@ export async function processText(text, settings, choices, overrides, net=fetch,
   const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,net,clean,health)})));
   const changed = results.filter(r=>r.original!==r.url || r.platform==='youtube' || (r.platform&&r.preview&&r.preview!==trim(r.url)[0]));
   const replacements = new Map(changed.map(r=>[r.original,r.url]));
-  return {text:text.replace(/https?:\/\/[^\s<>]+/gi,m=>replacements.get(m)??m),links:changed};
+  return {text:text.replace(/https?:\/\/[^\s<>]+/gi,m=>replacements.get(m)??m),links:changed,allLinks:results};
 }
 export const escapeHTML = text => String(text??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function senderLabel(user, mode) {

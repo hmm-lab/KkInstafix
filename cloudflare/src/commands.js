@@ -1,3 +1,6 @@
+import {VERSION} from './version.js';
+import {postCallback} from './posts.js';
+import {permissionStatus} from './status.js';
 import {hasProtectedLinks} from './formatting.js';
 import {diagnose} from './diagnostics.js';
 import {nextHealthy,healthLabel} from './provider-policy.js';
@@ -21,7 +24,7 @@ function platformKeyboard(choices) {
 function providerKeyboard(platform,chosen) {
   return {inline_keyboard:[...Object.keys(PROVIDERS[platform].options).map(k=>[{text:`${k===chosen?'✅ ':''}${k}`,callback_data:`m:s:${platform}:${k}`}]),[{text:'⬅ Back',callback_data:'m:back'}]]};
 }
-const HELP=`<b>KkInstafix</b>\nSend a social link to fix its Telegram preview. Tap “Retry preview” to try another provider.\n\n`+
+const HELP=`<b>KkInstafix</b>\nSend a social link to fix its Telegram preview. Tap “Retry preview” to try another provider. On multi-link posts, the sender or an admin can select which link gets the preview.\n\n`+
   `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
   `<b>Admin controls</b>\n/menu · /enable · /disable\n/setprovider &lt;platform&gt; &lt;key&gt;\n/platform &lt;name&gt; on|off\n/setsendermode first_name|username|full_name|none\n/setdedup &lt;seconds&gt;\n/setratelimit &lt;count&gt; &lt;seconds&gt;\n/ignoreforwards on|off · /fallback on|off · /textspam on|off\n/muteuser · /unmuteuser · /listmuted\n/resetproviders · /resetstats · /testall\n/export · /import\n\nUse @KkInstaFixBot &lt;link&gt; inline in any chat.`;
 async function importBackup(msg,store,tg,reply) {
@@ -89,7 +92,7 @@ export async function command(msg,store,tg,state) {
   if (ADMIN.has(name) && !await tg.admin(chat,user,msg.chat.type)) return reply('Only admins can use that command.');
   const p=parts[1]?.toLowerCase(), k=parts[2]?.toLowerCase();
   if (['start','help'].includes(name)) return reply(HELP);
-  if (['version','ping'].includes(name)) return reply('KkInstafix v2.1.0 · Cloudflare Workers + D1');
+  if (['version','ping'].includes(name)) return reply(`KkInstafix v${VERSION} · Cloudflare Workers + D1`);
   if (['about','credits','me'].includes(name)) return reply('💖 <b>About this bot</b>\nMy name is Mehrab and I love you Motki 🥰\n\nThis bot fixes social links so they embed in Telegram. Thanks to the community-maintained embed providers.\n\nMade with love by Mehrab 💖');
   if (['mehrab','mo','genius'].includes(name)) return tg.call(name==='genius'?'sendVideo':'sendPhoto',{
     chat_id:chat,[name==='genius'?'video':'photo']:`https://raw.githubusercontent.com/hmm-lab/KkInstafix/main/${name==='genius'?'genius.mp4':'30364.jpg'}`,message_thread_id:msg.message_thread_id});
@@ -99,7 +102,7 @@ export async function command(msg,store,tg,state) {
     await store.opt(chat,user,name==='optout');
     return reply(name==='optout'?'Your links will be left unchanged in this chat. Others can still use the bot.':'Your links will be fixed again in this chat.');
   }
-  if (name==='status'||name==='config') return reply(Object.entries(state.settings).filter(([key])=>key!=='chat_id').map(([key,value])=>`<b>${h(key)}</b>: ${h(value)}`).join('\n')+`\nYour links: ${state.optout?'opted out':'enabled'}`);
+  if (name==='status'||name==='config') return reply((await permissionStatus(msg,tg))+'\n\n'+Object.entries(state.settings).filter(([key])=>key!=='chat_id').map(([key,value])=>`<b>${h(key)}</b>: ${h(value)}`).join('\n')+`\nYour links: ${state.optout?'opted out':'enabled'}`);
   if (name==='providers') return reply(`<b>Providers updated ${PROVIDER_REVISION}</b>\n\n`+Object.entries(PROVIDERS).map(([p,cfg])=>`${PLATFORM_EMOJI[p]??''} <b>${p}</b>: ${h(state.choices[p]??cfg.default)}\n  ${Object.keys(cfg.options).map(k=>k+(healthLabel(state.health[p]?.[cfg.noauth_embed?.[k]??k])==='temporarily skipped'?' ⚠':'')).join(', ')}`).join('\n'));
   if(name==='diagnose')return diagnose(msg,parts.slice(1).join(' '),store,tg);
   if (name==='menu') return reply('<b>Provider menu</b>',{reply_markup:platformKeyboard(state.choices)});
@@ -175,6 +178,8 @@ export async function callback(query,store,tg) {
   const data=query.data??'',msg=query.message,chat=msg?.chat?.id;
   if (data==='test') return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'✅ Callback works!',show_alert:true});
   if (!msg||!chat) return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Message no longer accessible.'});
+  if(await postCallback(query,store,tg))return;
+  if(data.startsWith('p:'))return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'These preview controls have expired. Send the link again.'});
   if (data.startsWith('e:')) {
     const [,p,index,target]=data.split(':'),options=Object.keys(PROVIDERS[p]?.options??{}),idx=Number(index);
     if (!options.length || !Number.isInteger(idx)||idx<0) return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Invalid provider.'});

@@ -63,6 +63,7 @@ export class Store {
   async record(chat,id,raw,sender,platforms,user,now,details=null) {
     const stmts=[this.stmt('INSERT OR REPLACE INTO rewritten_messages VALUES(?,?,?,?,?)',chat,id,raw,sender,now)];
     if(details)stmts.push(this.stmt('INSERT OR REPLACE INTO message_originals VALUES(?,?,?,?,?,?)',chat,id,JSON.stringify(details.original),details.platform??null,details.provider??null,now));
+    if(details?.post)stmts.push(this.stmt('INSERT INTO post_controls(chat_id,bot_msg_id,source_msg_id,user_id,state_json,ts) VALUES(?,?,?,?,?,?)',chat,id,details.source_id,user,JSON.stringify(details.post),now));
     for (const p of platforms) stmts.push(this.stmt(`INSERT INTO chat_stats VALUES(?,?,?,1,?)
       ON CONFLICT(chat_id,platform,sender_id) DO UPDATE SET count=count+1,last_ts=excluded.last_ts`,chat,p,user,now));
     await this.db.batch(stmts);
@@ -70,6 +71,15 @@ export class Store {
   async rewrite(chat,id) {return this.stmt('SELECT * FROM rewritten_messages WHERE chat_id=? AND bot_msg_id=?',chat,id).first();}
   async original(chat,id) {return this.stmt('SELECT * FROM message_originals WHERE chat_id=? AND bot_msg_id=?',chat,id).first();}
   async updateProvider(chat,id,provider) {await this.stmt('UPDATE message_originals SET provider=? WHERE chat_id=? AND bot_msg_id=?',provider,chat,id).run();}
+  async post(chat,id) {return this.stmt('SELECT * FROM post_controls WHERE chat_id=? AND bot_msg_id=? AND ts>?',chat,id,Math.floor(Date.now()/1000)-7*86400).first();}
+  async sourcePost(chat,id) {return this.stmt('SELECT * FROM post_controls WHERE chat_id=? AND source_msg_id=? AND ts>?',chat,id,Math.floor(Date.now()/1000)-7*86400).first();}
+  async savePost(chat,id,source,user,post,ts) {await this.stmt(`INSERT INTO post_controls(chat_id,bot_msg_id,source_msg_id,user_id,state_json,ts) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,bot_msg_id) DO UPDATE SET state_json=excluded.state_json,ts=excluded.ts`,chat,id,source,user,JSON.stringify(post),ts).run();}
+  async lockPost(chat,id,now) {return !!await this.stmt('UPDATE post_controls SET lock_until=? WHERE chat_id=? AND bot_msg_id=? AND lock_until<=? RETURNING bot_msg_id',now+60,chat,id,now).first();}
+  async unlockPost(chat,id) {await this.stmt('UPDATE post_controls SET lock_until=0 WHERE chat_id=? AND bot_msg_id=?',chat,id).run();}
+  async refreshOriginal(chat,id,post) {const first=post.links[post.preview_index??0];await this.db.batch([
+    this.stmt('UPDATE message_originals SET original_json=?,platform=?,provider=? WHERE chat_id=? AND bot_msg_id=?',JSON.stringify(post.original),first?.platform??null,first?.previewKey??null,chat,id),
+    this.stmt('UPDATE rewritten_messages SET original_url=?,sender_name=? WHERE chat_id=? AND bot_msg_id=?',first?.raw??first?.original??'',post.label,chat,id),
+  ]);}
   async health() {const rows=(await this.stmt('SELECT * FROM provider_health').all()).results;return Object.fromEntries(Object.keys(PROVIDERS).map(p=>[p,Object.fromEntries(rows.filter(r=>r.platform===p).map(r=>[r.provider,r]))]));}
   async export(chat) {
     const names=['chat_settings','provider_settings','blocked_users','platform_overrides','optout_users','user_settings'];
@@ -87,6 +97,7 @@ export class Store {
       this.stmt('DELETE FROM rate_events WHERE ts<?',now-3600),
       this.stmt('DELETE FROM rewritten_messages WHERE ts<?',now-7*86400),
       this.stmt('DELETE FROM message_originals WHERE ts<?',now-7*86400),
+      this.stmt('DELETE FROM post_controls WHERE ts<?',now-7*86400),
     ]);
   }
 }

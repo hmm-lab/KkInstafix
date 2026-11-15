@@ -13,6 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.2.0] - 2026-11-15
+
+### Added
+
+- Durable per-post retry history, skipping already tried or quarantined preview backends and explaining exhaustion without cycling back.
+- Sender/admin preview selection for multi-link reposts, including unchanged ordinary URLs; inline mode offers each preview choice while retaining the full message.
+- Edit synchronisation for surviving text originals, captions and channel posts, refreshing the existing repost and undo snapshot without duplicate messages, rewrite counts or posting reservations.
+- Permission-aware `/status` with specific guidance for group visibility, send rights, previews and deleting originals.
+- Offline sanitisation fixtures for all 22 platforms, exercised across every configured provider option, including pasted proxy URLs, functional parameters and idempotent cleanup.
+- Manual GitHub release workflow with tests, documentation/version checks, additive migrations, deployment verification, rollback artifacts and guarded restoration on failed verification. Unattended deployment requires configured GitHub environment secrets and the workflow on the default branch.
+
+### Fixed
+
+- Preserved YouTube timestamp fragments while normalising short links and Shorts.
+- Kept explicit browser frontend destinations during repeated preview retries.
+- Rejected stale preview selections and older source edits, serialized concurrent post controls, and retained spoiler suppression through edits.
+
+### Deployment
+
+- Added additive D1 migration `cloudflare/migrations/0003-post-controls.sql`; existing Worker secret bindings and free hosting remain unchanged.
+- Centralised the Worker version in `cloudflare/src/version.js`.
+
+### Validation
+
+- Passed 277 Worker tests and 250 Python tests (527 total), including mocked release success, migration failures, rollback verification and concurrent-deployment protection. External provider availability is not established by offline tests.
+
 ## [2.1.0] - 2026-11-15
 
 ### Added

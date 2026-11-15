@@ -143,3 +143,16 @@ backend. Profile observations, HTTP 403/429 and timeouts cannot quarantine.
 This is conservative sampled evidence, not a live guarantee for every provider
 or every post. Saved chat choices remain intact; `/fallback off` disables cached
 health-based switching. See [runtime details](README.md#background-provider-monitoring).
+
+## Sanitisation regression corpus (2.2.0)
+
+`test/fixtures/sanitisation.json` supplies representative content-path fixtures
+for every configured platform, plus short YouTube URLs/Shorts and changing
+Instagram share-token names. These are offline fixtures, not live availability
+claims. Tests run each fixture through every configured provider, compare
+functional paths and queries, re-clean official URLs, and normalise pasted proxy
+URLs. They retain YouTube playlist/index/timestamps and timestamp fragments,
+Instagram carousel indexes, Facebook comment IDs, Bilibili part selection and
+Xiaohongshu access tokens while removing tracking. No provider is added or removed
+in 2.2.0. Per-post retry history also treats browser aliases sharing a preview
+backend as one attempt.

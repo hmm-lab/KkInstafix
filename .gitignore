@@ -39,3 +39,6 @@ cloudflare/dist/
 cloudflare/.mf/
 cloudflare/.dev.vars
 cloudflare/*migration*.sql
+
+# Release rollback metadata (CI artifact, not source)
+release-rollback.json

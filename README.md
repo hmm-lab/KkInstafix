@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current Cloudflare version: **2.1.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.2.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
@@ -21,17 +21,19 @@ The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deplo
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone. Platform-specific tracking is also stripped for Amazon, eBay, AliExpress, LinkedIn, Pinterest, Apple Music, Vimeo, and SoundCloud.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
-- Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
+- Per-message **↻ Retry preview** tries unused preview backends and explains when alternatives are exhausted. Multi-link posts let the original sender or a chat admin select the preview.
 - Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
 - Per-user rate limiting.
-- Inline mode: use `@KkInstaFixBot <link>` in any chat without adding the bot.
+- Inline mode retains surrounding text and multiple links, with a result for each preview choice.
+- Edits to surviving originals update their existing repost, preserving formatting and refreshing undo.
+- `/status` checks Telegram permissions and explains how to fix missing access.
 - Interactive `/menu` for admins to change providers with inline buttons.
 - Per-platform control: admins can disable rewriting for individual platforms (e.g. leave Spotify links alone) while keeping the rest on.
 - Commands are intentionally hidden from the Telegram "/" autocomplete menu to keep the UI uncluttered — they still work when typed.
 - Admin-only moderation and config commands.
-- SQLite storage so settings survive restarts.
-- In-memory caches for settings, providers, mutes, dedup, and rate limiting — zero DB reads on the hot path.
-- Provider fallback if one fixer host is down (parallel health checks).
+- Persistent Cloudflare D1 storage in production; SQLite for the legacy Python runtime.
+- Durable per-chat settings, deduplication, rate limits and user opt-outs.
+- Conservative background provider checks and temporary fallback, with manual retry history for new posts.
 - Welcome message when added to a new group.
 - File ID caching: photos and videos are uploaded once, then reused instantly.
 - Webhook secret token support for secure deployments.
@@ -41,11 +43,12 @@ The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deplo
 
 The shared catalogue and current evidence are documented in [the provider review](cloudflare/PROVIDER_REVIEW.md).
 
+- YouTube: `native`
 - Instagram: `ee`
 - Twitter/X: `vx`
 - TikTok: `tnk`
 - Reddit: `vx`
-- Facebook: `ez`
+- Facebook: `bed`
 - Threads: `fix`
 - Bluesky: `bskx`
 - Pixiv: `ph`
@@ -61,6 +64,7 @@ The shared catalogue and current evidence are documented in [the provider review
 - Kick: `cl`
 - Weibo: `ez` (off by default until its host is live — `/platform weibo on`)
 - Xiaohongshu: `xky`
+- Pinterest: `ez`
 
 ## Commands
 

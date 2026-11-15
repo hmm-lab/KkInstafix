@@ -39,6 +39,78 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Improvements in 2.2.0
+
+New reposts remember each tried preview backend for seven days. Retry chooses an
+unused, non-quarantined backend; aliases sharing a backend count as the same
+attempt. Once no alternatives remain, the bot explains this without cycling back.
+Historical buttons without post-control records retain their legacy behaviour.
+Explicit browser frontend choices keep their clickable destination during retries.
+
+Multi-link reposts show numbered preview choices with the active choice marked.
+Only the original sender or a chat admin can change that selection; anyone can
+request a preview retry. Unchanged ordinary URLs can also be selected. Choosing a
+preview retains the complete cleaned message and its formatting. Inline mode
+shows one result per candidate, each retaining the full surrounding text and all
+links. Spoiler links suppress all preview controls.
+
+When Telegram sends an edit for a surviving original (including captions and
+channel posts), the existing bot repost is edited, its undo snapshot is refreshed,
+and no extra rewrite count, posting quota or duplicate reservation is added.
+Deleted originals cannot be edited in Telegram. Unknown/historical originals use
+the ordinary rewrite path. Older edit timestamps are ignored. Source mappings,
+retry history and controls expire seven days after the initial repost and are not
+included in settings exports. An oversized edit keeps the existing repost and
+original; a rejected edit never creates a duplicate replacement.
+
+Per-post leases serialize clicks and edits, and stale preview selectors are
+rejected. `/status` checks bot membership, group-message visibility, send rights,
+preview permissions and deletion rights, with Telegram/BotFather instructions.
+Unavailable permissions are reported as unknown; permissions do not guarantee
+that an external preview will render or play.
+
+Before upgrading, apply the additive `migrations/0003-post-controls.sql` after
+`0002-improvements.sql`, then upload the built Worker. Fresh installs use
+`schema.sql`, which includes both migrations.
+
+### Release checks and rollback
+
+`tools/check_release.py --base HEAD^` verifies the single Worker version in source,
+the README files and dated changelog; runtime changes require documentation, and
+provider changes require audit notes. It also verifies generated configuration
+and schema. CI runs it alongside the Worker suite and Python 3.11/3.12 suites.
+The sanitisation fixture corpus covers all 22 platforms and checks every provider
+option, pasted proxy paths, idempotent cleaning and functional parameters.
+
+`.github/workflows/release.yml` is a manual release workflow that runs all checks,
+builds, applies additive migrations, inherits existing secrets, verifies active
+readiness/version and the Telegram webhook, and restores the previous Worker if
+post-upload verification fails. It serializes releases and refuses rollback over
+a newer deployment. D1 migrations are retained during code rollback. Failed or
+ambiguous uploads are not blindly repeated.
+
+To enable unattended releases, place the workflow on GitHub's default branch and
+configure the `production` environment with `CLOUDFLARE_API_TOKEN` (Workers Scripts
+edit and D1 edit for this account) and `KKINSTAFIX_ADMIN_KEY` (the existing private
+admin key). Credentials are not committed or retrieved from the connector. This
+repository update does not create those secrets. Trigger **Release Cloudflare
+Worker** from Actions once configured. The rollback artifact is retained seven
+days and contains only deployment/version metadata.
+
+For a local dry run with no network requests:
+
+```bash
+npm run build --prefix cloudflare
+python tools/release_cloudflare.py --dry-run
+```
+
+For a verified manual restore using a downloaded release artifact and the same
+environment credentials:
+
+```bash
+python tools/release_cloudflare.py --rollback release-rollback.json
+```
+
 ## Improvements in 2.1.0
 
 Messages and captions retain Telegram formatting, including bold, italics,

@@ -1,11 +1,13 @@
+import {VERSION} from './version.js';
+import {makePost,postView,syncEdit} from './posts.js';
 import {PROVIDERS,PROVIDER_REVISION} from './config.js';
 import {processText,urls,trim,senderLabel,escapeHTML as h} from './links.js';
 import {captureOriginal} from './formatting.js';
 import {runHealthChecks} from './health.js';
-import {messageSource,linkIdentity,formatRepost} from './messages.js';
+import {messageSource,formatRepost} from './messages.js';
 import {Store,DEFAULTS} from './store.js';
 import {Telegram,TelegramError} from './telegram.js';
-import {command,callback,cycleKeyboard} from './commands.js';
+import {command,callback} from './commands.js';
 import {readBounded,matchesSecret,hash,seal,unseal} from './security.js';
 import {SETUP_HTML} from './setup.js';
 
@@ -48,10 +50,12 @@ async function inline(query,tg,store) {
   const link=first?.url??urls(source)[0];
   // Inline mode keeps the entire query, not just its first URL.
   if(result.text.length>4096)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'too-long',title:'Message is too long — shorten it first',input_message_content:{message_text:'This message exceeds Telegram’s limit. Shorten it and try again.',link_preview_options:{is_disabled:true}}}]});
-  return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:10,is_personal:true,results:[{
-    type:'article',id:'fixed',title:first?'Fixed links':'Clean links',description:link,
-    input_message_content:{message_text:result.text,link_preview_options:{is_disabled:false,url:first?.preview??link,show_above_text:true,prefer_large_media:true}},
-  }]});
+  const previews=(result.allLinks??result.links).filter(candidate=>{try{return ['http:','https:'].includes(new URL(candidate.url).protocol);}catch{return false;}});
+  if(!previews.length)previews.push({url:link,preview:link});
+  return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:10,is_personal:true,results:previews.map((candidate,index)=>({
+    type:'article',id:index===0?'fixed':`fixed-${index}`,title:previews.length>1?`Preview ${index+1} · ${candidate.platform??new URL(candidate.url).hostname}`:first?'Fixed links':'Clean links',description:candidate.url,
+    input_message_content:{message_text:result.text,link_preview_options:{is_disabled:false,url:candidate.preview??candidate.url,show_above_text:true,prefer_large_media:true}},
+  }))});
 }
 async function rewrite(msg,update,store,tg,ctx) {
   const chat=msg.chat.id,user=msg.from?.id??0,stamp=now(),text=messageSource(msg).trim();
@@ -61,6 +65,10 @@ async function rewrite(msg,update,store,tg,ctx) {
   if(text.startsWith('/')) {await command(msg,store,tg,state);return;}
   const settings=state.settings;
   if(!settings.enabled||state.optout||(settings.ignore_forwards&&msg.forward_origin))return;
+  if(update.edited_message||update.edited_channel_post) {
+    const previous=await store.sourcePost(chat,msg.message_id);
+    if(previous){await syncEdit(msg,previous,store,tg,state,ctx);return;}
+  }
   if(!urls(text).length) {
     if(settings.text_spam&&text.length>=4 && !await store.claimRecent('text',chat,text.toLowerCase(),settings.dedup_window,stamp)) await tg.remove(chat,msg.message_id);
     if(msg.sticker||msg.animation) {
@@ -87,12 +95,9 @@ async function rewrite(msg,update,store,tg,ctx) {
     let {html,plain,fallback,protectedLinks}=formatRepost({text:msg.text??msg.caption??'',
       entities:msg.text!==undefined?msg.entities:msg.caption_entities,
       plainText:result.text,links:result.links,label});
+    const post=await makePost(msg,result,label),view=await postView(post);
     const preview=protectedLinks?{is_disabled:true}:first.preview?{is_disabled:false,url:first.preview,prefer_large_media:true,show_above_text:true}:undefined;
-    let keyboard;
-    if(!protectedLinks&&result.links.length===1&&first.platform) {
-      const options=Object.keys(PROVIDERS[first.platform].options);
-      if(options.length>1)keyboard=cycleKeyboard(first.platform,(options.indexOf(first.key)+1)%options.length,(await hash(linkIdentity(first.url,first.platform))).slice(0,12));
-    }
+    let keyboard=view.keyboard.inline_keyboard.length?view.keyboard:undefined;
     // A companion reply preserves the full original when expansion exceeds
     // Telegram's limit. Very long URLs use short clickable labels instead.
     const companion=plain.length>4096;
@@ -122,7 +127,7 @@ async function rewrite(msg,update,store,tg,ctx) {
     // Persist recoverable content before deletion; storage errors keep originals.
     await store.record(chat,delivered.message_id,first.raw??first.original,label,
       reservations.map(r=>r.platform).filter(Boolean),user,stamp,
-      {original:captureOriginal(msg),platform:first.platform,provider:first.previewKey??first.key});
+      {original:captureOriginal(msg),platform:first.platform,provider:first.previewKey??first.key,post:companion?null:post,source_id:msg.message_id});
     if(update.message?.text&&!companion) await tg.remove(chat,msg.message_id);
   } finally {
     if(!sent) {
@@ -137,7 +142,7 @@ export default {
     if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
     if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
       const row=await store.stmt('SELECT username,activated FROM runtime_config WHERE id=1').first();
-      return json({service:'KkInstafix',version:'2.1.0',hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,provider_options:Object.values(PROVIDERS).reduce((n,p)=>n+Object.keys(p.options).length,0),active:!!row?.activated,bot:row?.activated?row.username:undefined});
+      return json({service:'KkInstafix',version:VERSION,hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,provider_options:Object.values(PROVIDERS).reduce((n,p)=>n+Object.keys(p.options).length,0),active:!!row?.activated,bot:row?.activated?row.username:undefined});
     }
     if(request.method==='POST'&&url.pathname==='/setup') {
       try{return await activate(request,env,store);}catch{console.error(JSON.stringify({event:'setup_error'}));return json({error:'Setup could not complete. Try again.'},500);}
