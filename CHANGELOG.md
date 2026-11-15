@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.2.1] - 2026-11-15
+
+### Fixed
+
+- Removed Reddit `share_id` from official click-through links and proxy previews, including uppercase/repeated keys, while retaining comment navigation and fragments.
+- Applied the shared rule to `/clean`, inline output, captions and the legacy Python runtime without stripping other sites' `share_id` parameters.
+- Re-cleaned persisted post targets when retrying, accepting old URL fingerprints and preserving tried-provider history and original undo data, even when alternatives are exhausted.
+
+### Validation
+
+- Passed 282 Worker tests and 251 Python tests (533 total), including the reported Reddit path across provider options, commands, inline output and pre-fix stored posts.
+
 ## [2.2.0] - 2026-11-15
 
 ### Added

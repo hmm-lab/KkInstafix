@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current Cloudflare version: **2.2.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.2.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 

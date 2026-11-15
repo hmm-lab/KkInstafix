@@ -153,3 +153,14 @@ def test_rewrite_escapes_sender_name_for_html_delivery():
                       user=FakeUser(first_name='Alice <3 & Bob'), bot=fb)
     asyncio.run(bot.handle_message(FakeUpdate(msg), FakeContext(fb)))
     assert 'Alice &lt;3 &amp; Bob' in fb.sent[0].text
+
+
+def test_reddit_share_id_cleaned_from_original_and_every_provider():
+    path = '/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/'
+    for host in ['reddit.com', 'www.reddit.com', *bot.PROVIDERS['reddit']['options'].values()]:
+        raw = 'https://' + host + path + '?share_id=one&SHARE_ID=two&context=3&sort=new&depth=2#comment'
+        expected = 'https://' + host + path + '?context=3&sort=new&depth=2#comment'
+        assert bot.clean_url(raw) == expected
+        assert bot.strip_tracking(raw) == expected
+    assert bot.strip_generic_tracking('https://reddit.com' + path + '?share_id=secret&context=3') == 'https://reddit.com' + path + '?context=3'
+    assert bot.clean_url('https://example.com/post?share_id=needed') == 'https://example.com/post?share_id=needed'

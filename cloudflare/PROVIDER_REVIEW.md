@@ -156,3 +156,12 @@ Instagram carousel indexes, Facebook comment IDs, Bilibili part selection and
 Xiaohongshu access tokens while removing tracking. No provider is added or removed
 in 2.2.0. Per-post retry history also treats browser aliases sharing a preview
 backend as one attempt.
+
+## Reddit share attribution regression (2.2.1)
+
+A reported Reddit post URL retained `share_id`. Added a Reddit-scoped rule to the
+shared configuration, leaving functional comment-navigation parameters intact.
+The fixture corpus now includes that post path and checks every Reddit option.
+Runtime tests cover official links, inline output, `/clean`, and cleanup of
+already stored targets on retry, including exhausted provider history. This is a
+cleanup correction; provider selections and availability claims are unchanged.

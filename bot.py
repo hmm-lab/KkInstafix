@@ -84,6 +84,8 @@ INSTAGRAM_CONTENT_PATH = r"^/(?:(?:[^/?#]+/)?(?:p|reel|reels|tv)/|stories/)"
 PLATFORM_TRACKING = {
     "youtube": {"feature", "is", "pp", "ab_channel", "source_ve_path", "embeds_referring_euri", "embeds_referring_origin"},
     "instagram": {"psln", "dlrf", "xtok", "vrfl"},
+    # Reddit share attribution; keep comment/navigation parameters intact.
+    "reddit": {"share_id"},
     # Twitter/X share tokens: ?s=20&t=<token>, plus cxt context blobs.
     "twitter": {"t", "cxt"},
     # TikTok app/web session and referrer junk.
@@ -197,6 +199,8 @@ for _h in PINTEREST_DOMAINS:
 HOST_TRACKING_MAP["music.apple.com"] = APPLE_MUSIC_TRACKING
 HOST_TRACKING_MAP["vimeo.com"] = VIMEO_TRACKING
 HOST_TRACKING_MAP["soundcloud.com"] = SOUNDCLOUD_TRACKING
+for _h in [*PROVIDERS["reddit"]["domains"], *PROVIDERS["reddit"]["options"].values()]:
+    HOST_TRACKING_MAP[_h] = frozenset(PLATFORM_TRACKING["reddit"])
 
 URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 # YouTube /shorts/<id> and /live/<id> both normalize to a /watch?v=<id> URL,

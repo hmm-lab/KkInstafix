@@ -1143,3 +1143,32 @@ test('new post controls and source snapshots share the initial seven-day retenti
   assert.equal((await new Store(db).post(chat,sent.botId)).ts,before.ts);
   assert.equal((await new Store(db).original(chat,sent.botId)).ts,before.ts);
 });
+
+// 2.2.1: Reddit share attribution must not survive in clickable destinations.
+const redditScreenshot='https://www.reddit.com/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/';
+test('Reddit share_id cleanup is case-insensitive, repeated-key safe and platform-scoped',async()=>{
+  assert.equal(stripTracking(redditScreenshot+'?share_id=one&SHARE_ID=two&context=3&sort=new#comment'),redditScreenshot+'?context=3&sort=new#comment');
+  assert.equal(stripTracking('https://example.com/post?share_id=needed'),'https://example.com/post?share_id=needed');
+  assert.equal((await fixLink(redditScreenshot+'?share_id=secret',{}, {},{reddit:0})).url,redditScreenshot+'?share_id=secret');
+});
+test('Reddit screenshot link is clean in attribution, previews, /clean and inline results',async()=>{
+  const chat=-7101,raw=redditScreenshot+'?share_id=secret';calls.length=0;await update(message(raw,5,chat));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.ok(!JSON.stringify(sent.data).includes('share_id'));assert.match(sent.data.text,/href="https:\/\/www.reddit.com/);
+  calls.length=0;await update(message('/clean '+raw,5,chat));assert.ok(!calls.find(c=>c.method==='sendMessage').data.text.includes('share_id'));
+  calls.length=0;await update({update_id:++id,inline_query:{id:'reddit-clean',from:{id:5},query:raw}});assert.ok(!JSON.stringify(calls.find(c=>c.method==='answerInlineQuery').data.results).includes('share_id'));
+});
+for(const exhausted of [false,true])test('retry cleans stored Reddit targets from before the fix; exhausted='+exhausted,async()=>{
+  const chat=exhausted?-7103:-7102,sent=await createPost(redditScreenshot,chat),store=new Store(db);
+  const row=await store.post(chat,sent.botId),post=JSON.parse(row.state_json),link=post.links[0];
+  link.url=redditScreenshot+'?share_id=old';link.preview='https://vxreddit.com'+new URL(link.url).pathname+'?share_id=old';link.original=link.url;link.raw=link.url;
+  post.original.text=link.url;
+  const oldKey='reddit:'+new URL(link.url).pathname+'?share_id=old';
+  post.tried={[oldKey]:exhausted?Object.keys(PROVIDERS.reddit.options).map(k=>PROVIDERS.reddit.noauth_embed?.[k]??k):['vx']};
+  await store.savePost(chat,sent.botId,row.source_msg_id,row.user_id,post,row.ts);
+  const fingerprint=hash(new URL(link.url).pathname+'?share_id=old').slice(0,12);
+  calls.length=0;await click(sent,chat,'e:reddit:1:'+fingerprint);
+  const edited=calls.find(c=>c.method==='editMessageText');assert.ok(edited);assert.ok(!JSON.stringify(edited.data).includes('share_id'));
+  const updated=JSON.parse((await store.post(chat,sent.botId)).state_json);assert.ok(!updated.links[0].url.includes('share_id'));assert.match(updated.original.text,/share_id=old/);
+  const key='reddit:'+new URL(link.url).pathname;assert.ok(updated.tried[key].includes('vx'));assert.equal(updated.tried[oldKey],undefined);
+  if(exhausted)assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/Tracking removed.*tried/);
+});

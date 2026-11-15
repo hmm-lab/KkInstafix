@@ -1,6 +1,6 @@
 import {PROVIDERS} from './config.js';
 import {captureOriginal,entityHTML} from './formatting.js';
-import {fixedFor,processText,senderLabel,trim} from './links.js';
+import {fixedFor,processText,senderLabel,trim,stripTracking} from './links.js';
 import {formatRepost,messageSource,linkIdentity} from './messages.js';
 import {quarantined} from './provider-policy.js';
 import {hash} from './security.js';
@@ -51,6 +51,21 @@ export async function editPost(tg,chat,id,view) {
     catch(second){if(!/not modified/i.test(second.message))throw second;}
   }
 }
+// Reapply current cleanup policy to persisted links without changing undo data.
+export function sanitisePost(post) {
+  let changed=false;
+  for(const link of post.links) {
+    const oldKey=link.platform?link.platform+':'+linkIdentity(link.url,link.platform,false):null;
+    const url=stripTracking(link.url,link.platform),preview=link.preview?stripTracking(link.preview,link.platform):link.preview;
+    changed ||= url!==link.url||preview!==link.preview;
+    link.url=url;link.preview=preview;
+    if(oldKey&&oldKey!==identity(link)) {
+      post.tried[identity(link)]=[...new Set([...(post.tried[identity(link)]??[]),...(post.tried[oldKey]??[])])];
+      delete post.tried[oldKey];
+    }
+  }
+  return changed;
+}
 export async function postCallback(query,store,tg) {
   if(!/^[ep]:/.test(query.data??''))return false;
   const msg=query.message,chat=msg?.chat?.id;
@@ -69,12 +84,14 @@ export async function postCallback(query,store,tg) {
       if(query.from?.id!==fresh.user_id&&!await tg.admin(chat,query.from?.id,msg.chat.type)){await answer('Only the original sender or a chat admin can choose the preview.');return true;}
       if(post.preview_index===Number(arg)){await answer('This link is already selected.');return true;}
       post.preview_index=Number(arg);
+      sanitisePost(post);
     } else {
       const link=post.links[post.preview_index??0],p=arg;
       const fingerprint=query.data.split(':')[3];
-      if(!link?.platform||link.platform!==p||(fingerprint&&(await hash(linkIdentity(link.url,p))).slice(0,12)!==fingerprint)) {
+      if(!link?.platform||link.platform!==p||(fingerprint&&(await hash(linkIdentity(link.url,p))).slice(0,12)!==fingerprint&&(await hash(linkIdentity(link.url,p,false))).slice(0,12)!==fingerprint)) {
         await answer('This retry button is outdated. Use the latest buttons.');return true;
       }
+      const cleaned=sanitisePost(post);
       const state=await store.settings(chat,query.from?.id??0),keys=Object.keys(PROVIDERS[p].options);
       const tried=post.tried[identity(link)]??[],idx=keys.indexOf(link.key);
       let selected;
@@ -82,7 +99,10 @@ export async function postCallback(query,store,tg) {
         const key=keys[(idx+n)%keys.length],effective=backend(p,key);
         if(!tried.includes(effective)&&!quarantined(state.health[p]?.[effective])){selected=key;break;}
       }
-      if(!selected){await answer('All available preview providers have been tried. No alternatives remain for this post.');return true;}
+      if(!selected){
+        if(cleaned){await editPost(tg,chat,msg.message_id,await postView(post));await store.savePost(chat,msg.message_id,fresh.source_msg_id,fresh.user_id,post,fresh.ts);}
+        await answer((cleaned?'Tracking removed. ':'')+'All available preview providers have been tried. No alternatives remain for this post.');return true;
+      }
       const fixed=fixedFor(link.url,p,selected);
       // Preserve an explicitly chosen browser frontend while changing only its preview.
       if(!link.browserKey)link.url=fixed.url;

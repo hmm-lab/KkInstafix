@@ -39,6 +39,17 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Reddit cleanup fix in 2.2.1
+
+Reddit's `share_id` attribution parameter is removed, case-insensitively, from
+Reddit and its configured preview-provider URLs. Comment paths, `context`, `sort`,
+`depth` and fragments remain intact. Other sites' `share_id` values are preserved.
+The rule applies to official clickable destinations, proxy previews, captions,
+inline results and `/clean`. Retry also re-cleans stored post targets from older
+versions, accepting their old URL fingerprint and retaining retry history even
+when no unused provider remains. Original undo snapshots remain unchanged.
+No database migration is required for this patch.
+
 ## Improvements in 2.2.0
 
 New reposts remember each tried preview backend for seven days. Retry chooses an
