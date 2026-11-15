@@ -128,7 +128,8 @@ export async function postCallback(query,store,tg,ctx={}) {
       const p=link.platform,health=await store.health(),keys=Object.keys(PROVIDERS[p].options),idx=keys.indexOf(link.key);
       let selected=null,fixed=null;
       // At most three alternatives / six fetches; no media download or global health change.
-      const candidates=Array.from({length:keys.length},(_,i)=>keys[(idx+i+1)%keys.length]).filter(k=>!Object.hasOwn(PROVIDERS[p].noauth_embed??{},k)&&!quarantined(health[p]?.[k])).slice(0,3);
+      const candidates=Array.from({length:keys.length},(_,i)=>keys[(idx+i+1)%keys.length]).filter(k=>k!==(link.previewKey??backend(p,link.key))&&!Object.hasOwn(PROVIDERS[p].noauth_embed??{},k)&&!quarantined(health[p]?.[k])).slice(0,3);
+      if(!candidates.length){await answer('No alternative provider is available. Use /refresh to request the current preview again.');return true;}
       for(const key of candidates){const candidate=fixedFor(link.url,p,key);if((await probeURL(candidate.preview,tg.net)).kind==='success'){selected=key;fixed=candidate;break;}}
       if(!fixed){await answer('Could not verify an alternative preview. The current post was kept; a blocked or slow response does not mean a provider is broken.');return true;}
       if(!link.browserKey)link.url=fixed.url;

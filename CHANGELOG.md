@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- On-demand `/repair` checks up to three configured providers, respects spoilers and a per-user/chat cooldown, and safely edits the existing post using the recovery journal. Inconclusive results keep the post unchanged.
+- On-demand `/repair` checks up to three configured providers, respects spoilers and a per-user/chat cooldown, and safely edits the existing post using the recovery journal. Inconclusive results keep the post unchanged. The current backend is never misreported as an alternative; sole-provider posts suggest `/refresh`.
 - Inline provider choices preserve surrounding text and all clean links, with at most 24 results and no inline health probes.
 - Optional `/music` and inline Songlink/Albumlink sharing with locally generated redirects; ordinary Spotify previews retain their default provider.
 - Sender-specific attribution and compact preview settings through `/appearance`, with private defaults, group overrides and layout retained across retries.

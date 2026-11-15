@@ -1502,3 +1502,14 @@ test('music share short hosts are passed to Songlink without fetching them',()=>
   assert.equal(musicLink('https://spotify.link/abc123?si=secret'),'https://song.link/'+encodeURIComponent('https://spotify.link/abc123'));
   assert.equal(musicLink('https://open.spotify.com/playlist/abc'),null);
 });
+
+test('repair never reports its unchanged current provider as a verified alternative',async()=>{
+  const chat=-7410,sent=await createPost('https://youtube.com/watch?v=RepairAlternative',chat);providerCalls.length=0;providerResponse=url=>new Response('',{status:url.hostname==='www.youtube.com'?200:403});calls.length=0;
+  try {await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,1);assert.ok(providerCalls.every(u=>new URL(u).hostname!=='www.youtube.com'));assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/Could not verify/);}
+  finally{providerResponse=null;}
+});
+test('repair explains sole-provider posts without probing or editing',async()=>{
+  const chat=-7411,sent=await createPost('https://furtrack.com/p/826598',chat);calls.length=0;providerCalls.length=0;providerResponse=()=>new Response('');
+  try {await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,0);assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/No alternative.*refresh/);}
+  finally{providerResponse=null;}
+});

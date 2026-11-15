@@ -80,7 +80,7 @@ The shared catalogue and current evidence are documented in [the provider review
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
 - `/undo` — Cloudflare restores the original text and formatting, or a supported single attachment with its caption, for new rewrites (7-day retention). Older records and the legacy Python bot provide the original URL.
-- `/repair` — Cloudflare: reply to a fixed post to check up to three providers and edit it when metadata is verified (30-second per-user/chat cooldown).
+- `/repair` — Cloudflare: reply to a fixed post to check up to three alternative providers and edit it when metadata is verified (30-second per-user/chat cooldown).
 - `/music <url>` — Cloudflare: share a track or album through Songlink/Albumlink, also available as an inline choice; no music API calls.
 - `/appearance` — Cloudflare: `/appearance attribution off|on`, `/appearance preview compact|large`, or `/appearance reset`. Private chat sets your defaults; group commands override only your posts there.
 - `/refresh` — Cloudflare: reply to a fixed post to request a same-provider preview refresh without changing its clean destination.
