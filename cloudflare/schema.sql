@@ -91,3 +91,5 @@ CREATE TABLE IF NOT EXISTS post_operations (operation_id TEXT PRIMARY KEY, chat_
 CREATE INDEX IF NOT EXISTS idx_post_operations_message ON post_operations(chat_id,bot_msg_id,state);
 CREATE INDEX IF NOT EXISTS idx_post_operations_ts ON post_operations(ts);
 CREATE TABLE IF NOT EXISTS post_activity (chat_id INTEGER NOT NULL, bot_msg_id INTEGER NOT NULL, last_action_at INTEGER NOT NULL, PRIMARY KEY(chat_id,bot_msg_id));
+
+CREATE TABLE IF NOT EXISTS free_daily_usage (day TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, rows_read INTEGER NOT NULL DEFAULT 0, rows_written INTEGER NOT NULL DEFAULT 0, storage_bytes INTEGER NOT NULL DEFAULT 0);

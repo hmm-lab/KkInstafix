@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {Miniflare} from 'miniflare';
 import {fixLink,processText,stripTracking,platformFor} from '../src/links.js';
 import {PROVIDERS} from '../src/config.js';
+import {InvocationBudget,BudgetedDB,BudgetError,FREE_BUDGET} from '../src/budget.js';
 import {JsonCache} from '../src/cache.js';
 import {VERSION} from '../src/version.js';
 import {Store} from '../src/store.js';
@@ -1333,7 +1334,69 @@ test('completed edit receipts omit original text and expire with their post',asy
   const chat=-7212,sent=await createPost('Private words https://x.com/a/status/ReceiptRetention',chat),store=new Store(db);
   await click(sent,chat,'e:twitter:0');const row=await db.prepare('SELECT * FROM post_operations WHERE chat_id=?').bind(chat).first();
   assert.equal(row.state,'done');assert.ok(!row.desired_json.includes('Private words'));assert.ok(!row.desired_json.includes('https://'));
-  await db.prepare('UPDATE post_controls SET ts=0 WHERE chat_id=?').bind(chat).run();await store.cleanup(Math.floor(Date.now()/1000));
+  assert.equal(row.ts,(await store.post(chat,sent.botId)).ts);
+  await db.prepare('UPDATE post_controls SET ts=0 WHERE chat_id=?').bind(chat).run();
+  await db.prepare('UPDATE post_operations SET ts=0 WHERE chat_id=?').bind(chat).run();await store.cleanup(Math.floor(Date.now()/1000));
   assert.equal(await db.prepare('SELECT * FROM post_operations WHERE chat_id=?').bind(chat).first(),null);
   assert.equal(await db.prepare('SELECT * FROM post_activity WHERE chat_id=?').bind(chat).first(),null);
+});
+
+test('per-invocation database guard counts batch statements and leaves accounting headroom',async()=>{
+  const budget=new InvocationBudget({...FREE_BUDGET,queries:4}),guarded=new BudgetedDB(db,budget);
+  await guarded.prepare('SELECT 1 AS value').first();assert.equal(budget.queries,2);
+  await guarded.batch([guarded.prepare('SELECT 2'),guarded.prepare('SELECT 3')]);assert.equal(budget.queries,4);
+  await assert.rejects(()=>guarded.prepare('SELECT 4').first(),BudgetError);
+  assert.ok(budget.rowsRead>=0);assert.equal(budget.workQueries,3);
+});
+test('external requests and optional cache operations stop before their safety budgets',async()=>{
+  const budget=new InvocationBudget({...FREE_BUDGET,fetches:2,cacheCalls:1});let calls=0;
+  const net=budget.network(async()=>{calls++;return new Response('ok');});
+  await net('https://example.com');await net('https://example.com');assert.throws(()=>net('https://example.com'),BudgetError);assert.equal(calls,2);
+  assert.equal(budget.cache(),true);assert.equal(budget.cache(),false);
+});
+test('the shared expansion budget uses no more than four simultaneous connections',async()=>{
+  let active=0,max=0;const net=async()=>{active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,3));active--;return new Response(null,{status:302,headers:{location:'https://tiktok.com/@u/video/1'}});};
+  await processText(Array.from({length:8},(_,n)=>'https://vm.tiktok.com/c'+n).join(' '),{}, {},{},net);assert.equal(max,4);
+});
+test('large metadata prefixes remain inconclusive and are bounded to eight KiB',async()=>{
+  let bytes=0,cancelled=false;const stream=new ReadableStream({pull(c){const b=new Uint8Array(2048).fill(120);bytes+=b.length;c.enqueue(b);},cancel(){cancelled=true;}});
+  const result=await probeURL('https://eeinstagram.com/reel/PrefixBudget',async()=>new Response(stream,{headers:{'Content-Type':'text/html'}}));
+  assert.equal(result.kind,'uncertain');assert.equal(result.evidence,'metadata_prefix_truncated');assert.equal(cancelled,true);assert.ok(bytes<=10240);
+});
+test('daily row allowances pause message processing without deleting or reposting originals',async()=>{
+  const day=new Date().toISOString().slice(0,10),prior=await db.prepare('SELECT * FROM free_daily_usage WHERE day=?').bind(day).first();
+  try {
+    await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,0,0,?,0)').bind(day,FREE_BUDGET.rowsWritten).run();
+    calls.length=0;const response=await update(message('https://x.com/a/status/PausedBudget',5,-7301));
+    assert.equal(response.response.status,200);assert.equal((await response.response.json()).paused,true);assert.equal(calls.length,0);
+    const maintenance=new InvocationBudget();assert.equal(await maintenance.admit(db,true),true);
+    const normal=new InvocationBudget();assert.equal(await normal.admit(db),false);
+    const tomorrow=new InvocationBudget();tomorrow.day='2099-01-01';assert.equal(await tomorrow.admit(db),true);
+  }finally{if(prior)await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,?,?,?,?)').bind(prior.day,prior.requests,prior.rows_read,prior.rows_written,prior.storage_bytes).run();else await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();}
+});
+test('daily safety accounting includes SQL metadata and its own bookkeeping',async()=>{
+  const budget=new InvocationBudget();budget.day='2099-02-01';const guarded=new BudgetedDB(db,budget);
+  assert.equal(await budget.admit(db),true);await guarded.prepare('SELECT * FROM provider_health').all();await budget.persist(db);
+  const row=await db.prepare('SELECT * FROM free_daily_usage WHERE day=?').bind(budget.day).first();assert.equal(row.requests,1);assert.ok(row.rows_read>=budget.rowsRead+4);assert.ok(row.rows_written>=2);
+  await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(budget.day).run();
+});
+test('cleanup bounds every expired-table delete instead of bursting through write limits',async()=>{
+  const old=1,chat=-7302;
+  await db.batch(Array.from({length:300},(_,n)=>db.prepare('INSERT INTO recent_events VALUES(?,?,?,?)').bind('bounded',chat,String(n),old)));
+  await new Store(db).cleanup(Math.floor(Date.now()/1000));
+  const remaining=await db.prepare("SELECT COUNT(*) count FROM recent_events WHERE kind='bounded' AND chat_id=?").bind(chat).first();assert.equal(remaining.count,50);
+  await db.prepare("DELETE FROM recent_events WHERE kind='bounded' AND chat_id=?").bind(chat).run();
+});
+test('protected diagnostics expose the bot safety budget without credentials',async()=>{
+  const r=await dispatch('/admin/status',{}, {Authorization:'Bearer '+bootstrap});const body=await r.json();
+  assert.equal(body.free_tier.soft_limits.rowsWritten,25000);assert.equal(body.free_tier.soft_limits.queries,45);
+  assert.ok(!JSON.stringify(body).includes(token));
+});
+
+test('storage safety carries across UTC days while daily row allowances reset',async()=>{
+  const day='2099-06-01';
+  try {
+    await db.prepare('INSERT INTO free_daily_usage VALUES(?,1,0,0,?)').bind(day,FREE_BUDGET.storageBytes).run();
+    const budget=new InvocationBudget();budget.day='2099-06-02';assert.equal(await budget.admit(db),false);assert.equal(await budget.admit(db,true),true);
+  }finally{await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();}
 });

@@ -133,3 +133,16 @@ def test_release_version_guard_catches_missing_documentation(tmp_path, monkeypat
     monkeypatch.setattr(check_release, 'ROOT', tmp_path)
     with pytest.raises(SystemExit, match='must document Worker 2.2.0'):
         check_release.check()
+
+
+def test_free_tier_release_metadata_enforces_cpu_and_samples_logs():
+    meta = release.metadata(CONFIG)
+    assert 'limits' not in meta
+    assert CONFIG['free_tier_policy']['cpu_ms'] == 10
+    assert meta['observability']['logs']['head_sampling_rate'] == 0.1
+    assert {b['type'] for b in meta['bindings']} == {'d1', 'inherit', 'plain_text'}
+
+
+def test_release_rejects_an_accidental_paid_size_cpu_allowance():
+    with pytest.raises(release.ReleaseError, match='Free-tier policy'):
+        release.metadata({**CONFIG, 'limits': {'cpu_ms': 30000}})

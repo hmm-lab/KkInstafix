@@ -1,3 +1,4 @@
+import {InvocationBudget,BudgetedDB,BudgetError} from './budget.js';
 import {JsonCache} from './cache.js';
 import {VERSION} from './version.js';
 import {makePost,postView,syncEdit} from './posts.js';
@@ -23,7 +24,7 @@ async function activate(request,env,store) {
   let input;
   try {input=JSON.parse(new TextDecoder().decode(await readBounded(request.body,4096)));} catch {return json({error:'Invalid setup request.'},400);}
   if (!/^\d+:[A-Za-z0-9_-]{20,100}$/.test(input.token??'')) return json({error:'That does not look like a Telegram bot token.'},400);
-  const tg=new Telegram(input.token);
+  const tg=new Telegram(input.token,env.REQUEST_FETCH??fetch);
   let me;
   try {me=await tg.call('getMe');} catch {return json({error:'Telegram could not verify that token. Check it in @BotFather and try again.'},400);}
   if (!me.is_bot||!me.username) return json({error:'The token must belong to a Telegram bot.'},400);
@@ -45,7 +46,7 @@ async function activate(request,env,store) {
 async function inline(query,tg,store) {
   const source=query.query??'';
   if(!urls(source).length)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'hint',title:'Paste a social link',input_message_content:{message_text:'Paste a link after the bot username.'}}]});
-  const result=await processText(source,DEFAULTS,{},{},fetch,false,await store.health(),store.cache);
+  const result=await processText(source,DEFAULTS,{},{},tg.net,false,await store.health(),store.cache);
   if(result.tooMany)return tg.call('answerInlineQuery',{inline_query_id:query.id,cache_time:1,is_personal:true,results:[{type:'article',id:'limit',title:'Use up to 8 links per message',input_message_content:{message_text:'Use up to 8 links per inline message, then try again.',link_preview_options:{is_disabled:true}}}]});
   const first=result.links[0];
   const link=first?.url??urls(source)[0];
@@ -78,7 +79,7 @@ async function rewrite(msg,update,store,tg,ctx) {
     }
     return;
   }
-  const result=await processText(text,settings,state.choices,state.overrides,fetch,false,state.health,store.cache);
+  const result=await processText(text,settings,state.choices,state.overrides,tg.net,false,state.health,store.cache);
   if(result.tooMany||!result.links.length)return;
   if(!await store.rate(chat,user,update.update_id,settings.rate_limit,settings.rate_window,stamp)) {
     if(await store.claimRecent('ratewarn',chat,String(user),settings.rate_window,stamp)) await tg.send(chat,'⏱ Slow down — link rate limit reached.');
@@ -96,7 +97,7 @@ async function rewrite(msg,update,store,tg,ctx) {
     let {html,plain,fallback,protectedLinks}=formatRepost({text:msg.text??msg.caption??'',
       entities:msg.text!==undefined?msg.entities:msg.caption_entities,
       plainText:result.text,links:result.links,label});
-    const post=await makePost(msg,result,label),view=await postView(post);
+    const post=await makePost(msg,result,label),view=await postView(post,{html,plain,fallback,protectedLinks});
     const preview=protectedLinks?{is_disabled:true}:first.preview?{is_disabled:false,url:first.preview,prefer_large_media:true,show_above_text:true}:undefined;
     let keyboard=view.keyboard.inline_keyboard.length?view.keyboard:undefined;
     // A companion reply preserves the full original when expansion exceeds
@@ -137,9 +138,9 @@ async function rewrite(msg,update,store,tg,ctx) {
     }
   }
 }
-export default {
+const worker = {
   async fetch(request,env) {
-    const url=new URL(request.url),store=new Store(env.DB,new JsonCache(caches.default));
+    const url=new URL(request.url),store=new Store(env.DB,new JsonCache(caches.default,undefined,undefined,env.INVOCATION_BUDGET));
     if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
     if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
       const row=await store.stmt('SELECT username,activated FROM runtime_config WHERE id=1').first();
@@ -150,18 +151,18 @@ export default {
     }
     if(request.method==='POST'&&url.pathname==='/admin/check-providers') {
       if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
-      return json(await runHealthChecks(store,{stamp:now()}));
+      return json(await runHealthChecks(store,{stamp:now(),net:env.REQUEST_FETCH??fetch,batchSize:2}));
     }
     if(request.method==='POST'&&url.pathname==='/admin/status') {
       if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
       const config=await store.stmt('SELECT * FROM runtime_config WHERE id=1').first();
       if(!config?.activated)return json({active:false});
       try {
-        const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY));
+        const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY),env.REQUEST_FETCH??fetch);
         const [info,me]=await Promise.all([tg.call('getWebhookInfo'),tg.call('getMe')]);
         const health=await store.health();
         const healthRows=Object.values(health).flatMap(p=>Object.values(p));
-        return json({active:true,provider_health:{checked:healthRows.length,temporarily_skipped:healthRows.filter(r=>r.cooldown_until>now()).length,last_check:Math.max(0,...healthRows.map(r=>r.checked_at))},bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
+        return json({active:true,free_tier:env.INVOCATION_BUDGET?.snapshot(),provider_health:{checked:healthRows.length,temporarily_skipped:healthRows.filter(r=>r.cooldown_until>now()).length,last_check:Math.max(0,...healthRows.map(r=>r.checked_at))},bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
           supports_inline_queries:me.supports_inline_queries},webhook:{
           url:(info.url??'').replace(/\d+:[A-Za-z0-9_-]+/g,'[redacted]'),pending_update_count:info.pending_update_count,
           last_error_date:info.last_error_date,last_error_message:info.last_error_message,
@@ -180,7 +181,7 @@ export default {
     if(claim==='duplicate')return json({ok:true,duplicate:true});
     const ctx={sent:false,operation_id:'update:'+update.update_id};
     try {
-      const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY));
+      const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY),env.REQUEST_FETCH??fetch);
       tg.username=config.username;
       if(update.inline_query)await inline(update.inline_query,tg,store);
       else if(update.callback_query)await callback(update.callback_query,store,tg,ctx);
@@ -203,5 +204,20 @@ export default {
       return json({error:'Temporarily unavailable'},503,code===429?{'Retry-After':String(error.retryAfter??30)}:{});
     }
   },
-  async scheduled(_event,env) {const store=new Store(env.DB,new JsonCache(caches.default));await store.cleanup(now());await runHealthChecks(store,{stamp:now()});},
+  async scheduled(_event,env) {const store=new Store(env.DB,new JsonCache(caches.default,undefined,undefined,env.INVOCATION_BUDGET));await store.cleanup(now());await runHealthChecks(store,{stamp:now(),net:env.REQUEST_FETCH??fetch,batchSize:2});},
+};
+
+export default {
+  async fetch(request,env) {
+    const budget=new InvocationBudget(),db=new BudgetedDB(env.DB,budget),protectedRequest=request.method==='POST';
+    if(protectedRequest&&!await budget.admit(env.DB)&&new URL(request.url).pathname!=='/admin/status')return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
+    try {return await worker.fetch(request,{...env,DB:db,INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});}
+    catch(error){if(error instanceof BudgetError)return json({error:'Free-tier request budget reached. Original messages are preserved.'},503,{'Retry-After':'60'});throw error;}
+    finally {if(protectedRequest)try{await budget.persist(env.DB);}catch{console.error(JSON.stringify({event:'usage_accounting_unavailable'}));}}
+  },
+  async scheduled(event,env) {
+    const budget=new InvocationBudget();if(!await budget.admit(env.DB,true))return;
+    try {await worker.scheduled(event,{...env,DB:new BudgetedDB(env.DB,budget),INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});}
+    finally{await budget.persist(env.DB);}
+  },
 };

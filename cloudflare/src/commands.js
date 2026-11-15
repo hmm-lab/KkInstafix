@@ -86,7 +86,7 @@ async function importBackup(msg,store,tg,reply) {
       (row.chat_id!==undefined && row.chat_id!==msg.chat.id) || !validSetting(row.key,value)) return reply('Invalid user setting in backup.');
     stmts.push(store.stmt('INSERT OR REPLACE INTO user_settings VALUES(?,?,?,?)',row.user_id,msg.chat.id,row.key,String(value)));
   }
-  if (stmts.length>100) return reply('Backup contains too many settings.');
+  if (stmts.length>32) return reply('Backup is too large for one free-tier import. Restore fewer settings at a time.');
   if (stmts.length) await store.db.batch(stmts);
   return reply('✅ Settings restored.'+(migrated?' Retired providers were replaced with current defaults; removed platforms were skipped.':''));
 }
@@ -167,7 +167,7 @@ export async function command(msg,store,tg,state,ctx={}) {
   if (['clean','preview'].includes(name)) {
     const source=msg.reply_to_message?messageSource(msg.reply_to_message):parts.slice(1).join(' ');
     if (!urls(source).length) return reply(`Reply to a link or use /${name} &lt;url&gt;.`);
-    const result=await processText(source,state.settings,state.choices,state.overrides,fetch,name==='clean',state.health,store.cache);
+    const result=await processText(source,state.settings,state.choices,state.overrides,tg.net,name==='clean',state.health,store.cache);
     return reply(h(result.text),{link_preview_options:{is_disabled:true}});
   }
   if (name==='testall') {

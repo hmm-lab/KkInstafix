@@ -39,6 +39,81 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Free-tier safeguards in 2.3.1
+
+Cloudflare's documented Free allowances (checked 15 November 2026) include 100,000
+Worker requests/day, 10 ms CPU per invocation, 50 external subrequests/invocation,
+50 D1 statements/invocation, 5 million D1 rows read/day, 100,000 D1 rows written/day,
+500 MB per D1 database and 5 GB total D1 storage. These are account/plan limits,
+not a separate entitlement per bot. Workers Logs currently include 200,000 events
+per day on Free. Re-check pricing/limits before future deployment changes.
+
+- [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)
+- [D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
+- [Workers Logs pricing](https://developers.cloudflare.com/workers/platform/pricing/#workers-logs)
+
+The bot adds lower **application safety allowances**, not an account-wide billing
+cap: 10,000 protected operations/day, 2 million measured rows read/day, 25,000
+measured rows written/day, and a 200 MiB observed database-size threshold. At a
+threshold, new POST processing is acknowledged with a paused result without
+reposting/deleting originals. Skipped updates are not queued for later delivery;
+users must resend after the allowance resets at midnight UTC. Protected status
+remains available to inspect the reason. Maintenance has separate headroom up to
+3 million reads and 50,000 writes, allowing cleanup while normal work is paused.
+
+A D1-backed UTC ledger records returned row metadata, including index costs and
+conservative accounting overhead. It is a soft guard checked before each
+invocation; an in-flight operation can cross its threshold slightly. Requests to
+public/unauthenticated endpoints, external administrative queries, other Workers,
+and other databases are outside that ledger. Account-wide usage must still be
+checked through Cloudflare analytics. Incoming traffic still counts toward the
+platform request allowance even when processing is paused. The bot cannot promise
+that a busy or attacked account never reaches a platform quota.
+
+Every invocation separately meters at most 45 D1 statement slots (batch members
+count individually), leaving accounting headroom below 50, at most 24 outgoing
+fetch calls and 16 optional Cache API operations. Four short-link expansions run
+concurrently, leaving room below the six-connection ceiling. Imports exceeding
+32 SQL statements are rejected before writing. Budget failures preserve original
+messages; they do not enable a paid feature or upgrade a plan.
+
+Cloudflare enforces the Free plan’s built-in 10 ms CPU limit. Custom CPU limits
+are a Paid feature: the deployment API rejected that setting and explicitly
+confirmed this account is on Free. Release metadata therefore omits custom limits
+and rejects attempts to configure them or a legacy usage model. Cloudflare enforces runtime
+CPU limits, with its documented burst flexibility; local tests cannot prove all
+production invocations consume less than 10 ms. Duplicate HTML rendering was
+removed. Probe heads are limited to 8 KiB; truncated heads without useful metadata
+are inconclusive, never evidence of a broken provider. Each hourly production
+batch now checks two backends, reducing background work. Logs sample 10% of
+invocations; trace sampling stays at zero to protect Telegram token URLs.
+
+Retention cleanup deletes at most 250 expired rows per table per hourly run to
+avoid write spikes. Recovery records use their original post timestamp for
+indexed expiry. Large backlogs may need several cleanup runs. Storage accounting uses D1’s returned size metadata; unsupported page-count
+PRAGMAs are not used. The observed storage size carries over at midnight, unlike
+daily read/write allowances. Allocated database size may not shrink immediately
+after deletes, so reaching the conservative storage threshold can require owner
+maintenance before normal processing resumes. No media processing,
+AI, Containers, KV, R2, paid storage or new paid subscription is enabled.
+
+Before deployment apply `migrations/0005-free-budget.sql`, which adds the small
+usage ledger. Clean installs include it. `/admin/status` returns `free_tier`
+with the ledger snapshot and configured safety allowances. Aggregate Cloudflare
+analytics—not the application ledger—are authoritative for account usage.
+
+The connected account allowed analytics/resource reads but denied billing
+subscription and spend-policy reads during this audit. Independently, Cloudflare’s
+deployment API explicitly confirmed the Free plan with error 100328 when a custom
+CPU cap was attempted. That failed upload did not change the live Worker or plan.
+The setting was removed; the platform retains its own Free CPU limit. On Free,
+hitting platform quotas stops service rather than automatically upgrading the
+plan. No billing changes were made. `usage_model: standard` alone is not proof of
+a Free account; the confirmation above is dated 15 November 2026.
+Workers spending policies are not a zero-cost guarantee: their minimum is above
+zero, they exclude subscription fees and enforcement can lag.
+
 ## Reliability, performance and UX in 2.3.0
 
 The single Retry button now shows its active backend and position, for example

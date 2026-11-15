@@ -22,14 +22,14 @@ export const OBSERVATION_SAMPLES={
   weibo:'https://weibo.com/rmrb',xiaohongshu:'https://xhslink.com/',pinterest:'https://pinterest.com/',
 };
 export {quarantined,pickHealthy,nextHealthy,healthLabel} from './provider-policy.js';
-async function prefix(stream,limit=32768) {
-  if(!stream)return '';
+async function prefix(stream,limit=8192) {
+  if(!stream)return {body:'',truncated:false};
   const reader=stream.getReader(),parts=[];let size=0;
   try {while(size<limit){const {done,value}=await reader.read();if(done)break;const part=value.subarray(0,limit-size);parts.push(part);size+=part.length;}
     if(size>=limit)await reader.cancel();}
   finally{reader.releaseLock();}
   const data=new Uint8Array(size);let at=0;for(const p of parts){data.set(p,at);at+=p.length;}
-  return new TextDecoder().decode(data);
+  return {body:new TextDecoder().decode(data),truncated:size>=limit};
 }
 const attr=(tag,name)=>new RegExp('\\b'+name+'\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))','i').exec(tag)?.slice(1).find(v=>v!==undefined)??'';
 export function usableMetadata(body,type='text/html') {
@@ -58,8 +58,8 @@ export async function probeURL(url,net=fetch) {
       if(status!==200){await response.body?.cancel();return {status,kind:'failure',evidence:'http_error'};}
       const type=response.headers.get('Content-Type')??'';
       if(/^(image|video|audio)\//i.test(type)){await response.body?.cancel();return {status,kind:'success',evidence:'content_metadata'};}
-      const body=await prefix(response.body);
-      return usableMetadata(body,type)?{status,kind:'success',evidence:'content_metadata'}:{status,kind:'failure',evidence:'no_usable_metadata'};
+      const {body,truncated}=await prefix(response.body);
+      return usableMetadata(body,type)?{status,kind:'success',evidence:'content_metadata'}:truncated?{status,kind:'uncertain',evidence:'metadata_prefix_truncated'}:{status,kind:'failure',evidence:'no_usable_metadata'};
     }catch{return {status:null,kind:'uncertain',evidence:'network_or_timeout'};}
   }
   return {status:null,kind:'uncertain',evidence:'redirect_needs_review'};

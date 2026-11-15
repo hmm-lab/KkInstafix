@@ -81,7 +81,7 @@ export class Store {
   ]);}
   async operation(id) {return this.stmt('SELECT * FROM post_operations WHERE operation_id=?',id).first();}
   async pendingOperation(chat,id) {return this.stmt("SELECT * FROM post_operations WHERE chat_id=? AND bot_msg_id=? AND state='pending' ORDER BY ts LIMIT 1",chat,id).first();}
-  async prepareOperation(id,chat,msg,post,kind) {await this.stmt("INSERT OR IGNORE INTO post_operations VALUES(?,?,?,?,?,'pending',?)",id,chat,msg,JSON.stringify(post),kind,Math.floor(Date.now()/1000)).run();return this.operation(id);}
+  async prepareOperation(id,chat,msg,post,kind) {await this.stmt("INSERT OR IGNORE INTO post_operations SELECT ?,chat_id,bot_msg_id,?,?,'pending',ts FROM post_controls WHERE chat_id=? AND bot_msg_id=?",id,JSON.stringify(post),kind,chat,msg).run();return this.operation(id);}
   async failOperation(id) {await this.stmt("UPDATE post_operations SET state='failed' WHERE operation_id=?",id).run();}
   async tapAllowed(chat,id,now=Date.now()) {const r=await this.stmt('SELECT last_action_at FROM post_activity WHERE chat_id=? AND bot_msg_id=?',chat,id).first();return !r||now-r.last_action_at>=1000;}
   async commitOperation(op) {
@@ -104,15 +104,19 @@ export class Store {
       optout_users:data[4].results.map(r=>r.user_id),user_settings:data[5].results};
   }
   async cleanup(now) {
+    // Each delete is bounded; indexed retention predicates avoid large hourly write bursts.
+    const expired=(table,condition,...params)=>this.stmt(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${condition} LIMIT 250)`,...params);
     await this.db.batch([
-      this.stmt('DELETE FROM deliveries WHERE ts<?',now-7*86400),
-      this.stmt('DELETE FROM recent_events WHERE ts<?',now-3600),
-      this.stmt('DELETE FROM rate_events WHERE ts<?',now-3600),
-      this.stmt('DELETE FROM rewritten_messages WHERE ts<?',now-7*86400),
-      this.stmt('DELETE FROM message_originals WHERE ts<?',now-7*86400),
-      this.stmt('DELETE FROM post_controls WHERE ts<?',now-7*86400),
-      this.stmt('DELETE FROM post_operations WHERE ts<? OR NOT EXISTS(SELECT 1 FROM post_controls p WHERE p.chat_id=post_operations.chat_id AND p.bot_msg_id=post_operations.bot_msg_id)',now-7*86400),
-      this.stmt('DELETE FROM post_activity WHERE last_action_at<? OR NOT EXISTS(SELECT 1 FROM post_controls p WHERE p.chat_id=post_activity.chat_id AND p.bot_msg_id=post_activity.bot_msg_id)',(now-7*86400)*1000),
+      expired('deliveries','ts<?',now-7*86400),
+      expired('recent_events','ts<?',now-3600),
+      expired('rate_events','ts<?',now-3600),
+      expired('rewritten_messages','ts<?',now-7*86400),
+      expired('message_originals','ts<?',now-7*86400),
+      expired('post_controls','ts<?',now-7*86400),
+      expired('post_operations','ts<?',now-7*86400),
+      expired('post_activity','last_action_at<? OR NOT EXISTS(SELECT 1 FROM post_controls p WHERE p.chat_id=post_activity.chat_id AND p.bot_msg_id=post_activity.bot_msg_id)',(now-7*86400)*1000),
+      expired('free_daily_usage','day<?',new Date((now-7*86400)*1000).toISOString().slice(0,10)),
     ]);
+
   }
 }

@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.3.1] - 2026-11-15
+
+### Added
+
+- A D1-backed UTC usage ledger and conservative bot-specific daily safety thresholds, with paused processing before normal D1 allowances are exhausted and reserved maintenance headroom.
+- Per-invocation guards for D1 statement slots, outgoing fetches and optional Cache API calls; protected diagnostics expose configured limits and ledger usage.
+- Kept Cloudflare’s built-in 10 ms Free CPU limit, rejected paid-only custom CPU configuration and legacy usage models in release metadata, and sampled logs at 10% with zero trace sampling.
+
+### Changed
+
+- Removed duplicate HTML rendering and limited short-link expansion concurrency to four.
+- Production health checks rotate two providers hourly and read at most 8 KiB per HTML probe. Truncated metadata is inconclusive, not a provider failure.
+- Bounded expired-row deletion to 250 per table/run, indexed recovery expiry by original post timestamp, and limited imports to 32 SQL statements.
+- Documented account-wide limits, pause/drop behaviour, billing-access limitations and the distinction between application guardrails and Cloudflare's plan/billing enforcement.
+
+### Deployment
+
+- Added additive migration `cloudflare/migrations/0005-free-budget.sql` before the Worker upload. No paid services or plan upgrades enabled.
+
+### Validation
+
+- Passed 311 Worker tests and 253 Python tests (564 total), including budget enforcement, daily pause/reset, bounded cleanup, expansion concurrency, probe truncation and release metadata.
+
 ## [2.3.0] - 2026-11-15
 
 ### Fixed

@@ -158,7 +158,9 @@ export async function processText(text, settings, choices, overrides, net=fetch,
   if (tokens.length>8) return {text,links:[],tooMany:true};
   let requests=0;
   const boundedNet=(...args)=>{if(requests++>=16)throw new Error('Short-link expansion budget reached');return net(...args);};
-  const results = await Promise.all(tokens.map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,boundedNet,clean,health,cache)})));
+  const results=[];
+  // Four active expansions leave room below the six-connection Free runtime ceiling.
+  for(let i=0;i<tokens.length;i+=4)results.push(...await Promise.all(tokens.slice(i,i+4).map(async raw=>({original:raw,...await fixLink(raw,settings,choices,overrides,boundedNet,clean,health,cache)}))));
   const changed = results.filter(r=>r.original!==r.url || r.platform==='youtube' || (r.platform&&r.preview&&r.preview!==trim(r.url)[0]));
   const replacements = new Map(changed.map(r=>[r.original,r.url]));
   return {text:text.replace(/https?:\/\/[^\s<>]+/gi,m=>replacements.get(m)??m),links:changed,allLinks:results};

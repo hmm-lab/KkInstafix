@@ -52,9 +52,11 @@ class Client:
 
 
 def metadata(config):
+    if config.get('usage_model') != 'standard' or config.get('limits'):
+        raise ReleaseError('Free-tier policy forbids paid-only custom CPU limits or legacy usage models')
     return {'main_module': 'worker.js', 'compatibility_date': config['compatibility_date'],
             'usage_model': config['usage_model'],
-            'observability': {'enabled': True, 'logs': {'enabled': True, 'invocation_logs': True, 'head_sampling_rate': 1},
+            'observability': {'enabled': True, 'logs': {'enabled': True, 'invocation_logs': True, 'head_sampling_rate': 0.1},
                               'traces': {'enabled': True, 'head_sampling_rate': 0}},
             'bindings': [{'type': 'd1', 'name': 'DB', 'database_id': config['database_id']},
                          *[{'type': 'inherit', 'name': name} for name in ['CONFIG_KEY', 'SETUP_HASH', 'WEBHOOK_SECRET']],

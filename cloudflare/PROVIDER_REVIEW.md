@@ -174,3 +174,11 @@ health expires after thirty seconds; it remains sampled evidence rather than a
 playback guarantee. `/refresh` changes only the selected preview request URL and
 does not claim to force Telegram to regenerate its cache. User opt-outs/mutes and
 other preferences are not cached. See the runtime README for recovery semantics.
+
+## Free-tier probe bounds (2.3.1)
+
+Production checks now rotate two backends per hourly batch rather than four.
+Metadata prefix reads stop at 8 KiB; if that prefix is truncated and contains no
+usable metadata, the result is uncertain rather than a failure. This preserves
+conservative quarantine rules while reducing CPU/network work. No catalogue
+mapping or default changed.

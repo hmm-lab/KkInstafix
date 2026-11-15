@@ -1,7 +1,7 @@
 import {PROVIDERS} from './config.js';
-import {captureOriginal,entityHTML} from './formatting.js';
+import {captureOriginal,entityHTML,hasProtectedLinks} from './formatting.js';
 import {fixedFor,processText,senderLabel,trim,stripTracking} from './links.js';
-import {formatRepost,messageSource,linkIdentity} from './messages.js';
+import {formatRepost,messageSource,messageLinks,linkIdentity} from './messages.js';
 import {quarantined} from './provider-policy.js';
 import {hash} from './security.js';
 
@@ -20,10 +20,10 @@ export async function makePost(msg,result,label,previous=null) {
   const selected=old?links.findIndex(l=>l.platform===old.platform&&l.url===old.url):-1;
   return {original:captureOriginal(msg),links,label,preview_index:selected>=0?selected:Math.max(0,links.findIndex(l=>l.original===result.links[0]?.original)),tried,revision,edit_date:msg.edit_date??0};
 }
-export async function postView(post) {
+export async function postView(post,existingRender=null) {
   const original=post.original,text=original.text??original.caption??'',entities=original.entities??original.caption_entities??[];
   if(!post.links.length)return {html:entityHTML(text||'The original message is now empty.',entities),fallback:{text:text||'The original message is now empty.',entities},preview:{is_disabled:true},keyboard:{inline_keyboard:[]}};
-  const rendered=formatRepost({text,entities,plainText:text,links:post.links,label:post.label});
+  const rendered=existingRender??formatRepost({text,entities,plainText:text,links:post.links,label:post.label});
   const selected=post.links[post.preview_index??0]??post.links[0];
   const keyboard={inline_keyboard:[]};
   if(!rendered.protectedLinks) {
@@ -112,8 +112,8 @@ export async function postCallback(query,store,tg,ctx={}) {
     const fresh=await store.post(chat,msg.message_id);
     if(!fresh){await answer('These controls have expired. Send the link again.');return true;}
     const post=JSON.parse(fresh.state_json),[kind,arg,target]=query.data.split(':');
-    const view=await postView(post);
-    if(view.protectedLinks){await answer('This link is hidden by a spoiler; preview remains disabled.');return true;}
+    const original=post.original,text=original.text??original.caption??'',entities=original.entities??original.caption_entities??[];
+    if(hasProtectedLinks(text,entities,messageLinks(text,entities))){await answer('This link is hidden by a spoiler; preview remains disabled.');return true;}
     if(kind==='p') {
       if(target!==post.revision||!/^\d+$/.test(arg)||!post.links[Number(arg)]){await answer('This preview choice is outdated. Use the latest buttons.');return true;}
       if(query.from?.id!==fresh.user_id&&!await tg.admin(chat,query.from?.id,msg.chat.type)){await answer('Only the original sender or a chat admin can choose the preview.');return true;}
@@ -171,7 +171,7 @@ export async function syncEdit(msg,row,store,tg,state,ctx) {
     const fresh=await store.post(msg.chat.id,row.bot_msg_id);if(!fresh)return;
     const previous=JSON.parse(fresh.state_json);
     if((msg.edit_date??0)<(previous.edit_date??0))return;
-    const result=await processText(messageSource(msg).trim(),state.settings,state.choices,state.overrides,fetch,false,state.health,store.cache);
+    const result=await processText(messageSource(msg).trim(),state.settings,state.choices,state.overrides,tg.net,false,state.health,store.cache);
     if(result.tooMany)return editLimitNotice(msg,store,tg,'This edit contains more than eight links.',ctx);
     for(const link of result.allLinks??result.links) {
       const old=previous.links.find(l=>l.platform===link.platform&&l.url===trim(link.url)[0]);

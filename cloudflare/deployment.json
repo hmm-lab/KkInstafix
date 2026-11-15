@@ -7,5 +7,14 @@
   "compatibility_date": "2026-11-15",
   "usage_model": "standard",
   "cron": "17 * * * *",
-  "note": "Deployment metadata only. Secret bindings must be inherited; no credentials are stored in this file."
+  "note": "Deployment metadata only. Secret bindings must be inherited; no credentials are stored in this file.",
+  "free_tier_policy": {
+    "paid_services": "Do not enable or upgrade",
+    "logs_sampling": 0.1,
+    "daily_bot_rows_read": 2000000,
+    "daily_bot_rows_written": 25000,
+    "database_soft_cap_bytes": 209715200,
+    "cpu_ms": 10,
+    "cpu_enforcement": "Built-in Workers Free limit; do not configure paid-only custom CPU limits"
+  }
 }
