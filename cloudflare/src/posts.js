@@ -93,15 +93,22 @@ export async function postCallback(query,store,tg) {
       }
       const cleaned=sanitisePost(post);
       const state=await store.settings(chat,query.from?.id??0),keys=Object.keys(PROVIDERS[p].options);
-      const tried=post.tried[identity(link)]??[],idx=keys.indexOf(link.key);
-      let selected;
-      for(let n=1;n<=keys.length;n++) {
-        const key=keys[(idx+n)%keys.length],effective=backend(p,key);
-        if(!tried.includes(effective)&&!quarantined(state.health[p]?.[effective])){selected=key;break;}
-      }
+      let tried=post.tried[identity(link)]??[];
+      const idx=keys.indexOf(link.key);
+      const next=()=>{
+        for(let n=1;n<=keys.length;n++) {
+          const key=keys[(idx+n)%keys.length],effective=backend(p,key);
+          // Browser aliases share preview backends and must not replace an official destination.
+          if(Object.hasOwn(PROVIDERS[p].noauth_embed??{},key))continue;
+          if(!tried.includes(effective)&&!quarantined(state.health[p]?.[effective]))return key;
+        }
+      };
+      let selected=next();
+      // A completed round starts again on this click, including previously exhausted records.
+      if(!selected){tried=[];selected=next();}
       if(!selected){
         if(cleaned){await editPost(tg,chat,msg.message_id,await postView(post));await store.savePost(chat,msg.message_id,fresh.source_msg_id,fresh.user_id,post,fresh.ts);}
-        await answer((cleaned?'Tracking removed. ':'')+'All available preview providers have been tried. No alternatives remain for this post.');return true;
+        await answer((cleaned?'Tracking removed. ':'')+'Preview providers are temporarily unavailable. Try again later.');return true;
       }
       const fixed=fixedFor(link.url,p,selected);
       // Preserve an explicitly chosen browser frontend while changing only its preview.

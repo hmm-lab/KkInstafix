@@ -982,19 +982,20 @@ async function createPost(text,chat,extra={}) {
   const row=await db.prepare('SELECT * FROM post_controls WHERE chat_id=? AND source_msg_id=?').bind(chat,source.message_id).first();
   assert.ok(row);return {source,botId:row.bot_msg_id,text:send.data.text,keyboard:send.data.reply_markup,post:JSON.parse(row.state_json)};
 }
-test('retry history tries each backend once and explains exhaustion across webhook requests',async()=>{
+test('retry cycles through all backends repeatedly across webhook requests',async()=>{
   const chat=-7001,sent=await createPost('https://x.com/a/status/RetryHistory',chat);
-  const seen=new Set([sent.post.links[0].previewKey]);
-  for(let n=0;n<Object.keys(PROVIDERS.twitter.options).length+1;n++) {
-    const row=await new Store(db).post(chat,sent.botId),post=JSON.parse(row.state_json);
+  const order=[sent.post.links[0].previewKey];
+  const count=new Set(Object.keys(PROVIDERS.twitter.options).map(k=>PROVIDERS.twitter.noauth_embed?.[k]??k)).size;
+  for(let n=0;n<count*2+1;n++) {
+    const post=JSON.parse((await new Store(db).post(chat,sent.botId)).state_json);
     calls.length=0;await click(sent,chat,`e:twitter:0:${hash(linkIdentityForTest(post.links[0].url,'twitter')).slice(0,12)}`);
-    const edited=calls.find(c=>c.method==='editMessageText');
-    if(!edited){assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/All available.*tried/);break;}
-    const next=JSON.parse((await new Store(db).post(chat,sent.botId)).state_json).links[0].previewKey;
-    assert.ok(!seen.has(next),`Repeated backend ${next}`);seen.add(next);
+    assert.ok(calls.some(c=>c.method==='editMessageText'));
+    const next=JSON.parse((await new Store(db).post(chat,sent.botId)).state_json).links[0];
+    assert.equal(new URL(next.url).hostname,'x.com');order.push(next.previewKey);
   }
-  assert.equal(seen.size,new Set(Object.keys(PROVIDERS.twitter.options).map(k=>PROVIDERS.twitter.noauth_embed?.[k]??k)).size);
-  calls.length=0;await click(sent,chat,'e:twitter:0');assert.ok(!calls.some(c=>c.method==='editMessageText'));
+  assert.equal(new Set(order.slice(0,count)).size,count);
+  assert.deepEqual(order.slice(count,count*2),order.slice(0,count));
+  assert.equal(order[count*2],order[0]);
 });
 function linkIdentityForTest(url,p) {const u=new URL(stripTracking(url,p));return u.pathname+u.search+u.hash;}
 test('multi-link preview selection is sender/admin-only and retains full text and formatting',async()=>{
@@ -1169,6 +1170,20 @@ for(const exhausted of [false,true])test('retry cleans stored Reddit targets fro
   calls.length=0;await click(sent,chat,'e:reddit:1:'+fingerprint);
   const edited=calls.find(c=>c.method==='editMessageText');assert.ok(edited);assert.ok(!JSON.stringify(edited.data).includes('share_id'));
   const updated=JSON.parse((await store.post(chat,sent.botId)).state_json);assert.ok(!updated.links[0].url.includes('share_id'));assert.match(updated.original.text,/share_id=old/);
-  const key='reddit:'+new URL(link.url).pathname;assert.ok(updated.tried[key].includes('vx'));assert.equal(updated.tried[oldKey],undefined);
-  if(exhausted)assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/Tracking removed.*tried/);
+  const key='reddit:'+new URL(link.url).pathname;if(exhausted)assert.deepEqual(updated.tried[key],['rx']);else assert.ok(updated.tried[key].includes('vx'));assert.equal(updated.tried[oldKey],undefined);
+  if(exhausted)assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/Provider: rx/);
+});
+
+test('cycling skips quarantined backends on every round and resumes after recovery',async()=>{
+  const chat=-7104,sent=await createPost('https://twitter.com/a/status/CycleHealth',chat),now=Math.floor(Date.now()/1000),store=new Store(db);
+  const rows=await db.prepare('SELECT * FROM provider_health WHERE platform=?').bind('twitter').all();
+  try {
+    for(const key of Object.keys(PROVIDERS.twitter.options).filter(k=>!PROVIDERS.twitter.noauth_embed?.[k]))await db.prepare('INSERT OR REPLACE INTO provider_health VALUES(?,?,?,?,?,?,?,?)').bind('twitter',key,3,now+3600,now,0,500,'confirmed_sample_failure').run();
+    calls.length=0;await click(sent,chat,'e:twitter:0');assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/temporarily unavailable/);
+    await db.prepare('DELETE FROM provider_health WHERE platform=?').bind('twitter').run();
+    calls.length=0;await click(sent,chat,'e:twitter:0');assert.ok(calls.some(c=>c.method==='editMessageText'));assert.equal(JSON.parse((await store.post(chat,sent.botId)).state_json).links[0].previewKey,'fx');
+  } finally {
+    await db.prepare('DELETE FROM provider_health WHERE platform=?').bind('twitter').run();
+    for(const r of rows.results)await db.prepare('INSERT INTO provider_health VALUES(?,?,?,?,?,?,?,?)').bind(r.platform,r.provider,r.failures,r.cooldown_until,r.checked_at,r.last_success_at,r.last_status,r.evidence).run();
+  }
 });

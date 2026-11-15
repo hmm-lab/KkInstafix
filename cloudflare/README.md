@@ -39,6 +39,16 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Continuous retries in 2.2.2
+
+Retry preview starts another provider cycle after exhausting a round, including
+posts already marked exhausted by earlier versions. Temporarily quarantined
+backends remain skipped. Browser aliases are not selected as preview backends,
+so cycling cannot change an official destination to XCancel or Redlib. Explicit
+browser choices still keep their destination. If every backend is temporarily
+quarantined, the bot explains that and the button remains usable later. No
+migration is required.
+
 ## Reddit cleanup fix in 2.2.1
 
 Reddit's `share_id` attribution parameter is removed, case-insensitively, from
@@ -54,7 +64,7 @@ No database migration is required for this patch.
 
 New reposts remember each tried preview backend for seven days. Retry chooses an
 unused, non-quarantined backend; aliases sharing a backend count as the same
-attempt. Once no alternatives remain, the bot explains this without cycling back.
+attempt. Since 2.2.2, completing a round starts a new cycle on the next click.
 Historical buttons without post-control records retain their legacy behaviour.
 Explicit browser frontend choices keep their clickable destination during retries.
 

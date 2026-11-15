@@ -6,7 +6,7 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
 
-Current Cloudflare version: **2.2.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.2.2** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
@@ -21,7 +21,7 @@ The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deplo
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone. Platform-specific tracking is also stripped for Amazon, eBay, AliExpress, LinkedIn, Pinterest, Apple Music, Vimeo, and SoundCloud.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
-- Per-message **↻ Retry preview** tries unused preview backends and explains when alternatives are exhausted. Multi-link posts let the original sender or a chat admin select the preview.
+- Per-message **↻ Retry preview** cycles through preview backends and starts another round after the last one. Multi-link posts let the original sender or a chat admin select the preview.
 - Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
 - Per-user rate limiting.
 - Inline mode retains surrounding text and multiple links, with a result for each preview choice.

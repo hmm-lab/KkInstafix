@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.2.2] - 2026-11-15
+
+### Changed
+
+- Retry preview continues cycling after the last provider instead of stopping, including previously exhausted posts. Each completed round resets that post's retry history.
+- Continue skipping temporarily quarantined backends, with a temporary-unavailability message only when none can be selected.
+- Skip browser aliases during retry selection, retaining official click-through destinations and explicitly chosen browser frontends across cycle boundaries.
+
+### Validation
+
+- Passed 283 Worker tests and 251 Python tests (534 total), including multiple complete cycles, reopening exhausted Reddit posts with tracking cleanup, and recovery after quarantine.
+
 ## [2.2.1] - 2026-11-15
 
 ### Fixed
