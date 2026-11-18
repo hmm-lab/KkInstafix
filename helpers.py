@@ -15,6 +15,7 @@ from collections import OrderedDict, deque
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter
 from telegram.ext import ContextTypes
 from telegram import LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -261,10 +262,10 @@ def strip_tracking(url: str) -> str:
 async def safe_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, reason: str = "", message: Optional[Message] = None) -> bool:
     """Safely delete a message, returning True if successful."""
     try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        # If we have a message object (for test environment), mark it as deleted
         if message is not None:
             await message.delete()
+        else:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info("Deleted message %s in chat %s (%s)", message_id, chat_id, reason)
         return True
     except Exception as e:
@@ -277,14 +278,18 @@ async def safe_send_text(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text:
                    reply_to_message_id: int = None, link_preview_options: LinkPreviewOptions = None,
                    reply_markup: InlineKeyboardMarkup = None) -> Optional[Message]:
     """Safely send a text message, returning the sent message or None if failed."""
+    # PTB treats even False as an explicit legacy preview setting. Passing it
+    # alongside LinkPreviewOptions overwrites the requested preview URL in 21.6.
+    preview_kwargs = ({"link_preview_options": link_preview_options}
+                      if link_preview_options is not None else
+                      {"disable_web_page_preview": disable_web_page_preview})
     try:
         return await context.bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
-            disable_web_page_preview=disable_web_page_preview,
+            **preview_kwargs,
             reply_to_message_id=reply_to_message_id,
-            link_preview_options=link_preview_options,
             reply_markup=reply_markup
         )
     except Exception as e:
@@ -346,3 +351,36 @@ def _warm_caches() -> None:
     # This would normally warm various caches
     # For now, we'll leave it as a placeholder since we're avoiding circular imports
     pass
+
+async def send_rewrite(context, chat_id, text, plain_text, *, parse_mode="HTML",
+                       preview=None, markup=None, reply_to=None, thread_id=None):
+    """Deliver useful content before callers consider deleting an original.
+
+    Only malformed requests benefit from simplifying formatting. Permission,
+    flood-control and transport errors must not trigger a burst of fallback
+    messages (a timeout may even mean Telegram already accepted the send).
+    """
+    attempts = [
+        (text, parse_mode, preview, markup, reply_to),
+        (plain_text, None, preview, None, reply_to),
+        (plain_text, None, None, None, reply_to),
+    ]
+    if reply_to is not None:
+        attempts.append((plain_text, None, None, None, None))
+    for body, mode, link_preview, keyboard, reply in attempts:
+        try:
+            return await context.bot.send_message(
+                chat_id=chat_id, text=body, parse_mode=mode,
+                link_preview_options=link_preview, reply_markup=keyboard,
+                reply_to_message_id=reply, message_thread_id=thread_id,
+            )
+        except BadRequest as exc:
+            logger.warning("Rewrite request rejected in chat %s: %s", chat_id, exc)
+        except (Forbidden, RetryAfter, NetworkError) as exc:
+            logger.warning("Rewrite delivery unavailable in chat %s: %s", chat_id, exc)
+            return None
+        except Exception:
+            logger.exception("Unexpected rewrite delivery error in chat %s", chat_id)
+            return None
+    logger.error("Could not deliver rewritten links in chat %s", chat_id)
+    return None

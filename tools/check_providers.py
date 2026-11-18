@@ -2,7 +2,9 @@
 """Provider health checker for KkInstafix.
 
 Builds a fixed URL for every provider host (using the same logic the bot uses)
-and reports which ones are reachable and serving a real embed.
+and reports reachability separately from evidence of a usable embed.
+Profile/landing samples are inconclusive; use a real post to test media.
+A successful content test does not guarantee every post will embed.
 
 IMPORTANT: run this from a host with open outbound network access. Sandboxed
 environments with an egress allowlist (e.g. Claude Code on the web) will return
@@ -24,6 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from html.parser import HTMLParser
 from urllib.parse import urlparse, urlunparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,19 +57,53 @@ def build_check_urls(platform_filter=None):
             yield platform, key, cfg["options"][key], url, cfg["default"] == key
 
 
+class _Metadata(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.values = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "meta":
+            key = attrs.get("property", attrs.get("name", "")).lower()
+            self.values[key] = attrs.get("content", "")
+
+
+def has_usable_embed(body, content_type="text/html"):
+    """Recognize real metadata/media, excluding error and login cards."""
+    if content_type.startswith(("image/", "video/", "audio/")):
+        return True
+    parser = _Metadata()
+    parser.feed(body)
+    values = parser.values
+    title = values.get("og:title", values.get("twitter:title", "")).lower()
+    if any(error in title for error in (
+        "log in", "login", "something went wrong", "not found", "unavailable",
+        "access denied", "notice", "unknown",
+    )):
+        return False
+    return bool(title and any(values.get(k) for k in (
+        "og:image", "og:video", "og:video:url", "og:description",
+        "twitter:image", "twitter:player", "twitter:description",
+    ))) or bool(values.get("og:video") or values.get("og:video:url"))
+
+
 def check(url, timeout):
-    """Return (code, latency_ms, has_embed, note). code=None means no response."""
+    """Return reachability and separate embed evidence; 403 is never EMBED."""
     t0 = time.time()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             code = resp.getcode()
-            body = resp.read(4096).decode("utf-8", "ignore").lower()
-        has_embed = 'og:' in body or 'twitter:card' in body
-        return code, int((time.time() - t0) * 1000), has_embed, ""
+            content_type = resp.headers.get("Content-Type", "text/html").lower()
+            body = resp.read(131072).decode("utf-8", "ignore")
+            final_host = urlparse(resp.url).hostname
+        has_embed = has_usable_embed(body, content_type)
+        note = "direct-media" if content_type.startswith(("image/", "video/", "audio/")) else ""
+        if final_host != urlparse(url).hostname:
+            note = f"redirect:{final_host}"
+        return code, int((time.time() - t0) * 1000), has_embed, note
     except urllib.error.HTTPError as e:
-        # A provider that returns a 4xx for a sample post is reachable but the
-        # post may be gone; still counts as "host responding".
         return e.code, int((time.time() - t0) * 1000), False, "http-error"
     except Exception as e:
         return None, int((time.time() - t0) * 1000), False, type(e).__name__
@@ -108,7 +145,7 @@ def main(argv=None):
         rows.append({
             "platform": platform, "key": key, "host": host, "default": is_default,
             "code": code, "latency_ms": dt, "has_embed": embed,
-            "status": "UP" if good else "DOWN", "note": note,
+            "status": "EMBED" if good and embed else "REACHABLE" if good else "UNREACHABLE", "note": note,
         })
 
     if args.json:

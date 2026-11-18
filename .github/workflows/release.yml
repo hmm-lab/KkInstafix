@@ -1,0 +1,43 @@
+name: Release Cloudflare Worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kkinstafix-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/tests.yml
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --prefix cloudflare
+      - run: npm run build --prefix cloudflare
+      - name: Deploy, verify and restore previous Worker on failure
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KKINSTAFIX_ADMIN_KEY: ${{ secrets.KKINSTAFIX_ADMIN_KEY }}
+        run: python tools/release_cloudflare.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rollback-${{ github.sha }}
+          path: release-rollback.json
+          if-no-files-found: ignore
+          retention-days: 7

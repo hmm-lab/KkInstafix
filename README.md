@@ -4,9 +4,15 @@
 
 Telegram bot that rewrites social media links so Telegram previews work better.
 
-It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, and Xiaohongshu (RED).
+It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, Xiaohongshu (RED), Pinterest, YouTube and FurTrack.
 
-Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.4.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+
+The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
+
+The bot has conservative daily database allowances and per-request safety budgets. It pauses new processing at its soft cap rather than enabling paid services. See [free-tier safeguards](cloudflare/README.md#free-tier-safeguards-in-231) for limits, shared-account caveats and pause behaviour.
+
+Cloudflare 2.4.1 improves link detection, safe backup restores, and duplicate handling. Cloudflare 2.4.0 added on-demand `/repair`, inline provider choices that preserve the whole message, universal `/music` links, `/appearance` preferences and remaining bot allowances in `/status`. FurTrack photo posts are supported; Imgur remains unverified and is not enabled. See the [2.4.0 runtime guide](cloudflare/README.md#features-in-240).
 
 ## Features
 
@@ -19,17 +25,19 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - Strips tracking parameters even from links it doesn't rewrite (e.g. YouTube `?si=`, `utm_*`, `fbclid`), using a conservative list that leaves ambiguous keys like `s`/`ref` alone. Platform-specific tracking is also stripped for Amazon, eBay, AliExpress, LinkedIn, Pinterest, Apple Music, Vimeo, and SoundCloud.
 - Strips platform-specific share tokens when rewriting (Twitter/X `?t=`, TikTok session/referrer params) so reposted links carry no tracking.
 - No-account providers (🌐): choose a privacy-friendly frontend for the clickable link while still getting a rich Telegram preview from the embed provider.
-- Per-message provider switch: every fixed link gets a **🔁 Embed not working?** button so anyone can cycle to a different provider if a preview renders badly — no admin rights needed.
-- Deduplicates repeated links, stickers, GIFs, and repeated plain text spam.
+- The single Retry button shows the current provider and its position, keeps cycling, and coalesces rapid taps. `/refresh` requests a fresh preview from the same provider. Multi-link posts let the original sender or a chat admin select the preview.
+- Deduplicates repeated links, stickers and GIFs. Plain-text spam deletion is opt-in for new chats; existing saved settings are preserved.
 - Per-user rate limiting.
-- Inline mode: use `@KkInstaFixBot <link>` in any chat without adding the bot.
-- Interactive `/menu` for admins to change providers with inline buttons.
+- Inline mode retains surrounding text and multiple links, with a result for each preview choice.
+- Edits to surviving originals update their existing repost, preserving formatting and refreshing undo.
+- `/status` checks Telegram permissions and explains how to fix missing access.
+- Compact `/menu` pages with friendly platform/provider names for admins.
 - Per-platform control: admins can disable rewriting for individual platforms (e.g. leave Spotify links alone) while keeping the rest on.
 - Commands are intentionally hidden from the Telegram "/" autocomplete menu to keep the UI uncluttered — they still work when typed.
 - Admin-only moderation and config commands.
-- SQLite storage so settings survive restarts.
-- In-memory caches for settings, providers, mutes, dedup, and rate limiting — zero DB reads on the hot path.
-- Provider fallback if one fixer host is down (parallel health checks).
+- Persistent Cloudflare D1 storage in production; SQLite for the legacy Python runtime.
+- Durable per-chat settings, deduplication, rate limits and user opt-outs.
+- Conservative background provider checks and temporary fallback, with manual retry history for new posts.
 - Welcome message when added to a new group.
 - File ID caching: photos and videos are uploaded once, then reused instantly.
 - Webhook secret token support for secure deployments.
@@ -37,11 +45,14 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 
 ## Default providers
 
-- Instagram: `kkclip`
+The shared catalogue and current evidence are documented in [the provider review](cloudflare/PROVIDER_REVIEW.md).
+
+- YouTube: `native`
+- Instagram: `ee`
 - Twitter/X: `vx`
 - TikTok: `tnk`
 - Reddit: `vx`
-- Facebook: `ez`
+- Facebook: `bed`
 - Threads: `fix`
 - Bluesky: `bskx`
 - Pixiv: `ph`
@@ -57,6 +68,7 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - Kick: `cl`
 - Weibo: `ez` (off by default until its host is live — `/platform weibo on`)
 - Xiaohongshu: `xky`
+- Pinterest: `ez`
 
 ## Commands
 
@@ -67,7 +79,12 @@ Current version: **1.54.0** — see [CHANGELOG.md](CHANGELOG.md) for release his
 - `/providers` — show current providers and options (active provider in bold).
 - `/status` or `/config` — show current chat settings (human-readable).
 - `/stats` — show per-chat rewrite counts and top senders.
-- `/undo` — reply to a rewritten message with `/undo` to see the original link (7-day retention).
+- `/undo` — Cloudflare restores the original text and formatting, or a supported single attachment with its caption, for new rewrites (7-day retention). Older records and the legacy Python bot provide the original URL.
+- `/repair` — Cloudflare: reply to a fixed post to check up to three alternative providers and edit it when metadata is verified (30-second per-user/chat cooldown).
+- `/music <url>` — Cloudflare: share a track or album through Songlink/Albumlink, also available as an inline choice; no music API calls.
+- `/appearance` — Cloudflare: `/appearance attribution off|on`, `/appearance preview compact|large`, or `/appearance reset`. Private chat sets your defaults; group commands override only your posts there.
+- `/refresh` — Cloudflare: reply to a fixed post to request a same-provider preview refresh without changing its clean destination.
+- `/diagnose` — Cloudflare: inspect a link or replied-to message, showing cleanup, preview provider, skip reasons and cached health without consuming posting quotas. Query values are hidden.
 - `/clean` — reply to a message (or pass a URL) to strip tracking from its links without rewriting them (host-aware: removes platform share tokens like Twitter `?t=` too).
 - `/preview` — reply to a message (or pass a URL) to see what the link would become (rewritten link, platform/provider, and cleaned version) without reposting it publicly.
 - `/optout` — stop the bot from rewriting/reposting your own links in this chat (no admin needed). `/optin` resumes.
@@ -101,7 +118,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 - `/testall <platform>` — test all providers for a platform (runs in parallel).
 - `/testall <platform> <url>` — test all providers with a custom URL.
 - `/export` — download a JSON backup of this chat's settings, providers and mutes.
-- `/import` — send a JSON backup as a document with caption `/import` (or reply to one) to restore. Warns if the backup is from a different chat.
+- `/import` — send a JSON backup as a document with caption `/import` (or reply to one). On Cloudflare, a complete export restores the saved settings for the same chat. Partial files merge with current settings.
 
 ## Supported platforms and provider keys
 
@@ -221,7 +238,12 @@ To protect against loss:
 
 For a fully managed alternative, port the storage layer to Postgres.
 
-## Deploy on Railway
+## Deploy on Cloudflare (free)
+
+The Worker + D1 implementation, activation instructions, backup migration and
+tests are documented in [cloudflare/README.md](cloudflare/README.md).
+
+## Deploy on Railway (legacy alternative)
 
 1. Push the repo to GitHub.
 2. Create a new Railway project from the repo.

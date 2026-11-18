@@ -1,0 +1,20 @@
+{
+  "account_id": "89ff32e183e6831818fee8d78e89f648",
+  "worker": "kkinstafix",
+  "url": "https://kkinstafix.legend-mysterio.workers.dev",
+  "database_id": "645ac61c-40da-4846-b1ba-d9461abb579e",
+  "database_name": "kkinstafix",
+  "compatibility_date": "2026-11-15",
+  "usage_model": "standard",
+  "cron": "17 * * * *",
+  "note": "Deployment metadata only. Secret bindings must be inherited; no credentials are stored in this file.",
+  "free_tier_policy": {
+    "paid_services": "Do not enable or upgrade",
+    "logs_sampling": 0.1,
+    "daily_bot_rows_read": 2000000,
+    "daily_bot_rows_written": 25000,
+    "database_soft_cap_bytes": 209715200,
+    "cpu_ms": 10,
+    "cpu_enforcement": "Built-in Workers Free limit; do not configure paid-only custom CPU limits"
+  }
+}
