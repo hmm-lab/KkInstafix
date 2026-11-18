@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
 - Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
 
+## [2.4.1] - 2026-11-18
+
+### Fixed
+
+- Recognise supported pasted URLs in Telegram text and caption entities when the scheme is omitted.
+- Explain the eight-link limit in `/clean` and `/preview` without echoing the original tracking URLs.
+- Restore complete chat backups in one database transaction. Partial imports merge with existing settings. Limit restores by file size and available database writes.
+- Link the sender's name to the currently selected post when preview selection changes.
+- Continue the next `/repair` attempt from the last provider checked, with up to three providers per attempt.
+- Deduplicate cleaned destinations while preserving functional parameters such as carousel and playback positions.
+- Authenticate webhook and administrative POST requests before reading the D1 quota ledger.
+
 ## [2.4.0] - 2026-11-15
 
 ### Added

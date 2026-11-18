@@ -1,3 +1,4 @@
+import worker from '../src/worker.js';
 import {test,after,before} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -1018,7 +1019,7 @@ test('multi-link preview selection is sender/admin-only and retains full text an
   calls.length=0;await click(sent,chat,choices[1].callback_data,6);
   assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/original sender/);
   calls.length=0;await click(sent,chat,choices[1].callback_data,5);
-  const edited=calls.find(c=>c.method==='editMessageText');assert.match(edited.data.link_preview_options.url,/eeinstagram/);assert.match(edited.data.text,/<b>Compare<\/b>/);assert.match(edited.data.text,/x.com/);assert.match(edited.data.text,/instagram.com/);
+  const edited=calls.find(c=>c.method==='editMessageText');assert.match(edited.data.link_preview_options.url,/eeinstagram/);assert.match(edited.data.text,/<b>Compare<\/b>/);assert.match(edited.data.text,/x.com/);assert.match(edited.data.text,/Shared by <a href="https:\/\/instagram\.com\/reel\/ChoosePreview\/"/);
   calls.length=0;await click(sent,chat,choices[0].callback_data,7);assert.match(calls.find(c=>c.method==='editMessageText').data.link_preview_options.url,/vxtwitter/);
 });
 test('an outdated multi-link selector cannot change an edited post',async()=>{
@@ -1419,11 +1420,34 @@ test('repair checks alternatives and edits once, preserving the original destina
     await db.prepare('DELETE FROM post_activity WHERE chat_id=?').bind(chat).run();calls.length=0;await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/30 seconds/);assert.equal(providerCalls.length,1);
   }finally{providerResponse=null;}
 });
-test('inconclusive repair probes at most three providers and leaves the saved post unchanged',async()=>{
-  const chat=-7402,sent=await createPost('https://instagram.com/reel/RepairBlocked/',chat),store=new Store(db),before=await store.post(chat,sent.botId);
-  providerCalls.length=0;providerResponse=()=>new Response('',{status:429});calls.length=0;
-  try {await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,3);assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.equal((await store.post(chat,sent.botId)).state_json,before.state_json);assert.match(calls.at(-1).data.text,/Could not verify/);}
-  finally{providerResponse=null;}
+test('inconclusive repair preserves the preview and continues with the next providers', async () => {
+  const chat = -7402;
+  const sent = await createPost('https://instagram.com/reel/RepairBlocked/', chat);
+  const store = new Store(db);
+  const before = JSON.parse((await store.post(chat, sent.botId)).state_json);
+  providerCalls.length = 0;
+  providerResponse = url => url.hostname === 'ig.embeds.now'
+    ? new Response('<meta property="og:title" content="A real post"><meta property="og:image" content="https://cdn.example/photo.jpg">')
+    : new Response('', {status: 429});
+  const repair = () => update(message('/repair', 5, chat, {reply_to_message: {message_id: sent.botId}}));
+  try {
+    calls.length = 0;
+    await repair();
+    assert.deepEqual(providerCalls.map(url => new URL(url).hostname), ['uuinstagram.com', 'zzinstagram.com', 'toinstagram.com']);
+    assert.ok(!calls.some(call => call.method === 'editMessageText'));
+    const saved = JSON.parse((await store.post(chat, sent.botId)).state_json);
+    assert.equal(saved.links[0].repairAfter, 'to');
+    delete saved.links[0].repairAfter;
+    assert.deepEqual(saved, before);
+    assert.match(calls.at(-1).data.text, /Could not verify/);
+    await db.prepare("UPDATE recent_events SET ts=1 WHERE kind='repair' AND chat_id=?").bind(chat).run();
+    calls.length = 0;
+    await repair();
+    assert.equal(providerCalls.length, 4);
+    assert.match(calls.find(call => call.method === 'editMessageText').data.link_preview_options.url, /ig\.embeds\.now/);
+  } finally {
+    providerResponse = null;
+  }
 });
 test('repair never probes spoiler links',async()=>{
   const chat=-7403,url='https://instagram.com/reel/RepairSpoiler/',sent=await createPost(url,chat,{entities:[{type:'spoiler',offset:0,length:url.length}]});
@@ -1482,7 +1506,7 @@ test('status reports remaining bot allowances even during a normal processing pa
     const response=await update(message('/status',5,-7408));assert.equal(response.response.status,200);const text=calls.find(c=>c.method==='sendMessage').data.text;
     assert.match(text,/Bot safety allowances · paused/);assert.match(text,/Requests remaining: 0/);assert.match(text,/written remaining: 0/);assert.match(text,/00:00:00 UTC/);assert.match(text,/not account-wide/);
     calls.length=0;const paused=await update(message('/music https://open.spotify.com/track/abc',5,-7408));assert.equal((await paused.response.json()).paused,true);assert.equal(calls.length,0);
-    const forged=await dispatch('/webhook',{update_id:++id,message:message('/status')});assert.equal((await forged.json()).paused,true);assert.equal(calls.length,0);
+    const unauthorized=await dispatch('/webhook',{update_id:++id,message:message('/status')});assert.equal(unauthorized.status,403);assert.equal(calls.length,0);
     await db.prepare('UPDATE free_daily_usage SET requests=10100 WHERE day=?').bind(day).run();const exhausted=await update(message('/status',5,-7408));assert.equal((await exhausted.response.json()).paused,true);assert.equal(calls.length,0);
   }finally{if(prior)await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,?,?,?,?)').bind(prior.day,prior.requests,prior.rows_read,prior.rows_written,prior.storage_bytes).run();else await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();}
 });
@@ -1512,4 +1536,119 @@ test('repair explains sole-provider posts without probing or editing',async()=>{
   const chat=-7411,sent=await createPost('https://furtrack.com/p/826598',chat);calls.length=0;providerCalls.length=0;providerResponse=()=>new Response('');
   try {await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.equal(providerCalls.length,0);assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/No alternative.*refresh/);}
   finally{providerResponse=null;}
+});
+
+
+test('Telegram URL entities without a scheme are recognised and cleaned in text and captions', async () => {
+  const bare = 'instagram.com/reel/EntityWithoutScheme/?igsh=remove';
+  const text = 'Watch ' + bare;
+  const entities = [{type: 'url', offset: 6, length: bare.length}];
+  calls.length = 0;
+  await update(message(text, 5, -7501, {entities}));
+  const sent = calls.find(c => c.method === 'sendMessage');
+  assert.match(sent.data.text, /Watch https:\/\/instagram\.com\/reel\/EntityWithoutScheme\//);
+  assert.doesNotMatch(sent.data.text, /igsh/);
+  assert.match(sent.data.link_preview_options.url, /eeinstagram/);
+  assert.ok(calls.some(c => c.method === 'deleteMessage'));
+
+  calls.length = 0;
+  await update(message(undefined, 5, -7502, {caption: text, caption_entities: entities, photo: [{file_id: 'photo'}]}));
+  assert.doesNotMatch(calls.find(c => c.method === 'sendMessage').data.text, /igsh/);
+  assert.ok(!calls.some(c => c.method === 'deleteMessage'));
+});
+
+test('/clean supports scheme-less URL entities and never echoes raw over-limit inputs', async () => {
+  const reddit = 'reddit.com/r/demo/comments/entity/test/?share_id=discard';
+  calls.length = 0;
+  await update(message('/clean ' + reddit, 5, -7503, {entities: [{type: 'url', offset: 7, length: reddit.length}]}));
+  assert.equal(calls.find(c => c.method === 'sendMessage').data.text, 'https://reddit.com/r/demo/comments/entity/test/');
+  const links = Array.from({length: 9}, (_, n) => `https://reddit.com/r/demo/comments/post${n}/?share_id=discard`).join(' ');
+  for (const name of ['clean', 'preview']) {
+    calls.length = 0;
+    await update(message(`/${name} ${links}`, 5, -7503));
+    const answer = calls.find(c => c.method === 'sendMessage').data;
+    assert.match(answer.text, /up to 8 links/);
+    assert.doesNotMatch(answer.text, /share_id|reddit\.com/);
+    assert.equal(answer.link_preview_options.is_disabled, true);
+  }
+});
+
+test('tracking variants share a duplicate key while carousel selection and playback time keep distinct keys', async () => {
+  for (const [chat, url, tracking, position] of [
+    [-7504, 'https://instagram.com/p/CarouselDedup/?img_index=', 'igsh', '1'],
+    [-7505, 'https://www.youtube.com/watch?v=TimeDedup&t=', 'si', '30'],
+  ]) {
+    calls.length = 0;
+    await update(message(url + position + '&' + tracking + '=first', 5, chat));
+    assert.equal(calls.filter(c => c.method === 'sendMessage').length, 1);
+    await update(message(url + position + '&' + tracking + '=second', 5, chat));
+    assert.equal(calls.filter(c => c.method === 'sendMessage').length, 1);
+    assert.equal(calls.filter(c => c.method === 'deleteMessage').length, 1);
+    await update(message(url + (Number(position) + 1) + '&' + tracking + '=third', 5, chat));
+    assert.equal(calls.filter(c => c.method === 'sendMessage').length, 2);
+  }
+});
+
+test('a whole exported backup round-trips beyond the old statement limit and removes stale settings', async () => {
+  const chat = -7506, store = new Store(db);
+  for (let user = 40; user < 60; user++) await store.mute(chat, user, true);
+  await store.choose(chat, 'instagram', 'vx');
+  await store.opt(chat, 60, true);
+  await store.setAppearance(chat, 60, 'attribution', 0);
+  backup = await store.export(chat);
+  await store.mute(chat, 40, false);
+  await store.mute(chat, 62, true);
+  await store.choose(chat, 'reddit', 'rx');
+  await store.setAppearance(chat, 60, 'attribution', 1);
+  calls.length = 0;
+  await update(message('/import', 7, chat, {document: {file_id: 'backup', file_size: 2000}}));
+  assert.match(calls.find(c => c.method === 'sendMessage').data.text, /Settings restored/);
+  assert.deepEqual(await store.export(chat), backup);
+});
+
+test('partial backups merge and an invalid full backup makes no changes', async () => {
+  const chat = -7507, store = new Store(db);
+  const importFile = () => update(message('/import', 7, chat, {document: {file_id: 'backup', file_size: 1000}}));
+  for (const muted_users of [[100, 101], [102, 103]]) {
+    backup = {version: 1, chat_id: chat, muted_users};
+    calls.length = 0;
+    await importFile();
+    assert.match(calls.find(c => c.method === 'sendMessage').data.text, /Partial backup merged/);
+  }
+  const prior = await store.export(chat);
+  assert.deepEqual(prior.muted_users, [100, 101, 102, 103]);
+  backup = {...prior, muted_users: [104], user_settings: [null]};
+  calls.length = 0;
+  await importFile();
+  assert.match(calls.find(c => c.method === 'sendMessage').data.text, /Invalid user setting/);
+  assert.deepEqual(await store.export(chat), prior);
+});
+
+test('unauthenticated webhook and unknown POST routes are rejected without needing a database binding', async () => {
+  const env = {WEBHOOK_SECRET: 'test-local'};
+  assert.equal((await worker.fetch(new Request('https://bot.example/webhook', {method: 'POST'}), env)).status, 403);
+  assert.equal((await worker.fetch(new Request('https://bot.example/missing', {method: 'POST'}), env)).status, 404);
+});
+
+test('a backup restore respects the remaining daily write allowance and leaves settings intact', async () => {
+  const day = new Date().toISOString().slice(0, 10);
+  const prior = await db.prepare('SELECT * FROM free_daily_usage WHERE day=?').bind(day).first();
+  const chat = -7508, store = new Store(db);
+  await store.mute(chat, 99, true);
+  const original = await store.export(chat);
+  backup = {...original, muted_users: Array.from({length: 40}, (_, n) => 100 + n)};
+  try {
+    await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,10,100,24900,1000)').bind(day).run();
+    calls.length = 0;
+    await update(message('/import', 7, chat, {document: {file_id: 'backup', file_size: 2000}}));
+    assert.match(calls.find(c => c.method === 'sendMessage').data.text, /insufficient database write allowance/);
+    assert.deepEqual(await store.export(chat), original);
+  } finally {
+    if (prior) {
+      await db.prepare('INSERT OR REPLACE INTO free_daily_usage VALUES(?,?,?,?,?)')
+        .bind(prior.day, prior.requests, prior.rows_read, prior.rows_written, prior.storage_bytes).run();
+    } else {
+      await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();
+    }
+  }
 });

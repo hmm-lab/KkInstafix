@@ -1,5 +1,5 @@
 import {PROVIDERS} from './config.js';
-import {urls,processText,trim,rewritePlatform,escapeHTML as h} from './links.js';
+import {urls,processText,duplicateDestination,trim,rewritePlatform,escapeHTML as h} from './links.js';
 import {messageSource} from './messages.js';
 import {healthLabel} from './provider-policy.js';
 import {hash} from './security.js';
@@ -46,7 +46,7 @@ export async function diagnose(msg,argumentsText,store,tg) {
     else {
       let fresh=false;
       for(const link of result.links) {
-        const row=await store.stmt("SELECT ts FROM recent_events WHERE kind='fix' AND chat_id=? AND event_key=?",chat,await hash(link.raw??link.original)).first();
+        const row=await store.stmt("SELECT ts FROM recent_events WHERE kind='fix' AND chat_id=? AND event_key=?",chat,await hash(duplicateDestination(link))).first();
         if(!row||row.ts<=stamp-settings.dedup_window)fresh=true;
       }
       if(!fresh)reason='ignored for now — duplicate within the dedup window';

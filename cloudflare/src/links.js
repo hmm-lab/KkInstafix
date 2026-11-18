@@ -83,6 +83,31 @@ export function fixedFor(raw, platform, key) {
 // frontends (e.g. XCancel/Redlib) alone.
 export const rewritePlatform=u=>platformFor(u)??Object.entries(PROVIDERS).find(([,p])=>
   Object.entries(p.options).some(([key,host])=>hostOf(u)===host&&!Object.hasOwn(p.noauth_embed??{},key)))?.[0]??null;
+// Telegram can provide a URL entity whose visible text omits the scheme.
+export function normalizeEntityUrl(raw) {
+  if (/^[a-z0-9.-]+(?:[/?#]|$)/i.test(raw) && !/\s/.test(raw)) {
+    let url;
+    try { url = new URL('https://' + raw); } catch { return raw; }
+    const host = hostOf(url);
+    if (!url.username && !url.password && !url.port &&
+        (rewritePlatform(url) || SHORT_LINK_DOMAINS.includes(host))) return 'https://' + raw;
+  }
+  return raw;
+}
+
+// The browser destination may be an explicitly chosen alternative frontend.
+export function duplicateDestination(link) {
+  const raw = trim(link.url)[0];
+  const config = PROVIDERS[link.platform];
+  const target = config?.noauth_embed?.[link.key] ? fixedFor(raw, link.platform, link.previewKey).url : raw;
+  const url = new URL(target);
+  if (config) {
+    const host = hostOf(url);
+    url.hostname = link.platform === 'twitter' && ['x.com', 'twitter.com'].includes(host) ? 'x.com' : host;
+  }
+  return url.href;
+}
+
 function canonical(raw) {
   const u = new URL(raw), h = hostOf(u);
   const match = ['youtu.be','koutu.be'].includes(h) ? /^\/([\w-]+)/.exec(u.pathname) :

@@ -39,6 +39,18 @@ returns sanitized Telegram webhook status and bot capabilities. It never exposes
 the token or encryption key. Activation remains closed after success. Reloading
 the setup page detects completed activation and links to the Telegram bot.
 
+## Fixes in 2.4.1
+
+Supported links marked as Telegram URL entities can be pasted without `https://`.
+`/clean` and `/preview` ask you to split messages with more than eight distinct
+links. Duplicate checks compare cleaned URLs and keep functional values such as
+Instagram carousel positions and YouTube timestamps.
+
+The sender attribution link follows the selected preview on multi-link posts.
+If `/repair` cannot verify an alternative, try again after the 30-second cooldown
+to continue through the provider list. Each attempt still checks up to three
+providers.
+
 ## Features in 2.4.0
 
 - Reply to a recent fixed post with `/repair` to try up to three configured preview backends. Each check reads at most 8 KiB of metadata and follows at most one same-host HTTPS redirect (at most six fetches total). A success edits the existing post using the durable operation journal. The current backend is excluded from alternative checks; sole-provider posts explain how to use `/refresh` instead. Inconclusive checks keep the current post; a blocked response is not a global provider failure. Checks run only on request, with a 30-second cooldown per user/chat. No media is downloaded. Metadata does not guarantee Telegram playback.
@@ -85,9 +97,9 @@ that a busy or attacked account never reaches a platform quota.
 Every invocation separately meters at most 45 D1 statement slots (batch members
 count individually), leaving accounting headroom below 50, at most 24 outgoing
 fetch calls and 16 optional Cache API operations. Four short-link expansions run
-concurrently, leaving room below the six-connection ceiling. Imports exceeding
-32 SQL statements are rejected before writing. Budget failures preserve original
-messages; they do not enable a paid feature or upgrade a plan.
+concurrently, leaving room below the six-connection ceiling. Backup restores
+validate the file and estimate the required row writes before applying a single
+transaction. Webhook and admin POST requests authenticate before reaching D1.
 
 Cloudflare enforces the Free plan’s built-in 10 ms CPU limit. Custom CPU limits
 are a Paid feature: the deployment API rejected that setting and explicitly
@@ -335,8 +347,12 @@ SQLite file was not available during this migration. No test database is importe
 Without an old export, chat preferences start at defaults; opt-outs issued after
 activation are durable in D1.
 
-For each chat, an existing `/export` JSON backup can be restored using `/import`
-by an admin in the same chat. For a complete Railway `bot_data.sqlite3` backup:
+For each chat, an admin can restore an existing `/export` JSON backup up to
+64 KiB using `/import` in the same chat. A complete export replaces the saved
+provider selections, platform overrides, mutes, opt-outs and user preferences
+in one transaction. Partial JSON files merge their entries with current settings.
+If a restore needs more writes than remain in the bot’s daily allowance, try
+again after midnight UTC. For a complete Railway `bot_data.sqlite3` backup:
 
 ```bash
 python cloudflare/migrate-sqlite.py /path/to/real/bot_data.sqlite3 /tmp/kkinstafix-migration.sql

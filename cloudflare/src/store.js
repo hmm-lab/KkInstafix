@@ -108,7 +108,8 @@ export class Store {
   async export(chat) {
     const names=['chat_settings','provider_settings','blocked_users','platform_overrides','optout_users','user_settings'];
     const data=await this.db.batch(names.map(n=>this.stmt(`SELECT * FROM ${n} WHERE chat_id=?`,chat)));
-    return {version:1,chat_id:chat,settings:{...DEFAULTS,...data[0].results[0]},
+    const {chat_id: _chatId, ...settings} = data[0].results[0] ?? {};
+    return {version:1,chat_id:chat,settings:{...DEFAULTS,...settings},
       providers:Object.fromEntries(data[1].results.map(r=>[r.platform,r.provider])),
       muted_users:data[2].results.map(r=>r.user_id),
       platform_overrides:Object.fromEntries(data[3].results.map(r=>[r.platform,r.enabled])),

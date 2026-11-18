@@ -6,13 +6,13 @@ Telegram bot that rewrites social media links so Telegram previews work better.
 
 It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pixiv, Tumblr, Bilibili, Snapchat, Spotify, Twitch, iFunny, FurAffinity, DeviantArt, Dribbble, Kick, Weibo, Xiaohongshu (RED), Pinterest, YouTube and FurTrack.
 
-Current Cloudflare version: **2.4.0** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
+Current Cloudflare version: **2.4.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
 The bot has conservative daily database allowances and per-request safety budgets. It pauses new processing at its soft cap rather than enabling paid services. See [free-tier safeguards](cloudflare/README.md#free-tier-safeguards-in-231) for limits, shared-account caveats and pause behaviour.
 
-Cloudflare 2.4.0 adds on-demand `/repair`, inline provider choices that preserve the whole message, universal `/music` links, `/appearance` preferences and remaining bot allowances in `/status`. FurTrack photo posts are supported; Imgur remains unverified and is not enabled. See the [2.4.0 runtime guide](cloudflare/README.md#features-in-240).
+Cloudflare 2.4.1 improves link detection, safe backup restores, and duplicate handling. Cloudflare 2.4.0 added on-demand `/repair`, inline provider choices that preserve the whole message, universal `/music` links, `/appearance` preferences and remaining bot allowances in `/status`. FurTrack photo posts are supported; Imgur remains unverified and is not enabled. See the [2.4.0 runtime guide](cloudflare/README.md#features-in-240).
 
 ## Features
 
@@ -118,7 +118,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 - `/testall <platform>` — test all providers for a platform (runs in parallel).
 - `/testall <platform> <url>` — test all providers with a custom URL.
 - `/export` — download a JSON backup of this chat's settings, providers and mutes.
-- `/import` — send a JSON backup as a document with caption `/import` (or reply to one) to restore. Warns if the backup is from a different chat.
+- `/import` — send a JSON backup as a document with caption `/import` (or reply to one). On Cloudflare, a complete export restores the saved settings for the same chat. Partial files merge with current settings.
 
 ## Supported platforms and provider keys
 

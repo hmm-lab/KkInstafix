@@ -11,7 +11,19 @@ const backend=(p,k)=>PROVIDERS[p]?.noauth_embed?.[k]??k;
 const identity=l=>l.platform+':'+linkIdentity(l.url,l.platform);
 export async function makePost(msg,result,label,previous=null,appearance={}) {
   const revision=(await hash(JSON.stringify(captureOriginal(msg)))).slice(0,12);
-  const links=(result.allLinks??result.links).filter(l=>{try{return ['https:','http:'].includes(new URL(l.url).protocol);}catch{return false;}}).map(l=>({...l,url:trim(l.url)[0],browserKey:Object.hasOwn(PROVIDERS[l.platform]?.noauth_embed??{},l.key)?l.key:previous?.links?.find(old=>old.platform===l.platform&&old.url===trim(l.url)[0])?.browserKey}));
+  const links = (result.allLinks ?? result.links).filter(link => {
+    try { return ['https:', 'http:'].includes(new URL(link.url).protocol); }
+    catch { return false; }
+  }).map(link => {
+    const url = trim(link.url)[0];
+    const saved = previous?.links?.find(old => old.platform === link.platform && old.url === url);
+    const aliases = PROVIDERS[link.platform]?.noauth_embed ?? {};
+    return {
+      ...link, url,
+      browserKey: Object.hasOwn(aliases, link.key) ? link.key : saved?.browserKey,
+      repairAfter: saved?.previewKey === link.previewKey ? saved?.repairAfter : undefined,
+    };
+  });
   const tried={};
   for(const l of links)if(l.platform) {
     const key=identity(l),seen=previous?.tried?.[key]??[];
@@ -24,8 +36,8 @@ export async function makePost(msg,result,label,previous=null,appearance={}) {
 export async function postView(post,existingRender=null) {
   const original=post.original,text=original.text??original.caption??'',entities=original.entities??original.caption_entities??[];
   if(!post.links.length)return {html:entityHTML(text||'The original message is now empty.',entities),fallback:{text:text||'The original message is now empty.',entities},preview:{is_disabled:true},keyboard:{inline_keyboard:[]}};
-  const rendered=existingRender??formatRepost({text,entities,plainText:text,links:post.links,label:post.label});
   const selected=post.links[post.preview_index??0]??post.links[0];
+  const rendered=existingRender??formatRepost({text,entities,plainText:text,links:post.links,selected,label:post.label});
   const keyboard={inline_keyboard:[]};
   if(!rendered.protectedLinks) {
     if(post.links.length>1) {
@@ -125,13 +137,38 @@ export async function postCallback(query,store,tg,ctx={}) {
       if(!link?.platform){await answer('This link has no alternative preview providers.');return true;}
       if(!await store.claimRecent('repair',chat,String(query.from?.id??0),30,stamp())){await answer('Wait 30 seconds before another repair in this chat.');return true;}
       sanitisePost(post);
-      const p=link.platform,health=await store.health(),keys=Object.keys(PROVIDERS[p].options),idx=keys.indexOf(link.key);
-      let selected=null,fixed=null;
-      // At most three alternatives / six fetches; no media download or global health change.
-      const candidates=Array.from({length:keys.length},(_,i)=>keys[(idx+i+1)%keys.length]).filter(k=>k!==(link.previewKey??backend(p,link.key))&&!Object.hasOwn(PROVIDERS[p].noauth_embed??{},k)&&!quarantined(health[p]?.[k])).slice(0,3);
-      if(!candidates.length){await answer('No alternative provider is available. Use /refresh to request the current preview again.');return true;}
-      for(const key of candidates){const candidate=fixedFor(link.url,p,key);if((await probeURL(candidate.preview,tg.net)).kind==='success'){selected=key;fixed=candidate;break;}}
-      if(!fixed){await answer('Could not verify an alternative preview. The current post was kept; a blocked or slow response does not mean a provider is broken.');return true;}
+      const platform = link.platform;
+      const health = await store.health();
+      const config = PROVIDERS[platform];
+      const keys = Object.keys(config.options);
+      const active = link.previewKey ?? backend(platform, link.key);
+      const cursor = keys.indexOf(link.repairAfter ?? active);
+      const candidates = keys.slice(cursor + 1).concat(keys.slice(0, cursor + 1))
+        .filter(key => key !== active && !Object.hasOwn(config.noauth_embed ?? {}, key) && !quarantined(health[platform]?.[key]));
+      if (!candidates.length) {
+        await answer('No alternative provider is available. Use /refresh to request the current preview again.');
+        return true;
+      }
+      let selected, fixed;
+      // Bound each attempt to three providers, including any same-host redirects.
+      const attempted = candidates.slice(0, 3);
+      for (const key of attempted) {
+        const candidate = fixedFor(link.url, platform, key);
+        if ((await probeURL(candidate.preview, tg.net)).kind === 'success') {
+          selected = key;
+          fixed = candidate;
+          break;
+        }
+      }
+      if (!fixed) {
+        // Save only the cursor when the existing Telegram message stays unchanged.
+        const saved = JSON.parse(fresh.state_json);
+        saved.links[post.preview_index ?? 0].repairAfter = attempted.at(-1);
+        await store.savePost(chat, fresh.bot_msg_id, fresh.source_msg_id, fresh.user_id, saved, fresh.ts);
+        await answer('Could not verify an alternative preview. The current post was kept. Try /repair again after the cooldown to continue checking.');
+        return true;
+      }
+      delete link.repairAfter;
       if(!link.browserKey)link.url=fixed.url;
       link.key=selected;link.previewKey=selected;link.preview=fixed.preview;
       post.tried[identity(link)]=[...new Set([...(post.tried[identity(link)]??[]),selected])];
@@ -158,6 +195,7 @@ export async function postCallback(query,store,tg,ctx={}) {
       const fixed=fixedFor(link.url,p,selected);
       if(!link.browserKey)link.url=fixed.url;
       link.preview=fixed.preview;link.previewKey=backend(p,selected);link.key=selected;
+      delete link.repairAfter;
       post.tried[identity(link)]=[...new Set([...tried,link.previewKey])];
     }
     const op=await store.prepareOperation(opid,chat,msg.message_id,post,'callback');

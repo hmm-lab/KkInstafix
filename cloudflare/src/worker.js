@@ -5,7 +5,7 @@ import {quarantined} from './provider-policy.js';
 import {VERSION} from './version.js';
 import {makePost,postView,syncEdit} from './posts.js';
 import {PROVIDERS,PROVIDER_REVISION} from './config.js';
-import {processText,fixedFor,urls,trim,senderLabel,escapeHTML as h} from './links.js';
+import {processText,fixedFor,duplicateDestination,urls,trim,senderLabel,escapeHTML as h} from './links.js';
 import {captureOriginal} from './formatting.js';
 import {runHealthChecks} from './health.js';
 import {messageSource,formatRepost} from './messages.js';
@@ -20,7 +20,6 @@ const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Con
 const json=(body,status=200,extra={})=>Response.json(body,{status,headers:{...headers,...extra}});
 const now=()=>Math.floor(Date.now()/1000);
 async function activate(request,env,store) {
-  if (!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH)) return json({error:'Invalid private setup link.'},403);
   const existing=await store.stmt('SELECT activated FROM runtime_config WHERE id=1').first();
   if (existing?.activated) return json({error:'This bot is already activated. Setup is closed.'},409);
   let input;
@@ -102,7 +101,7 @@ async function rewrite(msg,update,store,tg,ctx) {
   let sent=false;
   try {
     for(const link of result.links) {
-      const key=await hash(link.raw??link.original);
+      const key=await hash(duplicateDestination(link));
       if(await store.claimRecent('fix',chat,key,settings.dedup_window,stamp))reservations.push({...link,eventKey:key});
     }
     if(!reservations.length)return;
@@ -152,7 +151,7 @@ async function rewrite(msg,update,store,tg,ctx) {
   }
 }
 const worker = {
-  async fetch(request,env) {
+  async fetch(request,env,inspectedUpdate) {
     const url=new URL(request.url),store=new Store(env.DB,new JsonCache(caches.default,undefined,undefined,env.INVOCATION_BUDGET));
     if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
     if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
@@ -163,11 +162,9 @@ const worker = {
       try{return await activate(request,env,store);}catch{console.error(JSON.stringify({event:'setup_error'}));return json({error:'Setup could not complete. Try again.'},500);}
     }
     if(request.method==='POST'&&url.pathname==='/admin/check-providers') {
-      if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
       return json(await runHealthChecks(store,{stamp:now(),net:env.REQUEST_FETCH??fetch,batchSize:2}));
     }
     if(request.method==='POST'&&url.pathname==='/admin/status') {
-      if(!await matchesSecret((request.headers.get('Authorization')??'').replace(/^Bearer /,''),env.SETUP_HASH))return json({error:'Forbidden'},403);
       const config=await store.stmt('SELECT * FROM runtime_config WHERE id=1').first();
       if(!config?.activated)return json({active:false});
       try {
@@ -183,12 +180,14 @@ const worker = {
       } catch(error) {return json({error:'Telegram status unavailable',code:error.code??null},502);}
     }
     if(url.pathname!=='/webhook'||request.method!=='POST')return json({error:'Not found'},404);
-    if(!await matchesSecret(request.headers.get('X-Telegram-Bot-Api-Secret-Token')??'',await hash(env.WEBHOOK_SECRET)))return json({error:'Forbidden'},403);
     const config=await store.stmt('SELECT * FROM runtime_config WHERE id=1').first();
     if(!config?.activated)return json({error:'Bot not activated'},503);
-    let update;
-    try {update=JSON.parse(new TextDecoder().decode(await readBounded(request.body)));} catch{return json({error:'Invalid update'},400);}
-    if(!Number.isSafeInteger(update.update_id))return json({error:'Missing update ID'},400);
+    let update = inspectedUpdate;
+    if (!update) {
+      try { update = JSON.parse(new TextDecoder().decode(await readBounded(request.body))); }
+      catch { return json({error:'Invalid update'},400); }
+    }
+    if(!Number.isSafeInteger(update?.update_id))return json({error:'Missing update ID'},400);
     const claim=await store.claimUpdate(update.update_id,now());
     if(claim==='busy')return json({error:'Update is still processing'},503,{'Retry-After':'5'});
     if(claim==='duplicate')return json({ok:true,duplicate:true});
@@ -222,16 +221,46 @@ const worker = {
 
 export default {
   async fetch(request,env) {
-    const budget=new InvocationBudget(),db=new BudgetedDB(env.DB,budget),protectedRequest=request.method==='POST';
-    if(protectedRequest&&!await budget.admit(env.DB)) {
-      budget.paused=true;
-      let inspection=false;
-      if(new URL(request.url).pathname==='/webhook'&&request.headers.get('X-Telegram-Bot-Api-Secret-Token')===env.WEBHOOK_SECRET&&(budget.prior.requests??0)<budget.limits.dailyRequests+100&&(budget.prior.rows_read??0)<budget.limits.maintenanceRead&&(budget.prior.rows_written??0)<budget.limits.maintenanceWrite){
-        try{const update=JSON.parse(new TextDecoder().decode(await readBounded(request.clone().body,8192)));inspection=/^\/(status|config)(?:@[A-Za-z0-9_]+)?\s*$/i.test(update.message?.text??'');}catch{}
+    const {pathname} = new URL(request.url);
+    const protectedRequest = request.method === 'POST';
+    if (protectedRequest) {
+      if (pathname === '/webhook') {
+        const token = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
+        if (!token || !env.WEBHOOK_SECRET || !await matchesSecret(token, await hash(env.WEBHOOK_SECRET))) {
+          return json({error:'Forbidden'},403);
+        }
+      } else if (['/setup', '/admin/status', '/admin/check-providers'].includes(pathname)) {
+        const token = (request.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
+        if (!await matchesSecret(token, env.SETUP_HASH)) {
+          return json({error: pathname === '/setup' ? 'Invalid private setup link.' : 'Forbidden'},403);
+        }
+      } else {
+        return json({error:'Not found'},404);
       }
-      if(!inspection&&new URL(request.url).pathname!=='/admin/status')return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
     }
-    try {return await worker.fetch(request,{...env,DB:db,INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});}
+    const budget = new InvocationBudget();
+    const db = new BudgetedDB(env.DB, budget);
+    let inspectedUpdate;
+    if (protectedRequest && !await budget.admit(env.DB)) {
+      budget.paused = true;
+      const prior = budget.prior;
+      const limits = budget.limits;
+      if (pathname === '/webhook' && (prior.requests ?? 0) < limits.dailyRequests + 100 &&
+          (prior.rows_read ?? 0) < limits.maintenanceRead && (prior.rows_written ?? 0) < limits.maintenanceWrite) {
+        try {
+          const update = JSON.parse(new TextDecoder().decode(await readBounded(request.body, 8192)));
+          if (/^\/(status|config)(?:@[A-Za-z0-9_]+)?\s*$/i.test(update?.message?.text ?? '')) inspectedUpdate = update;
+        } catch {}
+      }
+      if (!inspectedUpdate && pathname !== '/admin/status') {
+        return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
+      }
+    }
+    try {
+      return await worker.fetch(request, {
+        ...env, DB: db, INVOCATION_BUDGET: budget, REQUEST_FETCH: budget.network(fetch),
+      }, inspectedUpdate);
+    }
     catch(error){if(error instanceof BudgetError)return json({error:'Free-tier request budget reached. Original messages are preserved.'},503,{'Retry-After':'60'});throw error;}
     finally {if(protectedRequest)try{await budget.persist(env.DB);}catch{console.error(JSON.stringify({event:'usage_accounting_unavailable'}));}}
   },

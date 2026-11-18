@@ -8,8 +8,9 @@ import {diagnose} from './diagnostics.js';
 import {nextHealthy,healthLabel} from './provider-policy.js';
 import {PROVIDERS,PLATFORM_EMOJI,PROVIDER_REVISION} from './config.js';
 import {processText,urls,fixedFor,escapeHTML as h,senderLabel} from './links.js';
-import {DEFAULTS,validSetting,validAppearance} from './store.js';
-import {readBounded,hash} from './security.js';
+import {validSetting,validAppearance} from './store.js';
+import {hash} from './security.js';
+import {BACKUP_LIMIT, importBackup} from './backup.js';
 import {messageSource,messageLinks,renderLinkedText,providerMatches,linkIdentity} from './messages.js';
 
 const ADMIN=new Set(['ping','menu','enable','disable','muteuser','unmuteuser','listmuted','resetproviders',
@@ -36,65 +37,10 @@ function providerKeyboard(platform,chosen) {
 const HELP=`<b>KkInstafix</b>\nSend a social link to fix its Telegram preview. Tap “Retry preview” to try another provider. On multi-link posts, the sender or an admin can select which link gets the preview.\n\n`+
   `<b>Your controls</b>\n/optout · /optin — leave your links unchanged / resume fixing\n/clean &lt;url&gt; — strip tracking\n/preview &lt;url&gt; — inspect a rewrite\n/diagnose &lt;url&gt; — explain cleanup, provider and ignored posts\n/refresh — reply to a fixed post to refresh the same provider\n/repair — reply to check alternatives on demand\n/music &lt;url&gt; — share across music services\n/appearance — your attribution and compact preview settings\n/undo — restore the full original message (new posts)\n/providers · /status · /stats · /version\n\n`+
   `<b>Admin controls</b>\n/menu · /enable · /disable\n/setprovider &lt;platform&gt; &lt;key&gt;\n/platform &lt;name&gt; on|off\n/setsendermode first_name|username|full_name|none\n/setdedup &lt;seconds&gt;\n/setratelimit &lt;count&gt; &lt;seconds&gt;\n/ignoreforwards on|off · /fallback on|off · /textspam on|off\n/muteuser · /unmuteuser · /listmuted\n/resetproviders · /resetstats · /testall\n/export · /import\n\nUse @KkInstaFixBot &lt;link&gt; inline in any chat.`;
-async function importBackup(msg,store,tg,reply) {
-  const doc=(msg.reply_to_message??msg).document;
-  if (!doc || doc.file_size>65536) return reply('Send a JSON backup (up to 64 KB) with caption /import, or reply to one with /import.');
-  const file=await tg.call('getFile',{file_id:doc.file_id});
-  const response=await tg.net(`https://api.telegram.org/file/bot${tg.token}/${file.file_path}`,{signal:AbortSignal.timeout(5000)});
-  const bytes=await readBounded(response.body,65536);
-  if (bytes.byteLength>65536) return reply('Backup is too large.');
-  let data;
-  try {data=JSON.parse(new TextDecoder().decode(bytes));} catch {return reply('Could not read a valid JSON backup.');}
-  if (data.version!==1 || data.chat_id!==msg.chat.id) return reply('This backup must belong to the current chat.');
-  const retired={instagram:['ez','kkclip','kk'],facebook:['ez'],pinterest:['vx'],
-    tiktok:['vx','tik','tfx','proxitok'],reddit:['libredd'],bluesky:['vx','cbsky'],spotify:['fix']};
-  let migrated=false;
-  const stmts=[];
-  for (const [field,table] of [['providers','provider_settings'],['muted_users','blocked_users'],
-    ['platform_overrides','platform_overrides'],['optout_users','optout_users'],['user_settings','user_settings']]) {
-    if (data[field]!==undefined) stmts.push(store.stmt(`DELETE FROM ${table} WHERE chat_id=?`,msg.chat.id));
-  }
-  for (const [k,v] of Object.entries(data.settings??{})) {
-    if (k==='chat_id') continue;
-    if (!validSetting(k,v)) return reply(`Invalid setting: ${h(k)}`);
-    stmts.push(store.stmt(`INSERT INTO chat_settings(chat_id,${k}${k==='text_spam'?'':',text_spam'}) VALUES(?,?${k==='text_spam'?'':',0'}) ON CONFLICT(chat_id) DO UPDATE SET ${k}=excluded.${k}`,msg.chat.id,v));
-  }
-  for (const [p,k] of Object.entries(data.providers??{})) {
-    if(p==='linkedin'&&['vx','ez'].includes(k)){migrated=true;continue;}
-    if(!Object.hasOwn(PROVIDERS,p))return reply('Invalid provider in backup.');
-    let choice=k;
-    if(!Object.hasOwn(PROVIDERS[p].options,k)) {
-      if(!Object.hasOwn(retired,p)||!retired[p].includes(k))return reply('Invalid provider in backup.');
-      choice=PROVIDERS[p].default;migrated=true;
-    }
-    stmts.push(store.stmt('INSERT OR REPLACE INTO provider_settings VALUES(?,?,?)',msg.chat.id,p,choice));
-  }
-  for (const [p,v] of Object.entries(data.platform_overrides??{})) {
-    if(p==='linkedin'&&[0,1].includes(v)){migrated=true;continue;}
-    if (!Object.hasOwn(PROVIDERS,p) || ![0,1].includes(v)) return reply('Invalid platform override in backup.');
-    stmts.push(store.stmt('INSERT OR REPLACE INTO platform_overrides VALUES(?,?,?)',msg.chat.id,p,v));
-  }
-  for (const [key,table] of [['muted_users','blocked_users'],['optout_users','optout_users']]) {
-    if (!Array.isArray(data[key]??[])) return reply('Invalid users in backup.');
-    for (const id of data[key]??[]) {
-      if (!Number.isSafeInteger(id)||id<=0) return reply('Invalid user ID in backup.');
-      stmts.push(store.stmt(`INSERT OR IGNORE INTO ${table} VALUES(?,?)`,msg.chat.id,id));
-    }
-  }
-  if (!Array.isArray(data.user_settings??[])) return reply('Invalid user settings in backup.');
-  for (const row of data.user_settings??[]) {
-    const value=['sender_mode','caption_style','preview_size'].includes(row.key)?row.value:Number(row.value);
-    if (!Number.isSafeInteger(row.user_id)||row.user_id<=0 ||
-      (row.chat_id!==undefined && row.chat_id!==msg.chat.id) || !(validSetting(row.key,value)||validAppearance(row.key,value))) return reply('Invalid user setting in backup.');
-    stmts.push(store.stmt('INSERT OR REPLACE INTO user_settings VALUES(?,?,?,?)',row.user_id,msg.chat.id,row.key,String(value)));
-  }
-  if (stmts.length>32) return reply('Backup is too large for one free-tier import. Restore fewer settings at a time.');
-  if (stmts.length) await store.db.batch(stmts);
-  return reply('✅ Settings restored.'+(migrated?' Retired providers were replaced with current defaults; removed platforms were skipped.':''));
-}
 export async function command(msg,store,tg,state,ctx={}) {
   const text=(msg.text??msg.caption??'').trim(), parts=text.split(/\s+/), name=parts[0].split('@')[0].slice(1).toLowerCase();
   const addressed=parts[0].split('@')[1];
+  const linkArguments = () => messageSource(msg).trim().slice(parts[0].length).trimStart();
   if(addressed&&addressed.toLowerCase()!==tg.username?.toLowerCase())return;
   const chat=msg.chat.id,user=msg.from?.id??0;
   const reply=(text,extra={})=>tg.send(chat,text,{parse_mode:'HTML',reply_parameters:{message_id:msg.message_id,allow_sending_without_reply:true},message_thread_id:msg.message_thread_id,...extra});
@@ -133,7 +79,7 @@ export async function command(msg,store,tg,state,ctx={}) {
     if(!handled)return reply('Reply to a fixed post from the last seven days. Older posts can use Retry preview.');
     return;
   }
-  if(name==='diagnose')return diagnose(msg,parts.slice(1).join(' '),store,tg);
+  if(name==='diagnose')return diagnose(msg,linkArguments(),store,tg);
   if (name==='menu') return reply('<b>Provider menu</b>',{reply_markup:platformKeyboard(state.choices)});
   if (name==='setprovider') {
     if (!PROVIDERS[p]?.options[k]) return reply('Usage: /setprovider &lt;platform&gt; &lt;key&gt; — see /providers.');
@@ -181,9 +127,11 @@ export async function command(msg,store,tg,state,ctx={}) {
     return reply(row?`Original link (this older post has no full-message snapshot):\n${h(row.original_url)}`:'Reply to a rewritten message from the last 7 days.',{link_preview_options:{is_disabled:true}});
   }
   if (['clean','preview'].includes(name)) {
-    const source=msg.reply_to_message?messageSource(msg.reply_to_message):parts.slice(1).join(' ');
+    const source=msg.reply_to_message?messageSource(msg.reply_to_message):linkArguments();
     if (!urls(source).length) return reply(`Reply to a link or use /${name} &lt;url&gt;.`);
     const result=await processText(source,state.settings,state.choices,state.overrides,tg.net,name==='clean',state.health,store.cache);
+    if (result.tooMany) return reply('Use up to 8 links at a time. Split the links across separate messages and try again.', {link_preview_options:{is_disabled:true}});
+    if (result.text.length > 4096) return reply('The result is too long for Telegram. Use fewer links at a time.', {link_preview_options:{is_disabled:true}});
     return reply(h(result.text),{link_preview_options:{is_disabled:true}});
   }
   if (name==='testall') {
@@ -193,14 +141,18 @@ export async function command(msg,store,tg,state,ctx={}) {
     return reply(Object.keys(PROVIDERS[p].options).map(k=>`${h(k)}: ${h(fixedFor(raw,p,k).preview)}`).join('\n'));
   }
   if (name==='export') {
-    const data=await store.export(chat),form=new FormData();form.set('chat_id',String(chat));
-    form.set('document',new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`kkinstafix-chat-${chat}.json`);
+    const data = JSON.stringify(await store.export(chat));
+    const document = new Blob([data], {type:'application/json'});
+    if (document.size > BACKUP_LIMIT) return reply('This chat’s settings exceed the 64 KiB backup limit.');
+    const form = new FormData();
+    form.set('chat_id', String(chat));
+    form.set('document', document, `kkinstafix-chat-${chat}.json`);
     form.set('caption','Send this file back with caption /import to restore.');
     const response=await tg.net(`https://api.telegram.org/bot${tg.token}/sendDocument`,{method:'POST',body:form,signal:AbortSignal.timeout(10000)});
     if (!response.ok) throw new Error('Export delivery failed');
     return;
   }
-  if (name==='import') return importBackup(msg,store,tg,reply);
+  if (name==='import') return importBackup(msg,store,tg,reply,ctx.budget);
   return reply('Unknown command. Use /help.');
 }
 export async function callback(query,store,tg,ctx={}) {
