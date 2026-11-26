@@ -19,6 +19,21 @@ const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Con
   'Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"};
 const json=(body,status=200,extra={})=>Response.json(body,{status,headers:{...headers,...extra}});
 const now=()=>Math.floor(Date.now()/1000);
+const build=env=>env.RELEASE_BUILD??'local';
+const releaseNonce=/^[a-f0-9]{32}$/;
+const configured=env=>/^[a-f0-9]{64}$/i.test(env.CONFIG_KEY??'') &&
+  /^[a-f0-9]{64}$/.test(env.ADMIN_HASH??'') && /^[A-Za-z0-9_-]{1,256}$/.test(env.WEBHOOK_SECRET??'') &&
+  /^-?\d+$/.test(String(env.RELEASE_CHAT_ID??'')) && /^https:\/\//.test(env.WEBHOOK_URL??'');
+async function releaseCheck(msg,tg,store,env,ctx) {
+  const [command,nonce,...extra]=(msg?.text??'').trim().split(/\s+/);
+  if (command!=='/releasecheck' || !releaseNonce.test(nonce??'') || extra.length ||
+      !msg?.from || msg.from.is_bot || String(msg.chat?.id)!==String(env.RELEASE_CHAT_ID)) return false;
+  await tg.send(msg.chat.id,`KkInstafix release check ${nonce} · ${build(env)}`,{
+    reply_parameters:{message_id:msg.message_id,allow_sending_without_reply:true}});
+  ctx.sent=true;
+  await store.stmt('INSERT OR IGNORE INTO release_checks VALUES(?,?,?)',nonce,build(env),now()).run();
+  return true;
+}
 async function activate(request,env,store) {
   const existing=await store.stmt('SELECT activated FROM runtime_config WHERE id=1').first();
   if (existing?.activated) return json({error:'This bot is already activated. Setup is closed.'},409);
@@ -153,18 +168,21 @@ async function rewrite(msg,update,store,tg,ctx) {
 const worker = {
   async fetch(request,env,inspectedUpdate) {
     const url=new URL(request.url),store=new Store(env.DB,new JsonCache(caches.default,undefined,undefined,env.INVOCATION_BUDGET));
-    if(request.method==='GET'&&url.pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
-    if(request.method==='GET'&&['/','/health'].includes(url.pathname)) {
-      const row=await store.stmt('SELECT username,activated FROM runtime_config WHERE id=1').first();
-      return json({service:'KkInstafix',version:VERSION,hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,provider_options:Object.values(PROVIDERS).reduce((n,p)=>n+Object.keys(p.options).length,0),active:!!row?.activated,bot:row?.activated?row.username:undefined});
-    }
     if(request.method==='POST'&&url.pathname==='/setup') {
+      if(!configured(env))return json({error:'Worker bindings are incomplete.'},503);
       try{return await activate(request,env,store);}catch{console.error(JSON.stringify({event:'setup_error'}));return json({error:'Setup could not complete. Try again.'},500);}
     }
     if(request.method==='POST'&&url.pathname==='/admin/check-providers') {
       return json(await runHealthChecks(store,{stamp:now(),net:env.REQUEST_FETCH??fetch,batchSize:2}));
     }
     if(request.method==='POST'&&url.pathname==='/admin/status') {
+      if(!configured(env))return json({error:'Worker bindings are incomplete.'},503);
+      const nonce=url.searchParams.get('release_check');
+      if(nonce!==null){
+        if(!releaseNonce.test(nonce))return json({error:'Invalid release check.'},400);
+        const receipt=await store.stmt('SELECT build FROM release_checks WHERE nonce=? AND ts>?',nonce,now()-3600).first();
+        return json({build:build(env),confirmed:receipt?.build===build(env)});
+      }
       const config=await store.stmt('SELECT * FROM runtime_config WHERE id=1').first();
       if(!config?.activated)return json({active:false});
       try {
@@ -172,7 +190,7 @@ const worker = {
         const [info,me]=await Promise.all([tg.call('getWebhookInfo'),tg.call('getMe')]);
         const health=await store.health();
         const healthRows=Object.values(health).flatMap(p=>Object.values(p));
-        return json({active:true,free_tier:env.INVOCATION_BUDGET?.snapshot(),provider_health:{checked:healthRows.length,temporarily_skipped:healthRows.filter(r=>r.cooldown_until>now()).length,last_check:Math.max(0,...healthRows.map(r=>r.checked_at))},bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
+        return json({active:true,version:VERSION,build:build(env),bindings_ready:true,free_tier:env.INVOCATION_BUDGET?.snapshot(),provider_health:{checked:healthRows.length,temporarily_skipped:healthRows.filter(r=>r.cooldown_until>now()).length,last_check:Math.max(0,...healthRows.map(r=>r.checked_at))},bot:{id:me.id,username:me.username,can_read_all_group_messages:me.can_read_all_group_messages,
           supports_inline_queries:me.supports_inline_queries},webhook:{
           url:(info.url??'').replace(/\d+:[A-Za-z0-9_-]+/g,'[redacted]'),pending_update_count:info.pending_update_count,
           last_error_date:info.last_error_date,last_error_message:info.last_error_message,
@@ -191,10 +209,14 @@ const worker = {
     const claim=await store.claimUpdate(update.update_id,now());
     if(claim==='busy')return json({error:'Update is still processing'},503,{'Retry-After':'5'});
     if(claim==='duplicate')return json({ok:true,duplicate:true});
-    const ctx={sent:false,operation_id:'update:'+update.update_id,budget:env.INVOCATION_BUDGET};
+    const ctx={sent:false,updateId:update.update_id,operation_id:'update:'+update.update_id,budget:env.INVOCATION_BUDGET};
     try {
       const tg=new Telegram(await unseal(config.token_cipher,env.CONFIG_KEY),env.REQUEST_FETCH??fetch);
       tg.username=config.username;
+      if(update.message&&await releaseCheck(update.message,tg,store,env,ctx)) {
+        await store.finishUpdate(update.update_id,'done',now());
+        return json({ok:true});
+      }
       if(update.inline_query)await inline(update.inline_query,tg,store);
       else if(update.callback_query)await callback(update.callback_query,store,tg,ctx);
       else {
@@ -222,6 +244,10 @@ const worker = {
 export default {
   async fetch(request,env) {
     const {pathname} = new URL(request.url);
+    if(request.method==='GET'&&pathname==='/setup')return new Response(SETUP_HTML,{headers:{...headers,'Content-Type':'text/html;charset=utf-8'}});
+    if(request.method==='GET'&&['/','/health'].includes(pathname))return json({
+      service:'KkInstafix',version:VERSION,build:build(env),hosting:'Cloudflare Workers + D1',providers_updated:PROVIDER_REVISION,
+      provider_options:Object.values(PROVIDERS).reduce((total,platform)=>total+Object.keys(platform.options).length,0)});
     const protectedRequest = request.method === 'POST';
     if (protectedRequest) {
       if (pathname === '/webhook') {
@@ -230,8 +256,9 @@ export default {
           return json({error:'Forbidden'},403);
         }
       } else if (['/setup', '/admin/status', '/admin/check-providers'].includes(pathname)) {
-        const token = (request.headers.get('Authorization') ?? '').replace(/^Bearer /, '');
-        if (!await matchesSecret(token, env.SETUP_HASH)) {
+        const token = /^Bearer ([^\s]+)$/i.exec(request.headers.get('Authorization')??'')?.[1];
+        const secret = pathname==='/setup'?env.SETUP_HASH:env.ADMIN_HASH;
+        if (!token || !secret || !await matchesSecret(token, secret)) {
           return json({error: pathname === '/setup' ? 'Invalid private setup link.' : 'Forbidden'},403);
         }
       } else {
@@ -253,7 +280,8 @@ export default {
         } catch {}
       }
       if (!inspectedUpdate && pathname !== '/admin/status') {
-        return json({ok:true,paused:true,reason:'Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.'});
+        const reason='Bot free-tier safety allowance reached; originals are left unchanged until the next UTC day.';
+        return pathname==='/webhook'?json({ok:true,paused:true,reason}):json({error:reason,paused:true},503);
       }
     }
     try {
@@ -266,7 +294,11 @@ export default {
   },
   async scheduled(event,env) {
     const budget=new InvocationBudget();if(!await budget.admit(env.DB,true))return;
-    try {await worker.scheduled(event,{...env,DB:new BudgetedDB(env.DB,budget),INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});}
-    finally{await budget.persist(env.DB);}
+    const db=new BudgetedDB(env.DB,budget);
+    try {
+      // Cleanup bounds each table at 250 deletes, including tables with several indexes.
+      if(!await db.reserveWrites(12000,budget.limits.maintenanceWrite))return;
+      await worker.scheduled(event,{...env,DB:db,INVOCATION_BUDGET:budget,REQUEST_FETCH:budget.network(fetch)});
+    } finally {await budget.persist(env.DB);}
   },
 };

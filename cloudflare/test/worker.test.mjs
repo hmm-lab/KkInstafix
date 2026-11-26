@@ -21,6 +21,9 @@ import {permissionStatus} from '../src/status.js';
 import {Telegram,TelegramError} from '../src/telegram.js';
 
 const bootstrap='private-test-setup-key-32-characters';
+const adminKey='private-test-admin-key-32-characters';
+const releaseChat=-9001;
+const releaseBuild='a'.repeat(40);
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const token='123456:abcdefghijklmnopqrstuvwxyz123456789';
 const providerCalls=[];let providerResponse=null;
@@ -28,7 +31,7 @@ const calls=[];let failure=null,editFailure=null,deleteFail=false,backup={};
 const mf=new Miniflare({modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,
   // The installed workerd binary supports compatibility through 2026-08-06.
   compatibilityDate:'2026-08-06',d1Databases:{DB:'kkinstafix-test'},
-  bindings:{CONFIG_KEY:'a1'.repeat(32),SETUP_HASH:hash(bootstrap),WEBHOOK_SECRET:'webhook-test-secret',WEBHOOK_URL:'https://bot.example/webhook'},
+  bindings:{CONFIG_KEY:'a1'.repeat(32),SETUP_HASH:hash(bootstrap),ADMIN_HASH:hash(adminKey),RELEASE_CHAT_ID:String(releaseChat),RELEASE_BUILD:releaseBuild,WEBHOOK_SECRET:'webhook-test-secret',WEBHOOK_URL:'https://bot.example/webhook'},
   outboundService:async request=>{
     const url=new URL(request.url);
     if(url.host!=='api.telegram.org'&&providerResponse){providerCalls.push(url.href);return providerResponse(url);}
@@ -38,6 +41,7 @@ const mf=new Miniflare({modules:true,scriptPath:new URL('../dist/worker.js',impo
     const visibleText=data.parse_mode==='HTML'?data.text?.replace(/<[^>]*>/g,'').replace(/&(amp|lt|gt|quot|#39);/g,'x'):data.text;
     if(['sendMessage','editMessageText'].includes(method)&&visibleText.length>4096)return Response.json({ok:false,error_code:400,description:'message is too long'});
     if(method==='getFile')return Response.json({ok:true,result:{file_id:'backup',file_path:'test.json',file_size:1000}});
+    if(method==='getWebhookInfo')return Response.json({ok:true,result:{url:'https://bot.example/webhook',pending_update_count:0}});
     if(method==='getMe')return Response.json({ok:true,result:{id:123456,is_bot:true,username:'KkInstaFixBot'}});
     if(method==='getChatMember')return Response.json({ok:true,result:{status:data.user_id===7?'administrator':'member'}});
     if(method==='editMessageText'&&editFailure){const value=editFailure;if(value.once)editFailure=null;return Response.json({ok:false,error_code:value.code,description:value.description??'cannot edit',parameters:{retry_after:5}});}
@@ -102,7 +106,13 @@ test('activation verifies bot and registers authenticated webhook without droppi
   const stored=await db.prepare('SELECT * FROM runtime_config').first();assert.equal(stored.activated,1);assert.ok(!stored.token_cipher.includes(token));
 });
 test('activation link is closed after success',async()=>assert.equal((await dispatch('/setup',{token},{Authorization:'Bearer '+bootstrap})).status,409));
-test('health exposes readiness without secrets',async()=>{const body=await(await dispatch('/health')).text();assert.match(body,/"active":true/);assert.ok(!body.includes(token));assert.ok(!body.includes(bootstrap));});
+test('public health reports the build without D1 or secrets',async()=>{
+  const response=await worker.fetch(new Request('https://bot.example/health'), {RELEASE_BUILD:releaseBuild});
+  const body=await response.json();
+  assert.equal(body.build,releaseBuild);
+  assert.equal(body.version,VERSION);
+  assert.equal(body.active,undefined);
+});
 test('normal rewrite sends first, escapes HTML and deletes original once',async()=>{
   calls.length=0;const {response}=await update(message('https://twitter.com/u/status/100'));assert.equal(response.status,200);
   const send=calls.find(c=>c.method==='sendMessage');assert.match(send.data.text,/href="https:\/\/twitter.com\//);assert.match(send.data.text,/Alice &lt;3 &amp; Bob/);
@@ -192,7 +202,9 @@ test('admin JSON import preserves opt-outs and individual settings',async()=>{
 
 test('diagnostics require the private admin key even after activation',async()=>{
   assert.equal((await dispatch('/admin/status',{})).status,403);
-  const response=await dispatch('/admin/status',{}, {Authorization:'Bearer '+bootstrap});
+  assert.equal((await dispatch('/admin/status',{}, {Authorization:'Bearer '+bootstrap})).status,403);
+  assert.equal((await dispatch('/admin/status',{}, {Authorization:adminKey})).status,403);
+  const response=await dispatch('/admin/status',{}, {Authorization:'Bearer '+adminKey});
   assert.equal(response.status,200);const body=await response.text();assert.ok(!body.includes(token));assert.match(body,/expected_webhook/);
 });
 
@@ -1393,7 +1405,7 @@ test('cleanup bounds every expired-table delete instead of bursting through writ
   await db.prepare("DELETE FROM recent_events WHERE kind='bounded' AND chat_id=?").bind(chat).run();
 });
 test('protected diagnostics expose the bot safety budget without credentials',async()=>{
-  const r=await dispatch('/admin/status',{}, {Authorization:'Bearer '+bootstrap});const body=await r.json();
+  const r=await dispatch('/admin/status',{}, {Authorization:'Bearer '+adminKey});const body=await r.json();
   assert.equal(body.free_tier.soft_limits.rowsWritten,25000);assert.equal(body.free_tier.soft_limits.queries,45);
   assert.ok(!JSON.stringify(body).includes(token));
 });
@@ -1649,6 +1661,100 @@ test('a backup restore respects the remaining daily write allowance and leaves s
         .bind(prior.day, prior.requests, prior.rows_read, prior.rows_written, prior.storage_bytes).run();
     } else {
       await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();
+    }
+  }
+});
+
+test('a replay after restore confirmation failure preserves later settings', async () => {
+  const chat=-7509,store=new Store(db);
+  await store.mute(chat,99,true);
+  backup=await store.export(chat);
+  const body={update_id:++id,message:message('/import',7,chat,{document:{file_id:'backup',file_size:500}})};
+  calls.length=0;
+  failure={code:429,once:true};
+  assert.equal((await update(body)).response.status,503);
+  await store.mute(chat,100,true);
+  calls.length=0;
+  assert.equal((await update(body)).response.status,200);
+  assert.deepEqual((await store.export(chat)).muted_users,[99,100]);
+  assert.deepEqual(calls.map(call=>call.method),['getChatMember','sendMessage']);
+});
+
+test('concurrent bulk restores cannot reserve the same remaining writes', async () => {
+  const day='2099-06-03';
+  const first=new InvocationBudget(),second=new InvocationBudget();
+  first.day=second.day=day;
+  const budgets=[first,second].map(budget=>new BudgetedDB(db,budget));
+  try {
+    await db.prepare('INSERT INTO free_daily_usage VALUES(?,1,0,24000,0)').bind(day).run();
+    assert.deepEqual((await Promise.all(budgets.map(budget=>budget.reserveWrites(900)))).sort(),[false,true]);
+    assert.equal(await db.prepare('SELECT rows_written FROM free_daily_usage WHERE day=?').bind(day).first('rows_written'),24900);
+    await Promise.all([first.persist(db),second.persist(db)]);
+    const reconciled=await db.prepare('SELECT rows_written FROM free_daily_usage WHERE day=?').bind(day).first('rows_written');
+    assert.ok(reconciled>=24000&&reconciled<24100);
+  } finally {
+    await db.prepare('DELETE FROM free_daily_usage WHERE day=?').bind(day).run();
+  }
+});
+
+test('paused quota returns an explicit failure for setup and provider administration', async () => {
+  const day = new Date().toISOString().slice(0,10);
+  const row = await db.prepare('SELECT * FROM free_daily_usage WHERE day=?').bind(day).first();
+  try {
+    await db.prepare('UPDATE free_daily_usage SET requests=? WHERE day=?').bind(FREE_BUDGET.dailyRequests,day).run();
+    for (const [path,key] of [['/setup',bootstrap],['/admin/check-providers',adminKey]]) {
+      const result=await dispatch(path,{token},{Authorization:'Bearer '+key});
+      assert.equal(result.status,503);
+      assert.equal((await result.json()).paused,true);
+    }
+  } finally {
+    await db.prepare('UPDATE free_daily_usage SET requests=? WHERE day=?').bind(row.requests,day).run();
+  }
+});
+
+test('the release check requires the configured Telegram chat and a delivered reply', async () => {
+  const nonce='e'.repeat(32);
+  const path='/admin/status?release_check='+nonce;
+  const status=async()=>await (await dispatch(path,{}, {Authorization:'Bearer '+adminKey})).json();
+  const text='/releasecheck '+nonce;
+  await update(message(text,5,-9002));
+  assert.equal((await status()).confirmed,false);
+  failure={code:429,once:true};
+  const body={update_id:++id,message:message(text,5,releaseChat)};
+  assert.equal((await update(body)).response.status,503);
+  assert.equal((await status()).confirmed,false);
+  calls.length=0;
+  assert.equal((await update(body)).response.status,200);
+  assert.match(calls.find(call=>call.method==='sendMessage').data.text,new RegExp(releaseBuild));
+  assert.deepEqual(await status(),{build:releaseBuild,confirmed:true});
+});
+
+test('all-quarantined automatic fallback uses the original and respects fallback-off', async () => {
+  const stamp=Math.floor(Date.now()/1000);
+  const health={twitter:Object.fromEntries(Object.keys(PROVIDERS.twitter.options).map(key=>[key,{checked_at:stamp,cooldown_until:stamp+600}]))};
+  const url='https://x.com/a/status/Quarantined';
+  assert.equal((await fixLink(url,{}, {twitter:'xcancel'}, {},fetch,false,health)).preview,url);
+  assert.equal((await fixLink(url,{provider_fallback:0},{}, {},fetch,false,health)).preview,'https://vxtwitter.com/a/status/Quarantined');
+});
+
+test('legacy Retry keeps the current provider when only its browser alias is eligible', async () => {
+  const stamp=Math.floor(Date.now()/1000),chat=-7510;
+  const rows=await db.prepare("SELECT * FROM provider_health WHERE platform='twitter'").all();
+  try {
+    for (const key of Object.keys(PROVIDERS.twitter.options).filter(key=>!['vx','xcancel'].includes(key))) {
+      await db.prepare('INSERT OR REPLACE INTO provider_health VALUES(?,?,?,?,?,?,?,?)')
+        .bind('twitter',key,3,stamp+3600,stamp,0,500,'confirmed_sample_failure').run();
+    }
+    calls.length=0;
+    await update({update_id:++id,callback_query:{id:'legacy-alias',from:{id:5},data:'e:twitter:1',
+      message:{message_id:7123,chat:{id:chat,type:'supergroup'},text:'https://x.com/a/status/LegacyAlias'}}});
+    assert.equal(calls.some(call=>call.method==='editMessageText'),false);
+    assert.match(calls.find(call=>call.method==='answerCallbackQuery').data.text,/temporarily unavailable/);
+  } finally {
+    await db.prepare("DELETE FROM provider_health WHERE platform='twitter'").run();
+    for (const row of rows.results) {
+      await db.prepare('INSERT INTO provider_health VALUES(?,?,?,?,?,?,?,?)').bind(
+        row.platform,row.provider,row.failures,row.cooldown_until,row.checked_at,row.last_success_at,row.last_status,row.evidence).run();
     }
   }
 });

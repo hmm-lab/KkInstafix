@@ -8,7 +8,7 @@ It supports Instagram, Twitter/X, TikTok, Reddit, Facebook, Threads, Bluesky, Pi
 
 Current Cloudflare version: **2.4.1** (legacy Python: **1.54.0**) — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
-The production bot runs on free Cloudflare Workers and D1. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
+The production bot runs on free Cloudflare Workers and D1. Releases promote a staging-tested bundle and require a Telegram webhook check. See [Cloudflare deployment and behaviour](cloudflare/README.md) for the current runtime, migration and command details. The Python setup below remains available for rollback.
 
 The bot has conservative daily database allowances and per-request safety budgets. It pauses new processing at its soft cap rather than enabling paid services. See [free-tier safeguards](cloudflare/README.md#free-tier-safeguards-in-231) for limits, shared-account caveats and pause behaviour.
 

@@ -1,128 +1,212 @@
-"""Release safety checks without Cloudflare credentials or outbound requests."""
+"""Test the release protocol and migration contract with local fixtures."""
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from tools import release_cloudflare as release
+from tools.d1_release import LEDGER, SchemaError, migrate
 
-CONFIG = json.loads((Path(__file__).parent / 'cloudflare/deployment.json').read_text())
-OLD = {'id': 'old-deployment', 'versions': [{'version_id': 'old-version', 'percentage': 100}]}
-NEW = {'id': 'new-deployment', 'versions': [{'version_id': 'new-version', 'percentage': 100}]}
+CLOUDFLARE = Path(__file__).parent / 'cloudflare'
+CONFIG = json.loads((CLOUDFLARE / 'deployment.json').read_text())
+SCHEMA = (CLOUDFLARE / 'schema.sql').read_text()
+MIGRATIONS = sorted((CLOUDFLARE / 'migrations').glob('*.sql'))
+BUILD = 'a' * 40
+OLD = {'id': 'old-deployment', 'versions': release.deployment_versions('old-version')}
+NEW = {'id': 'new-deployment', 'versions': release.deployment_versions('new-version')}
+COMPETING = {'id': 'competing-deployment', 'versions': release.deployment_versions('competing-version')}
+
+
+class LocalD1:
+    def __init__(self, sql):
+        self.db = sqlite3.connect(':memory:')
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript(sql)
+        self.calls = []
+
+    def query(self, sql):
+        self.calls.append(sql)
+        with self.db:
+            return [[dict(row) for row in self.db.execute(statement)] for statement in sql.split(';') if statement.strip()]
+
+
+def before_migration(*paths):
+    return SCHEMA[: -sum(len(path.read_text()) + 1 for path in paths)]
 
 
 class FakeClient:
     config = CONFIG
     script = '/test-worker'
 
-    def __init__(self, wrong_version=False, concurrent=False, failed_migration=False, upload_timeout=False):
-        self.current, self.version = OLD, '2.1.0'
-        self.wrong_version, self.concurrent = wrong_version, concurrent
-        self.failed_migration, self.upload_timeout = failed_migration, upload_timeout
-        self.calls, self.post_upload_checks = [], 0
+    def __init__(self):
+        self.active = OLD
+        self.db = LocalD1(before_migration(MIGRATIONS[-1]))
+        self.query = self.db.query
+        self.calls = []
+        self.competing = False
+        self.unknown = False
+        self.receipt = {'confirmed': True, 'build': BUILD}
+        self.build = BUILD
 
-    def deployments(self):
-        if self.current == NEW and self.concurrent:
-            self.post_upload_checks += 1
-            if self.post_upload_checks > 1:
-                return [{'id': 'someone-else', 'versions': []}]
-        return [self.current]
+    def current(self):
+        return self.active
 
-    def request(self, method, path, body=None, content_type=None, public=False):
+    def check_settings(self):
+        self.calls.append(('CHECK', 'settings', None))
+
+    def request(self, method, path, body=None, content_type=None, public=False, legacy=False):
         self.calls.append((method, path, body))
         if path == '/health':
-            return {'version': self.version, 'active': True}
+            return {'version': '2.4.1', **({'build': self.build} if self.active == NEW else {})}
         if path == '/admin/status':
-            return {'active': True, 'webhook': {'url': CONFIG['url'] + '/webhook', 'pending_update_count': 0}}
-        if path.endswith('/query'):
-            if self.failed_migration:
-                raise release.ReleaseError('migration failed')
-            return []
-        if method == 'PUT':
-            self.current, self.version = NEW, 'wrong' if self.wrong_version else '2.2.0'
-            if self.upload_timeout:
-                raise release.ReleaseError('upload timed out')
-            return {}
-        if path.endswith('/deployments') and method == 'POST':
-            self.current, self.version = OLD, '2.1.0'
-            assert body == {'strategy': 'percentage', 'versions': OLD['versions']}
-            return {'id': 'rollback'}
+            assert legacy == (self.active == OLD)
+            return {'active': True, 'bindings_ready': True,
+                    'build': self.build if self.active == NEW else None,
+                    'webhook': {'url': CONFIG['url'] + '/webhook', 'pending_update_count': 0}}
+        if path.startswith('/admin/status?release_check='):
+            return self.receipt
+        if method == 'POST' and path.endswith('/versions?bindings_inherit=strict'):
+            return {'id': 'new-version'}
+        if method == 'POST' and path.endswith('/deployments'):
+            assert body['strategy'] == 'percentage'
+            if body['versions'] == OLD['versions']:
+                self.active = OLD
+                return {'id': 'rollback'}
+            assert body['versions'] == NEW['versions']
+            self.active = COMPETING if self.competing else NEW
+            if self.unknown:
+                raise release.ReleaseError('response lost')
+            return {'id': NEW['id']}
         raise AssertionError((method, path))
 
 
-def migration(tmp_path):
-    sql = tmp_path / 'migration.sql'
-    sql.write_text('CREATE TABLE IF NOT EXISTS sample(id INTEGER);')
-    return [sql]
+@pytest.fixture(autouse=True)
+def no_real_waits(monkeypatch):
+    monkeypatch.setattr(release.time, 'sleep', lambda _: None)
 
 
-def test_release_deploys_migrations_before_upload_and_saves_secret_free_rollback(tmp_path):
+def deploy(client, tmp_path, *, timeout=5):
+    return release.deploy(client, 'bundle', '2.4.1', BUILD, SCHEMA, MIGRATIONS,
+                          tmp_path / 'rollback.json', timeout)
+
+
+def test_release_records_the_returned_ids_and_requires_a_telegram_receipt(tmp_path):
     client = FakeClient()
-    artifact = tmp_path / 'rollback.json'
-    result = release.deploy(client, 'bundle', '2.2.0', migration(tmp_path), artifact)
-    assert result['active']
-    methods = [method for method, _, _ in client.calls]
-    assert methods.index('PUT') > next(i for i, (_, p, _) in enumerate(client.calls) if p.endswith('/query'))
-    state = json.loads(artifact.read_text())
-    assert state['previous_deployment'] == OLD
-    assert state['new_deployment_id'] == NEW['id']
-    assert 'secret' not in artifact.read_text().lower()
+    result = deploy(client, tmp_path)
+    artifact = json.loads((tmp_path / 'rollback.json').read_text())
+    assert result['build'] == BUILD
+    assert artifact['previous'] == OLD
+    assert artifact['candidate'] == NEW
+    assert any(path.startswith('/admin/status?release_check=') for _, path, _ in client.calls)
+    assert client.query(f'SELECT COUNT(*) AS n FROM {LEDGER}')[0][0]['n'] == len(MIGRATIONS)
 
 
-def test_release_verification_failure_restores_previous_code(tmp_path, monkeypatch):
-    monkeypatch.setattr(release.time, 'sleep', lambda _: None)
-    client = FakeClient(wrong_version=True)
-    with pytest.raises(release.ReleaseError, match='previous Worker restored'):
-        release.deploy(client, 'bundle', '2.2.0', migration(tmp_path), tmp_path / 'rollback.json')
-    assert client.current == OLD
-    assert any(m == 'POST' and p.endswith('/deployments') for m, p, _ in client.calls)
+def test_release_never_rolls_back_the_other_deployment_seen_after_activation(tmp_path):
+    client = FakeClient()
+    client.competing = True
+    with pytest.raises(release.ReleaseError, match='active deployment or version changed'):
+        deploy(client, tmp_path)
+    assert client.active == COMPETING
+    assert json.loads((tmp_path / 'rollback.json').read_text())['candidate'] == NEW
+    assert sum(path.endswith('/deployments') for _, path, _ in client.calls) == 1
 
 
-def test_release_rollback_never_overwrites_a_concurrent_deployment(tmp_path, monkeypatch):
-    monkeypatch.setattr(release.time, 'sleep', lambda _: None)
-    client = FakeClient(wrong_version=True, concurrent=True)
-    with pytest.raises(release.ReleaseError, match='Another deployment'):
-        release.deploy(client, 'bundle', '2.2.0', migration(tmp_path), tmp_path / 'rollback.json')
-    assert not any(m == 'POST' and p.endswith('/deployments') for m, p, _ in client.calls)
+def test_manual_rollback_requires_the_owned_version_inside_the_deployment():
+    client = FakeClient()
+    client.active = {'id': NEW['id'], 'versions': COMPETING['versions']}
+    with pytest.raises(release.ReleaseError, match='active deployment or version changed'):
+        release.rollback(client, {'candidate': NEW, 'previous': OLD})
+    assert not client.calls
 
 
-def test_release_stops_before_upload_if_migration_fails(tmp_path):
-    client = FakeClient(failed_migration=True)
-    with pytest.raises(release.ReleaseError, match='migration failed'):
-        release.deploy(client, 'bundle', '2.2.0', migration(tmp_path), tmp_path / 'rollback.json')
-    assert not any(m == 'PUT' for m, _, _ in client.calls)
-
-
-def test_release_does_not_repeat_an_ambiguous_upload(tmp_path):
-    client = FakeClient(upload_timeout=True)
+def test_release_does_not_infer_ownership_after_an_ambiguous_activation(tmp_path):
+    client = FakeClient()
+    client.unknown = True
     with pytest.raises(release.ReleaseError, match='outcome uncertain'):
-        release.deploy(client, 'bundle', '2.2.0', migration(tmp_path), tmp_path / 'rollback.json')
-    assert sum(m == 'PUT' for m, _, _ in client.calls) == 1
+        deploy(client, tmp_path)
+    assert 'candidate' not in json.loads((tmp_path / 'rollback.json').read_text())
+    assert sum(path.endswith('/deployments') for _, path, _ in client.calls) == 1
+
+
+def test_matching_semver_with_wrong_build_rolls_back_the_owned_candidate(tmp_path):
+    client = FakeClient()
+    client.build = 'b' * 40
+    with pytest.raises(release.ReleaseError, match='build/bindings'):
+        deploy(client, tmp_path)
+    assert client.active == OLD
+
+
+def test_missing_telegram_receipt_rolls_back_the_owned_candidate(tmp_path):
+    client = FakeClient()
+    client.receipt = {}
+    with pytest.raises(release.ReleaseError, match='Telegram webhook update'):
+        deploy(client, tmp_path, timeout=0)
+    assert client.active == OLD
 
 
 def test_release_rejects_a_split_traffic_baseline(tmp_path):
     client = FakeClient()
-    client.current = {'id': 'split', 'versions': [{'version_id': 'one', 'percentage': 50}, {'version_id': 'two', 'percentage': 50}]}
+    client.active = {'id': 'split', 'versions': [{'version_id': 'one', 'percentage': 50},
+                                                 {'version_id': 'two', 'percentage': 50}]}
     with pytest.raises(release.ReleaseError, match='100%'):
-        release.deploy(client, 'bundle', '2.2.0', [], tmp_path / 'rollback.json')
-    assert not any(m == 'PUT' for m, _, _ in client.calls)
+        deploy(client, tmp_path)
+    assert not client.calls
 
 
-def test_release_metadata_preserves_secrets_and_disables_token_url_tracing():
-    meta = release.metadata(CONFIG)
-    assert {b['name'] for b in meta['bindings'] if b['type'] == 'inherit'} == {'CONFIG_KEY', 'SETUP_HASH', 'WEBHOOK_SECRET'}
-    assert meta['observability']['traces'] == {'enabled': True, 'head_sampling_rate': 0}
+@pytest.mark.parametrize('initial_schema', [SCHEMA, before_migration(MIGRATIONS[-1])])
+def test_schema_migration_preserves_data_and_runs_once(initial_schema):
+    fixture = LocalD1(initial_schema)
+    fixture.query("INSERT INTO chat_settings(chat_id, rate_limit) VALUES (71, 11)")
+    migrate(fixture.query, SCHEMA, MIGRATIONS)
+    assert fixture.query("SELECT rate_limit FROM chat_settings WHERE chat_id=71") == [[{'rate_limit': 11}]]
+    assert fixture.query(f"SELECT COUNT(*) AS n FROM {LEDGER}") == [[{'n': len(MIGRATIONS)}]]
+    fixture.calls.clear()
+    migrate(fixture.query, SCHEMA, MIGRATIONS)
+    assert not any('CREATE ' in sql or 'INSERT ' in sql for sql in fixture.calls)
+
+
+def test_release_stops_on_incompatible_existing_schema_before_upload(tmp_path):
+    client = FakeClient()
+    client.query('DROP TABLE free_daily_usage; CREATE TABLE free_daily_usage (invalid TEXT)')
+    with pytest.raises(SchemaError, match='Incompatible D1 schema: free_daily_usage'):
+        deploy(client, tmp_path)
+    assert not any(path.endswith('/versions?bindings_inherit=strict') for _, path, _ in client.calls)
+
+
+def test_migration_rejects_an_altered_ledgered_file():
+    fixture = LocalD1(SCHEMA)
+    migrate(fixture.query, SCHEMA, MIGRATIONS)
+    fixture.query(f"UPDATE {LEDGER} SET sha256='incorrect' WHERE name='{MIGRATIONS[-1].name}'")
+    with pytest.raises(SchemaError, match='Previously applied migration changed'):
+        migrate(fixture.query, SCHEMA, MIGRATIONS)
+
+
+def test_release_multipart_preserves_required_bindings_and_attests_to_build():
+    meta = release.metadata(CONFIG, BUILD)
+    assert {b['name'] for b in meta['bindings'] if b['type'] == 'inherit'} == {
+        'ADMIN_HASH', 'CONFIG_KEY', 'RELEASE_CHAT_ID', 'WEBHOOK_SECRET'}
+    assert {b['type'] for b in meta['bindings']} == {'d1', 'inherit', 'plain_text'}
+    assert 'limits' not in meta
     assert meta['usage_model'] == 'standard'
-    assert all('secret_text' != b['type'] for b in meta['bindings'])
-
-
-def test_release_multipart_upload_contains_bundle_and_metadata():
-    body, kind = release.upload_body(CONFIG, 'export default {};')
+    body, kind = release.upload_body(CONFIG, 'export default {};', BUILD)
     assert kind.startswith('multipart/form-data; boundary=')
-    assert b'name="metadata"' in body
-    assert b'filename="worker.js"' in body
-    assert b'export default {};' in body
-    assert b'CONFIG_KEY' in body and b'"type": "inherit"' in body
+    for value in ['name="metadata"', 'filename="worker.js"', 'export default {};', BUILD]:
+        assert value.encode() in body
+
+
+def test_release_settings_rejects_cron_drift_and_sampled_traces(monkeypatch):
+    client = release.Client('api-key', 'admin-key', CONFIG)
+    responses = {'schedules': {'schedules': [{'cron': CONFIG['cron']}]},
+                 'script-settings': {'observability': {'enabled': True, 'traces': {'enabled': True, 'head_sampling_rate': 0}}}}
+    monkeypatch.setattr(client, 'request', lambda method, path: responses[path.rsplit('/', 1)[-1]])
+    client.check_settings()
+    responses['script-settings']['observability']['traces']['head_sampling_rate'] = 0.1
+    with pytest.raises(release.ReleaseError, match='sampled Worker traces'):
+        client.check_settings()
+    responses['schedules']['schedules'] = []
+    with pytest.raises(release.ReleaseError, match='cron'):
+        client.check_settings()
 
 
 def test_release_version_guard_catches_missing_documentation(tmp_path, monkeypatch):
@@ -135,14 +219,6 @@ def test_release_version_guard_catches_missing_documentation(tmp_path, monkeypat
         check_release.check()
 
 
-def test_free_tier_release_metadata_enforces_cpu_and_samples_logs():
-    meta = release.metadata(CONFIG)
-    assert 'limits' not in meta
-    assert CONFIG['free_tier_policy']['cpu_ms'] == 10
-    assert meta['observability']['logs']['head_sampling_rate'] == 0.1
-    assert {b['type'] for b in meta['bindings']} == {'d1', 'inherit', 'plain_text'}
-
-
 def test_release_rejects_an_accidental_paid_size_cpu_allowance():
     with pytest.raises(release.ReleaseError, match='Free-tier policy'):
-        release.metadata({**CONFIG, 'limits': {'cpu_ms': 30000}})
+        release.metadata({**CONFIG, 'limits': {'cpu_ms': 30000}}, BUILD)

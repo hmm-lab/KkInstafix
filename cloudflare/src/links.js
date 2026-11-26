@@ -171,11 +171,12 @@ export async function fixLink(raw, settings={}, choices={}, overrides={}, net=fe
   const preferredPreview=p.noauth_embed?.[preferred]??preferred;
   const previewKey=settings.provider_fallback===0?preferredPreview:pickHealthy(platform,preferredPreview,health[platform]);
   const preserveBrowser=Object.hasOwn(p.noauth_embed??{},preferred);
-  const selected=preserveBrowser?preferred:previewKey;
+  const selected=preserveBrowser||previewKey==='original'?preferred:previewKey;
   // Post immediately with the selected provider. HTTP 403/404 on a single post
   // is not proof of provider failure; the button lets users choose an alternative.
   const fixed = fixedFor(expanded,platform,selected);
-  if(preserveBrowser&&previewKey!==preferredPreview)fixed.preview=applyProvider(expanded,platform,previewKey);
+  if(previewKey==='original')fixed.preview=fixedFor(expanded,platform,preferredPreview).url;
+  else if(preserveBrowser&&previewKey!==preferredPreview)fixed.preview=applyProvider(expanded,platform,previewKey);
   return {...fixed,url:fixed.url+tail,platform,key:selected,previewKey,raw:trimmed};
 }
 export async function processText(text, settings, choices, overrides, net=fetch, clean=false, health={},cache=null) {

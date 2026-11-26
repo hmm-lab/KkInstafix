@@ -213,3 +213,19 @@ Primary references: [FurTrack photo](https://www.furtrack.com/p/826598),
 and [Songlink/Odesli](https://odesli.co/). The comparison bot’s
 [configuration](https://github.com/campfred/tg-previewsynth-bot) supplied candidate
 hosts; provider responses, rather than its list alone, determined activation.
+
+
+## Provider fallback and rechecks in 2.4.1
+
+Automatic fallback, legacy retries and manual repairs share the same candidate
+filter. Browser-only aliases cannot act as preview backends. Retry and repair
+exclude the active backend, preserve deliberately selected browser destinations,
+and keep the existing preview when no alternative qualifies. Automatic fallback
+uses the original URL when every backend is quarantined. An explicit
+`/fallback off` still keeps the selected backend.
+
+New public content samples let X and TikTok meet the existing two-sample
+corroboration requirement. One slot in a two-provider hourly batch can recheck a
+quarantined provider after three hours. The other slot advances the usual
+rotation. The added samples are covered by mocked probe tests. Availability
+depends on what the providers return when the scheduled check runs.

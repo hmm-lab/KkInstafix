@@ -9,7 +9,7 @@ Containers, R2, or external database subscription is enabled by this deployment.
 - Worker: `kkinstafix`
 - Base URL: https://kkinstafix.legend-mysterio.workers.dev
 - Webhook: `/webhook`
-- Readiness: `/health` (`active` stays false until Telegram activation)
+- Public liveness and build: `GET /health`. Authenticated readiness: `POST /admin/status`.
 - D1: `kkinstafix` (`645ac61c-40da-4846-b1ba-d9461abb579e`), Western Europe
 - Compatibility date: `2026-11-15`
 - Hourly cleanup and provider checks: `17 * * * *` UTC
@@ -23,10 +23,14 @@ bot identity. Activation verifies the token with `getMe`, encrypts it using
 AES-GCM, then sets an authenticated webhook without discarding pending updates.
 The one-time setup closes on success. The token never belongs in Git.
 
-`CONFIG_KEY`, `SETUP_HASH` and `WEBHOOK_SECRET` are Worker secret bindings.
-`WEBHOOK_URL` is a non-secret binding; `DB` is the D1 binding. Re-deployments must
-inherit these three secret bindings. Replacing `CONFIG_KEY` without re-encrypting
-the stored bot token will make the token unreadable.
+The setup link uses a separate key whose SHA-256 digest is stored in
+`SETUP_HASH`. An initial Worker also needs `CONFIG_KEY` (the hex-encoded 32-byte
+encryption key), `ADMIN_HASH` (the SHA-256 digest of the admin Bearer key),
+`WEBHOOK_SECRET` and `RELEASE_CHAT_ID` as secret bindings. Set `WEBHOOK_URL` to
+the target URL and bind the D1 database as `DB`. Use a distinct admin key on each
+target and preserve `CONFIG_KEY` so the encrypted Telegram token remains
+readable. Once activated, regular version uploads inherit the operational
+secrets and omit the setup credential.
 
 If Railway restarts, stop its old bot service so it cannot replace the webhook or
 restart polling. Leaving a stopped Railway project alone is sufficient; no
@@ -34,10 +38,10 @@ Railway resources are deleted by this migration.
 
 ## Diagnostics
 
-`POST /admin/status` accepts the private setup key as a Bearer credential and
-returns sanitized Telegram webhook status and bot capabilities. It never exposes
-the token or encryption key. Activation remains closed after success. Reloading
-the setup page detects completed activation and links to the Telegram bot.
+`POST /admin/status` requires the admin Bearer key. It reports the active build,
+sanitized Telegram webhook status, and bot capabilities. Public liveness
+reports version and build without querying D1. Setup and provider administration
+return an explicit error when paused by the D1 allowance.
 
 ## Fixes in 2.4.1
 
@@ -256,27 +260,38 @@ Before upgrading, apply the additive `migrations/0003-post-controls.sql` after
 
 ### Release checks and rollback
 
-`tools/check_release.py --base HEAD^` verifies the single Worker version in source,
-the README files and dated changelog; runtime changes require documentation, and
-provider changes require audit notes. It also verifies generated configuration
-and schema. CI runs it alongside the Worker suite and Python 3.11/3.12 suites.
-The sanitisation fixture corpus covers all 23 platforms and checks every provider
-option, pasted proxy paths, idempotent cleaning and functional parameters.
+CI checks documentation and provider audit changes against the PR base or
+previous push commit. It verifies generated configuration, rehearses the
+migration contract locally, and runs the Worker and Python suites.
 
-`.github/workflows/release.yml` is a manual release workflow that runs all checks,
-builds, applies additive migrations, inherits existing secrets, verifies active
-readiness/version and the Telegram webhook, and restores the previous Worker if
-post-upload verification fails. It serializes releases and refuses rollback over
-a newer deployment. D1 migrations are retained during code rollback. Failed or
-ambiguous uploads are not blindly repeated.
+The manual **Release Cloudflare Worker** workflow takes a comparison base SHA.
+It builds once and deploys that artifact to the `staging` environment. Select
+**promote** on `main` to deploy the same artifact to `production` after staging
+passes. In GitHub's production environment settings, restrict deployment
+branches to `main` and protect that branch with required checks. Keep production
+credentials exclusively in the production environment.
 
-To enable unattended releases, place the workflow on GitHub's default branch and
-configure the `production` environment with `CLOUDFLARE_API_TOKEN` (Workers Scripts
-edit and D1 edit for this account) and `KKINSTAFIX_ADMIN_KEY` (the existing private
-admin key). Credentials are not committed or retrieved from the connector. This
-repository update does not create those secrets. Trigger **Release Cloudflare
-Worker** from Actions once configured. The rollback artifact is retained seven
-days and contains only deployment/version metadata.
+Before the first release, provision and activate an independent staging Worker,
+D1 database and Telegram bot. Set the staging environment variable
+`KKINSTAFIX_STAGING_CONFIG` to a JSON object with the same deployment fields as
+`deployment.json`, including the production compatibility date. Configure each
+environment's `CLOUDFLARE_API_TOKEN` with scoped Worker and D1 permissions, and set
+`KKINSTAFIX_ADMIN_KEY` to the Bearer key corresponding to that Worker's
+`ADMIN_HASH`. For a baseline Worker that still authenticates with the setup key,
+temporarily add `KKINSTAFIX_LEGACY_ADMIN_KEY` for preflight and rollback.
+Provision the `RELEASE_CHAT_ID` secret with a chat the corresponding bot can
+read and reply to. Keep sampled Worker traces disabled.
+
+The script checks cron, indexes and table shape before deploying. It records
+migration names and checksums in D1. Migration
+`0006-restore-and-release-safety.sql` adds the chat index and two receipt tables,
+with no data backfill. Upload and activation use distinct Cloudflare API calls.
+When each workflow job prints a one-time `/releasecheck` command, send it as a
+human user from that target's configured Telegram chat. The job waits for the
+expected build to deliver a reply, then confirms a receipt through admin status.
+If verification fails, rollback requires both the recorded deployment and
+version IDs to match the active deployment. Additive D1 migrations remain
+applied. Rollback artifacts retain deployment metadata for seven days.
 
 For a local dry run with no network requests:
 
@@ -351,8 +366,10 @@ For each chat, an admin can restore an existing `/export` JSON backup up to
 64 KiB using `/import` in the same chat. A complete export replaces the saved
 provider selections, platform overrides, mutes, opt-outs and user preferences
 in one transaction. Partial JSON files merge their entries with current settings.
-If a restore needs more writes than remain in the bot’s daily allowance, try
-again after midnight UTC. For a complete Railway `bot_data.sqlite3` backup:
+Each restore reserves its estimated D1 writes before it changes any settings.
+A committed receipt lets Telegram retry confirmation without replaying the
+restore. If the remaining daily allowance cannot cover the restore, try again
+after midnight UTC. For a complete Railway `bot_data.sqlite3` backup:
 
 ```bash
 python cloudflare/migrate-sqlite.py /path/to/real/bot_data.sqlite3 /tmp/kkinstafix-migration.sql
@@ -378,13 +395,14 @@ limitations are documented in [PROVIDER_REVIEW.md](PROVIDER_REVIEW.md). Platform
 post for a failed embed: the selected provider is posted immediately, with an
 alternative-provider button. With `/fallback on`, cached background health can
 temporarily skip a confirmed failing preview backend without changing the saved
-provider choice. `/fallback off` keeps the selected backend. No provider health
+provider choice. If all backends are quarantined, the original URL supplies the
+preview. `/fallback off` keeps the selected backend. No provider health
 requests block a user message.
 
 Tests use Miniflare/workerd with a real local D1 database and a mocked Telegram
 API. The installed workerd binary supports compatibility dates through
-`2026-08-06`; tests pin that supported date. Production uses today's configured
-date and its readiness/security endpoints are checked after deployment.
+`2026-08-06`; tests pin that supported date. Staging uses the production compatibility date and exercises authenticated
+Telegram delivery before production promotion.
 
 Delivery confirms `sendMessage` before deleting text originals. Captions, edited
 messages and channel posts keep their original content. Permission failures do

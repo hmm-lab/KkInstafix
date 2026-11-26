@@ -3,7 +3,7 @@ import {PROVIDERS} from './config.js';
 import {captureOriginal,entityHTML,hasProtectedLinks} from './formatting.js';
 import {fixedFor,processText,senderLabel,trim,stripTracking} from './links.js';
 import {formatRepost,messageSource,messageLinks,linkIdentity} from './messages.js';
-import {quarantined} from './provider-policy.js';
+import {eligibleAlternatives,quarantined} from './provider-policy.js';
 import {hash} from './security.js';
 
 const stamp=()=>Math.floor(Date.now()/1000);
@@ -46,9 +46,10 @@ export async function postView(post,existingRender=null) {
         callback_data:`p:${i+j}:${post.revision}`,
       })));
     }
-    if(selected.platform&&Object.keys(PROVIDERS[selected.platform].options).length>1) {
-      const keys=Object.keys(PROVIDERS[selected.platform].options),idx=keys.indexOf(selected.key);
-      const backends=keys.filter(k=>!Object.hasOwn(PROVIDERS[selected.platform].noauth_embed??{},k));
+    const config=PROVIDERS[selected.platform];
+    if(config&&Object.keys(config.options).length>1) {
+      const keys=Object.keys(config.options),idx=keys.indexOf(selected.key);
+      const backends=keys.filter(k=>!Object.hasOwn(config.noauth_embed??{},k));
       const active=selected.previewKey??backend(selected.platform,selected.key);
       keyboard.inline_keyboard.push([{text:`↻ Retry · ${active==='native'?'Native':active.toUpperCase()} · ${Math.max(0,backends.indexOf(active))+1}/${backends.length}`,callback_data:`e:${selected.platform}:${(idx+1)%keys.length}:${(await hash(linkIdentity(selected.url,selected.platform))).slice(0,12)}`}]);
     }
@@ -139,12 +140,8 @@ export async function postCallback(query,store,tg,ctx={}) {
       sanitisePost(post);
       const platform = link.platform;
       const health = await store.health();
-      const config = PROVIDERS[platform];
-      const keys = Object.keys(config.options);
       const active = link.previewKey ?? backend(platform, link.key);
-      const cursor = keys.indexOf(link.repairAfter ?? active);
-      const candidates = keys.slice(cursor + 1).concat(keys.slice(0, cursor + 1))
-        .filter(key => key !== active && !Object.hasOwn(config.noauth_embed ?? {}, key) && !quarantined(health[platform]?.[key]));
+      const candidates = eligibleAlternatives(platform,active,health[platform],link.repairAfter??active);
       if (!candidates.length) {
         await answer('No alternative provider is available. Use /refresh to request the current preview again.');
         return true;
@@ -181,13 +178,12 @@ export async function postCallback(query,store,tg,ctx={}) {
       if(!link?.platform||link.platform!==p||(fingerprint&&(await hash(linkIdentity(link.url,p))).slice(0,12)!==fingerprint&&(await hash(linkIdentity(link.url,p,false))).slice(0,12)!==fingerprint)) {
         await answer('This retry button is outdated. Use the latest buttons.');return true;
       }
-      const cleaned=sanitisePost(post),health=await store.health(),keys=Object.keys(PROVIDERS[p].options);
-      let tried=post.tried[identity(link)]??[];const idx=keys.indexOf(link.key);
-      const next=()=>{for(let n=1;n<=keys.length;n++){const key=keys[(idx+n)%keys.length],effective=backend(p,key);
-        if(Object.hasOwn(PROVIDERS[p].noauth_embed??{},key))continue;
-        if(!tried.includes(effective)&&!quarantined(health[p]?.[effective]))return key;
-      }};
-      let selected=next();if(!selected){tried=[];selected=next();}
+      const cleaned=sanitisePost(post),health=await store.health();
+      const active=link.previewKey??backend(p,link.key);
+      const candidates=eligibleAlternatives(p,active,health[p],active==='original'?link.key:active);
+      let tried=post.tried[identity(link)]??[];
+      let selected=candidates.find(key=>!tried.includes(key));
+      if(!selected){tried=[];selected=candidates[0];}
       if(!selected){
         if(cleaned)await applyOperation(await store.prepareOperation(opid,chat,msg.message_id,post,'callback'),store,tg,ctx);
         await answer((cleaned?'Tracking removed. ':'')+'Preview providers are temporarily unavailable. Try again later.');return true;
@@ -229,7 +225,7 @@ export async function syncEdit(msg,row,store,tg,state,ctx) {
     if(result.tooMany)return editLimitNotice(msg,store,tg,'This edit contains more than eight links.',ctx);
     for(const link of result.allLinks??result.links) {
       const old=previous.links.find(l=>l.platform===link.platform&&l.url===trim(link.url)[0]);
-      if(old&&link.platform&&!quarantined(state.health[link.platform]?.[old.previewKey])){const fixed=fixedFor(link.url,link.platform,old.key);link.preview=fixed.preview;link.key=old.key;link.previewKey=old.previewKey;}
+      if(old&&link.platform&&old.previewKey!=='original'&&!quarantined(state.health[link.platform]?.[old.previewKey])){const fixed=fixedFor(link.url,link.platform,old.key);link.preview=fixed.preview;link.key=old.key;link.previewKey=old.previewKey;}
     }
     const post=await makePost(msg,result,state.settings.attribution===0?'':senderLabel(msg.from,state.settings.sender_mode),previous,state.settings),view=await postView(post);
     if(post.revision===previous.revision){previous.edit_date=Math.max(previous.edit_date??0,msg.edit_date??0);await store.savePost(msg.chat.id,row.bot_msg_id,msg.message_id,row.user_id,previous,fresh.ts);return;}

@@ -127,6 +127,8 @@ export class Store {
       expired('post_controls','ts<?',now-7*86400),
       expired('post_operations','ts<?',now-7*86400),
       expired('post_activity','last_action_at<? OR NOT EXISTS(SELECT 1 FROM post_controls p WHERE p.chat_id=post_activity.chat_id AND p.bot_msg_id=post_activity.bot_msg_id)',(now-7*86400)*1000),
+      expired('backup_restore_receipts','ts<?',now-7*86400),
+      expired('release_checks','ts<?',now-86400),
       expired('free_daily_usage','day<?',new Date((now-7*86400)*1000).toISOString().slice(0,10)),
     ]);
 

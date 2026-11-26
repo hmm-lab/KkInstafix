@@ -5,9 +5,9 @@ import {budgetStatus} from './status.js';
 import {permissionStatus} from './status.js';
 import {hasProtectedLinks} from './formatting.js';
 import {diagnose} from './diagnostics.js';
-import {nextHealthy,healthLabel} from './provider-policy.js';
+import {eligibleAlternatives,healthLabel} from './provider-policy.js';
 import {PROVIDERS,PLATFORM_EMOJI,PROVIDER_REVISION} from './config.js';
-import {processText,urls,fixedFor,escapeHTML as h,senderLabel} from './links.js';
+import {processText,urls,fixedFor,stripTracking,escapeHTML as h,senderLabel} from './links.js';
 import {validSetting,validAppearance} from './store.js';
 import {hash} from './security.js';
 import {BACKUP_LIMIT, importBackup} from './backup.js';
@@ -152,7 +152,7 @@ export async function command(msg,store,tg,state,ctx={}) {
     if (!response.ok) throw new Error('Export delivery failed');
     return;
   }
-  if (name==='import') return importBackup(msg,store,tg,reply,ctx.budget);
+  if (name==='import') return importBackup(msg,store,tg,reply,ctx.budget,ctx.updateId);
   return reply('Unknown command. Use /help.');
 }
 export async function callback(query,store,tg,ctx={}) {
@@ -187,9 +187,17 @@ export async function callback(query,store,tg,ctx={}) {
     }
     if(!current)return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Could not identify the post. Please send the link again.'});
     const health=await store.health();
-    const selected=nextHealthy(p,idx,health[p]);
+    const config=PROVIDERS[p];
+    const recorded=(await store.original(chat,msg.message_id))?.provider;
+    const prior=options[(idx+options.length-1)%options.length];
+    const active=config.noauth_embed?.[recorded??prior]??recorded??prior;
+    const selected=eligibleAlternatives(p,active,health[p],prior)[0];
+    if(!selected)return tg.call('answerCallbackQuery',{callback_query_id:query.id,text:'Preview providers are temporarily unavailable. Try again later.'});
     const selectedIndex=options.indexOf(selected);
+    const browserHost=new URL(current).hostname.replace(/^www\./,'');
+    const browserKey=Object.keys(config.noauth_embed??{}).find(key=>config.options[key]===browserHost);
     const fixed=fixedFor(current,p,selected);
+    if(browserKey)fixed.url=stripTracking(current,p);
     const nextTarget=(await hash(linkIdentity(fixed.url,p))).slice(0,12);
     let text=renderLinkedText(msg.text??'',msg.entities,new Map([[current,fixed.url]]));
     const label=row?.sender_name;

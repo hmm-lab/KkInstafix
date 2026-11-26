@@ -14,7 +14,9 @@ const backupTables = {
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validUserId = id => Number.isSafeInteger(id) && id > 0;
 
-export async function importBackup(msg, store, tg, reply, budget) {
+export async function importBackup(msg, store, tg, reply, budget, updateId) {
+  const receipt = await store.stmt('SELECT reply FROM backup_restore_receipts WHERE update_id=?', updateId).first();
+  if (receipt) return reply(receipt.reply);
   const doc = msg.document ?? msg.reply_to_message?.document;
   if (!doc || doc.file_size > BACKUP_LIMIT) return reply('Send a JSON backup (up to 64 KiB) with caption /import, or reply to one with /import.');
   const file = await tg.call('getFile', {file_id: doc.file_id});
@@ -84,9 +86,9 @@ export async function importBackup(msg, store, tg, reply, budget) {
       current = (await store.stmt(`SELECT ${counts.join('+')} AS total`, ...fields.map(() => chat)).first()).total;
     }
     const incoming = Object.values(rows).reduce((sum, entries) => sum + entries.length, settings.length);
-    const estimated = 4 * (current + incoming) + 16;
+    const estimated = 6 * (current + incoming) + 24;
     if (estimated > budget.limits.rowsWritten) return reply('This backup exceeds the safe restore size.');
-    if ((budget.prior.rows_written ?? 0) + budget.rowsWritten + estimated > budget.limits.rowsWritten) {
+    if (!await store.db.reserveWrites(estimated)) {
       return reply('The bot has insufficient database write allowance for this restore today. Try again after midnight UTC.');
     }
   }
@@ -109,7 +111,9 @@ export async function importBackup(msg, store, tg, reply, budget) {
         chat, JSON.stringify(rows[field])));
     }
   }
-  if (statements.length) await store.db.batch(statements);
-  return reply('✅ Settings restored.' + (complete ? '' : ' Partial backup merged with existing settings.') +
-    (migrated ? ' Retired providers were replaced with current defaults; removed platforms were skipped.' : ''));
+  const confirmation = '✅ Settings restored.' + (complete ? '' : ' Partial backup merged with existing settings.') +
+    (migrated ? ' Retired providers were replaced with current defaults; removed platforms were skipped.' : '');
+  statements.unshift(store.stmt('INSERT INTO backup_restore_receipts VALUES(?,?,?)', updateId, confirmation, Math.floor(Date.now()/1000)));
+  await store.db.batch(statements);
+  return reply(confirmation);
 }

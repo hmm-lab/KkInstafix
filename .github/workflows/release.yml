@@ -2,37 +2,74 @@ name: Release Cloudflare Worker
 
 on:
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Release comparison base commit SHA
+        required: true
+        type: string
+      promote:
+        description: Deploy to production after staging verification
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: kkinstafix-production
+  group: kkinstafix-release
   cancel-in-progress: false
 
 jobs:
   checks:
     uses: ./.github/workflows/tests.yml
-  deploy:
+    with:
+      base_sha: ${{ inputs.base_sha }}
+  staging:
     needs: checks
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-${{ github.sha }}
+          path: cloudflare/dist
+      - name: Deploy the tested bundle and verify Telegram delivery
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KKINSTAFIX_ADMIN_KEY: ${{ secrets.KKINSTAFIX_ADMIN_KEY }}
+          KKINSTAFIX_LEGACY_ADMIN_KEY: ${{ secrets.KKINSTAFIX_LEGACY_ADMIN_KEY }}
+          KKINSTAFIX_STAGING_CONFIG: ${{ vars.KKINSTAFIX_STAGING_CONFIG }}
+        run: python tools/release_cloudflare.py --target staging --artifact staging-rollback.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-rollback-${{ github.sha }}
+          path: staging-rollback.json
+          if-no-files-found: ignore
+          retention-days: 7
+  production:
+    if: inputs.promote && github.ref == 'refs/heads/main'
+    needs: staging
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: cloudflare/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: npm ci --prefix cloudflare
-      - run: npm run build --prefix cloudflare
-      - name: Deploy, verify and restore previous Worker on failure
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-${{ github.sha }}
+          path: cloudflare/dist
+      - name: Deploy the staging-tested bundle and verify Telegram delivery
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           KKINSTAFIX_ADMIN_KEY: ${{ secrets.KKINSTAFIX_ADMIN_KEY }}
+          KKINSTAFIX_LEGACY_ADMIN_KEY: ${{ secrets.KKINSTAFIX_LEGACY_ADMIN_KEY }}
         run: python tools/release_cloudflare.py
       - uses: actions/upload-artifact@v4
         if: always()

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deduplicate cleaned destinations while preserving functional parameters such as carousel and playback positions.
 - Authenticate webhook and administrative POST requests before reading the D1 quota ledger.
 
+- Record a restore receipt with the configuration change and reserve D1 writes atomically before a bulk restore. Add an index for chat-scoped user settings.
+- Separate setup and admin credentials and keep public liveness checks independent of D1.
+- Use the same provider eligibility checks for fallback, legacy Retry, and repair. Recheck quarantined providers sooner.
+- Verify migrations, cron, the exact Worker build, and live Telegram delivery in staging and production. Rollback checks the deployment and version IDs returned by Cloudflare.
+
 ## [2.4.0] - 2026-11-15
 
 ### Added

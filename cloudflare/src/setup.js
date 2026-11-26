@@ -6,10 +6,9 @@ export const SETUP_HTML=`<!doctype html><html lang="en"><meta charset="utf-8"><m
 <script type="module">
 const key=location.hash.slice(1);history.replaceState(null,'',location.pathname);const status=document.querySelector('#status'),button=document.querySelector('button');
 function connected(username){document.querySelector('form').hidden=true;document.querySelector('h1').textContent='KkInstafix is connected';status.textContent='@'+username+' is activated. Open the bot in Telegram, then tap Start or send /start. After it replies, send a social link.';const a=document.createElement('a');a.textContent='Open @'+username+' in Telegram';a.href='https://t.me/'+encodeURIComponent(username)+'?start=cloudflare_check';status.append(document.createElement('br'),a);}
-if(!key){status.textContent='Checking activation…';button.disabled=true;}
-fetch('/health').then(r=>r.json()).then(result=>{if(result.active&&result.bot)connected(result.bot);else if(!key)status.textContent='Open the private setup link supplied in your ChatGPT conversation.';}).catch(()=>{if(!key)status.textContent='Could not check activation. Reopen your private setup link.';});
+if(!key){status.textContent='Open the private setup link to activate this bot.';button.disabled=true;}
 document.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;status.textContent='Checking the token and connecting Telegram…';try{
 const response=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({token:document.querySelector('#token').value.trim()})});const result=await response.json();
-if(!response.ok)throw new Error(result.error||'Activation did not complete.');document.querySelector('#token').value='';connected(result.username);
+if(!response.ok||!result.ok||!result.username)throw new Error(result.error||'Activation did not complete.');document.querySelector('#token').value='';connected(result.username);
 }catch(error){status.textContent=error.message;button.disabled=false;}});
 </script></html>`;
