@@ -43,6 +43,16 @@ sanitized Telegram webhook status, and bot capabilities. Public liveness
 reports version and build without querying D1. Setup and provider administration
 return an explicit error when paused by the D1 allowance.
 
+## Instagram provider refresh
+
+Embeds.now is the default. Retry cycles through Embeds.now, Uuinstagram,
+Toinstagram, Zzinstagram, the VX mirror at `fxig.seria.moe`, and Ins.so.
+Saved Eeinstagram and InstaFix Revived settings fall back to the new default.
+Pasting an old provider link produces a cleaned official Instagram destination.
+Use Retry or `/repair` on an existing preview to switch providers.
+`/repair` skips known error cards, including HTTP 200 responses with
+“Post not found” metadata. See the [provider checks](PROVIDER_REVIEW.md#instagram-provider-refresh--26-november-2026).
+
 ## Fixes in 2.4.1
 
 Supported links marked as Telegram URL entities can be pasted without `https://`.

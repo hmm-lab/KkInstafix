@@ -33,18 +33,17 @@ PLATFORM_EMOJI = {
 }
 
 # Provider configurations. See cloudflare/PROVIDER_REVIEW.md for refresh evidence.
-PROVIDER_REVISION = "2026-11-15"
+PROVIDER_REVISION = "2026-11-26"
 PROVIDERS = {'youtube': {'default': 'native', 'domains': ['youtube.com', 'youtu.be', 'koutu.be'],
                          'options': {'native': 'www.youtube.com', 'koutube': 'koutube.com'}},
- 'instagram': {'default': 'ee',
-               'domains': ['instagram.com', 'kkclip.com', 'kkinstagram.com', 'instagram7.com'],
-               'options': {'vx': 'vxinstagram.com',
-                           'ee': 'eeinstagram.com',
+ 'instagram': {'default': 'embeds',
+               'domains': ['instagram.com', 'kkclip.com', 'kkinstagram.com', 'instagram7.com',
+                           'eeinstagram.com', 'vxinstagram.com', 'fkinstagram.com'],
+               'options': {'embeds': 'ig.embeds.now',
                            'uu': 'uuinstagram.com',
-                           'zz': 'zzinstagram.com',
                            'to': 'toinstagram.com',
-                           'embeds': 'ig.embeds.now',
-                           'revived': 'fkinstagram.com',
+                           'zz': 'zzinstagram.com',
+                           'vx': 'fxig.seria.moe',
                            'ins': 'ins.so'}},
  'twitter': {'default': 'vx',
              'domains': ['twitter.com', 'x.com'],

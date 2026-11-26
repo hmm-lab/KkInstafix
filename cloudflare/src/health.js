@@ -38,10 +38,16 @@ export function usableMetadata(body,type='text/html') {
   const values={};for(const tag of body.match(/<meta\b[^>]*>/gi)??[]) {
     const key=(attr(tag,'property')||attr(tag,'name')).toLowerCase();values[key]=attr(tag,'content');
   }
-  const title=values['og:title']||values['twitter:title']||'';
+  const title=(values['og:title']||values['twitter:title']||'').trim();
+  const description=(values['og:description']||values['twitter:description']||'').trim();
   if(/^(?:fxinstagram|embed fixer|embed fixes|embedez)$/i.test(title)&&!values['og:video']&&!values['og:video:url'])return false;
-  if((/^FurTrack$/i.test(title)&&/post not found/i.test(values['og:description']??''))||(/^Unknown$/i.test(title)&&/purpose of EmbedEZ/i.test(values['og:description']??'')))return false;
-  if(/log\s*in|sign\s*up|not found|unavailable|access denied|something went wrong|^notice$/i.test(title))return false;
+  if(/^(?:fix instagram embeds|furtrack)$/i.test(title)&&/^post not found\b/i.test(description))return false;
+  if (/^embeds\.now$/i.test(title)) {
+    const status = description.replace(/&#39;|&apos;|’/gi, "'");
+    if (/^(?:sorry, this link couldn't be loaded|this doesn't exist anymore, is private)\b/i.test(status)) return false;
+  }
+  if(/^unknown$/i.test(title)&&/purpose of EmbedEZ/i.test(description))return false;
+  if(/log\s*in|sign\s*up|not found|unavailable|access denied|something went wrong|^notice$|^embed failed$|^failed to get post\b/i.test(title))return false;
   return !!((title&&(values['og:image']||values['og:image:url']||values['twitter:image']||values['og:description']||values['twitter:description']))||values['og:video']||values['og:video:url']||values['twitter:player:stream']);
 }
 export async function probeURL(url,net=fetch) {

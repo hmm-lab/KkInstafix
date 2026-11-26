@@ -402,8 +402,7 @@ def strip_tracking(url: str, extra: Optional[Set[str]] = None) -> str:
         if host == domain or host.endswith("." + domain) or (config and any(d == domain or d.endswith("." + domain) for d in config["domains"])):
             drop.update(keys)
     instagram_content = (
-        (host == "instagram.com" or host.endswith(".instagram.com")
-         or host in PROVIDERS["instagram"]["options"].values())
+        config is PROVIDERS["instagram"]
         and re.match(INSTAGRAM_CONTENT_PATH, parsed.path, re.IGNORECASE)
     )
     kept = {

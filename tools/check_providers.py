@@ -76,10 +76,17 @@ def has_usable_embed(body, content_type="text/html"):
     parser = _Metadata()
     parser.feed(body)
     values = parser.values
-    title = values.get("og:title", values.get("twitter:title", "")).lower()
+    title = (values.get("og:title") or values.get("twitter:title") or "").strip().lower()
+    description = (values.get("og:description") or values.get("twitter:description") or "").strip().lower()
+    if title in {"fix instagram embeds", "furtrack"} and description.startswith("post not found"):
+        return False
+    if title == "embeds.now" and description.replace("’", "'").startswith((
+        "sorry, this link couldn't be loaded", "this doesn't exist anymore, is private",
+    )):
+        return False
     if any(error in title for error in (
         "log in", "login", "something went wrong", "not found", "unavailable",
-        "access denied", "notice", "unknown",
+        "access denied", "notice", "unknown", "embed failed", "failed to get post",
     )):
         return False
     return bool(title and any(values.get(k) for k in (

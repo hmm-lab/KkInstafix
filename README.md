@@ -48,7 +48,7 @@ Cloudflare 2.4.1 improves link detection, safe backup restores, and duplicate ha
 The shared catalogue and current evidence are documented in [the provider review](cloudflare/PROVIDER_REVIEW.md).
 
 - YouTube: `native`
-- Instagram: `ee`
+- Instagram: `embeds` (Embeds.now)
 - Twitter/X: `vx`
 - TikTok: `tnk`
 - Reddit: `vx`
@@ -124,7 +124,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 
 | Platform | Provider keys |
 |---|---|
-| instagram | `kkclip`, `kk`, `ee`, `vx`, `ez` |
+| instagram | `embeds`, `uu`, `to`, `zz`, `vx`, `ins` |
 | twitter | `vx`, `fx`, `fixvx`, `fixupx`, `ez`, `xcancel` 🌐 |
 | tiktok | `tnk`, `vx`, `tik`, `tfx`, `ez`, `proxitok` 🌐 |
 | reddit | `vx`, `rx`, `rxy`, `ez`, `redlib`, `libredd` 🌐 |
@@ -149,7 +149,7 @@ Type `@KkInstaFixBot <link>` in any chat to get a fixed link result without addi
 
 ### Reliability Indicators
 While all listed providers are tested regularly, some have demonstrated particularly strong reliability:
-- **Most Reliable**: `kkclip` (Instagram), `vx` (Twitter/X), `tnk` (TikTok), `vx` (Reddit), `ez` (Facebook)
+- **Most Reliable**: `embeds` (Instagram), `vx` (Twitter/X), `tnk` (TikTok), `vx` (Reddit), `ez` (Facebook)
 - **Privacy-Focused (🌐)**: `xcancel` (Twitter/X), `redlib` & `libredd` (Reddit), `proxitok` (TikTok)
 - **Regional Coverage**: Many services now include regional domains (e.g., `amazon.de`, `ebay.co.uk`) for better global performance
 
@@ -276,7 +276,6 @@ Without delete permission, the bot can still reply in some cases, but spam clean
 ## Notes
 
 - Twitter and X are treated as the same platform.
-- Instagram default is `kkclip`.
 - Caption link fixing replies with corrected links instead of re-uploading media.
 - Edited messages with links are detected and fixed automatically.
 - Settings are stored per chat.

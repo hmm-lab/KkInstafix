@@ -37,7 +37,7 @@ export async function importBackup(msg, store, tg, reply, budget, updateId) {
     if (Object.hasOwn(data, field) && !Array.isArray(data[field])) return reply(`Invalid backup field: ${h(field)}.`);
   }
 
-  const retired = {instagram:['ez','kkclip','kk'],facebook:['ez'],pinterest:['vx'],
+  const retired = {instagram:['ez','kkclip','kk','ee','revived'],facebook:['ez'],pinterest:['vx'],
     tiktok:['vx','tik','tfx','proxitok'],reddit:['libredd'],bluesky:['vx','cbsky'],spotify:['fix']};
   let migrated = false;
   const rows = {providers: [], platform_overrides: [], muted_users: [], optout_users: [], user_settings: []};

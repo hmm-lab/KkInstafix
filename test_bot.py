@@ -58,7 +58,7 @@ def test_get_platform_subdomains():
 
 
 def test_get_platform_skips_fixer_hosts():
-    assert bot.get_platform("eeinstagram.com", "/p/abc") is None
+    assert bot.get_platform("ig.embeds.now", "/p/abc") is None
     assert bot.get_platform("vxtwitter.com", "/x/status/1") is None
     assert bot.get_platform("xcancel.com", "/user/status/1") is None
     assert bot.get_platform("redlib.org", "/r/test") is None
@@ -72,14 +72,14 @@ def test_get_platform_unknown():
 # ── apply_provider ────────────────────────────────────────────────────────────
 
 def test_apply_provider_replaces_host():
-    out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "ee")
-    assert "eeinstagram.com" in out
+    out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "embeds")
+    assert "ig.embeds.now" in out
     assert "https://instagram.com" not in out
     assert "/p/abc" in out
 
 
 def test_apply_provider_strips_tracking():
-    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "ee")
+    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "embeds")
     assert "igshid" not in out
     assert "utm_source" not in out
 

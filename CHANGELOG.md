@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Use Embeds.now as the default Instagram preview. Switch `vx` to its working mirror, retire the Eeinstagram and InstaFix Revived preview options, and recognise the old domains on pasted links.
+- Skip Instagram provider error cards during `/repair` and scheduled checks even when the provider returns HTTP 200.
+
 ### Documentation
 
 - Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.

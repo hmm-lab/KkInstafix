@@ -229,3 +229,24 @@ corroboration requirement. One slot in a two-provider hourly batch can recheck a
 quarantined provider after three hours. The other slot advances the usual
 rotation. The added samples are covered by mocked probe tests. Availability
 depends on what the providers return when the scheduled check runs.
+
+## Instagram provider refresh — 26 November 2026
+
+Checks used the Telegram crawler user agent on the reported reel
+`DgKDChjK7IP`, the existing public reel and carousel samples, and a recent reel
+and photo. Missing-post controls checked whether providers returned error cards.
+
+| Provider | Result and decision |
+| --- | --- |
+| `ig.embeds.now` | Returned video metadata on all three reels and image metadata on the carousel and photo. Moved to the default. |
+| `uuinstagram.com` and `toinstagram.com` | Returned video or image metadata for all five public samples. Placed first in Retry after the default. |
+| `zzinstagram.com` | Returned video metadata for all three reels and redirected the carousel and photo to images. Retained. |
+| `fxig.seria.moe` | Returned video metadata for the reported reel and the existing reel and carousel samples. The recent reel returned 404 and the photo request timed out. Replaces `vxinstagram.com`, which returned 404 on every sample. |
+| `ins.so` | Returned media metadata for the reported reel, existing samples and photo. The recent reel returned 404. Retained as the last alternative. |
+| `eeinstagram.com` | Returned an HTTP 200 “Post not found” card for all three reels and media for the carousel and photo. Retired from preview selection. |
+| `fkinstagram.com` | Returned HTTP 503 on every sample. Retired from preview selection. |
+
+The old provider domains are accepted as pasted links. Stored choices for
+retired providers fall back to the new default. The checks verified response
+metadata and direct image responses. Telegram playback depends on its crawler
+and client. This update adds no per-message probes or D1 migrations.

@@ -225,7 +225,7 @@ for(const [platform,key,raw,expected] of [
   assert.equal(fixed.preview,expected);
 });
 test('removed provider selection safely falls back to working default',async()=>{
-  assert.equal((await fixLink('https://instagram.com/reel/abc',{}, {instagram:'ez'})).preview,'https://eeinstagram.com/reel/abc');
+  assert.equal((await fixLink('https://instagram.com/reel/abc',{}, {instagram:'ez'})).preview,'https://ig.embeds.now/reel/abc');
   assert.equal((await fixLink('https://tiktok.com/@u/video/1',{}, {tiktok:'vx'})).preview,'https://tnktok.com/@u/video/1');
 });
 test('LinkedIn is cleaned without rewriting to an unverified host',async()=>{
@@ -307,7 +307,7 @@ test('bare Instagram link sanitizes the hidden clickable target and clean comman
   calls.length=0;await update(message('https://www.instagram.com/reel/Bare123/?dlrf=secret&psln=secret',5,-4210));
   const sent=calls.find(c=>c.method==='sendMessage');
   assert.match(sent.data.text,/href="https:\/\/instagram.com\/reel\/Bare123\/"/);
-  assert.equal(sent.data.link_preview_options.url,'https://eeinstagram.com/reel/Bare123/');
+  assert.equal(sent.data.link_preview_options.url,'https://ig.embeds.now/reel/Bare123/');
   calls.length=0;await update(message('/clean https://eeinstagram.com/reel/Clean123/?dlrf=secret&img_index=2',5,-4211));
   const cleaned=calls.find(c=>c.method==='sendMessage').data.text;
   assert.ok(!cleaned.includes('dlrf'));assert.match(cleaned,/img_index=2/);
@@ -430,7 +430,7 @@ test('clean Instagram URL still receives a proxy preview when visible text is un
   assert.equal(processed.text,raw);assert.equal(processed.links.length,1);
   await update(message(raw,5,-5301));const sent=calls.find(c=>c.method==='sendMessage');
   assert.match(sent.data.text,/href="https:\/\/instagram.com\/reel\/OfficialClean\/"/);
-  assert.equal(sent.data.link_preview_options.url,'https://eeinstagram.com/reel/OfficialClean/');
+  assert.equal(sent.data.link_preview_options.url,'https://ig.embeds.now/reel/OfficialClean/');
 });
 test('Instagram provider switching changes only the preview for official clickable links',async()=>{
   calls.length=0;const raw='https://instagram.com/reel/OfficialSwitch/?img_index=2';
@@ -454,15 +454,15 @@ test('inline Instagram articles click through to official Instagram with proxy p
   calls.length=0;await update({update_id:++id,inline_query:{id:'official-inline',from:{id:5},query:'https://instagram.com/reel/InlineOfficial/?dlrf=secret'}});
   const content=calls.find(c=>c.method==='answerInlineQuery').data.results[0].input_message_content;
   assert.equal(content.message_text,'https://instagram.com/reel/InlineOfficial/');
-  assert.equal(content.link_preview_options.url,'https://eeinstagram.com/reel/InlineOfficial/');
+  assert.equal(content.link_preview_options.url,'https://ig.embeds.now/reel/InlineOfficial/');
 });
 test('plain fallback uses official Instagram and preserves the proxy preview',async()=>{
   calls.length=0;failure={code:400,once:true};
   await update(message('https://instagram.com/reel/FallbackOfficial/?dlrf=secret',5,-5303));
   const sends=calls.filter(c=>c.method==='sendMessage');
   assert.equal(sends.length,2);assert.ok(sends[1].data.entities.some(e=>e.url==='https://instagram.com/reel/FallbackOfficial/'));
-  assert.ok(!sends[1].data.text.includes('eeinstagram.com'));assert.ok(!sends[1].data.text.includes('dlrf'));
-  assert.equal(sends[1].data.link_preview_options.url,'https://eeinstagram.com/reel/FallbackOfficial/');
+  assert.ok(!sends[1].data.text.includes('ig.embeds.now'));assert.ok(!sends[1].data.text.includes('dlrf'));
+  assert.equal(sends[1].data.link_preview_options.url,'https://ig.embeds.now/reel/FallbackOfficial/');
 });
 
 for(const host of ['www.instagram.com','eeinstagram.com'])for(const key of ['xtok','vrfl','NEW_SHARE_TOKEN'])
@@ -470,7 +470,7 @@ for(const host of ['www.instagram.com','eeinstagram.com'])for(const key of ['xto
     const raw=`https://${host}/reel/ChangingTokens/?${key}=secret&img_index=2`;
     const fixed=await fixLink(raw);
     assert.equal(fixed.url,'https://instagram.com/reel/ChangingTokens/?img_index=2');
-    assert.equal(fixed.preview,'https://eeinstagram.com/reel/ChangingTokens/?img_index=2');
+    assert.equal(fixed.preview,'https://ig.embeds.now/reel/ChangingTokens/?img_index=2');
     assert.equal(new URL(stripTracking(raw)).search,'?img_index=2');
   });
 test('dynamic share tokens are absent from message target, preview, inline result and switched provider',async()=>{
@@ -478,7 +478,7 @@ test('dynamic share tokens are absent from message target, preview, inline resul
   calls.length=0;await update(message(raw,5,-5401));
   const sent=calls.find(c=>c.method==='sendMessage');
   assert.match(sent.data.text,/href="https:\/\/instagram.com\/reel\/LatestTokens\/\?img_index=3"/);
-  assert.equal(sent.data.link_preview_options.url,'https://eeinstagram.com/reel/LatestTokens/?img_index=3');
+  assert.equal(sent.data.link_preview_options.url,'https://ig.embeds.now/reel/LatestTokens/?img_index=3');
   const text='📷 Alice',url='https://instagram.com/reel/LatestTokens/?img_index=3';
   await update({update_id:++id,callback_query:{id:'latest-tokens',from:{id:5},data:sent.data.reply_markup.inline_keyboard.flat().find(b=>b.callback_data).callback_data,
     message:{message_id:100,chat:{id:-5401,type:'supergroup'},text,entities:[{type:'text_link',offset:3,length:5,url}]}}});
@@ -537,7 +537,7 @@ test('Instagram preview appears above linked attribution with only a retry butto
   assert.equal(sent.data.reply_markup.inline_keyboard[0].length,1);
   const [retry]=sent.data.reply_markup.inline_keyboard[0];
   assert.ok(!retry.url);
-  assert.match(retry.text,/^↻ Retry · EE · 2\/8$/);assert.match(retry.callback_data,/^e:instagram:/);
+  assert.match(retry.text,/^↻ Retry · EMBEDS · 1\/6$/);assert.match(retry.callback_data,/^e:instagram:/);
 });
 test('Instagram layout preserves surrounding text before sender attribution',async()=>{
   calls.length=0;await update(message('Please watch https://instagram.com/reel/ContextLayout/ before Friday.',5,-5502));
@@ -554,7 +554,7 @@ test('retry keeps preview above text and removes the duplicate Instagram button'
   const edit=calls.find(c=>c.method==='editMessageText');
   assert.equal(edit.data.link_preview_options.show_above_text,true);
   assert.equal(edit.data.reply_markup.inline_keyboard[0].length,1);
-  assert.match(edit.data.reply_markup.inline_keyboard[0][0].text,/^↻ Retry · VX · 1\/8$/);
+  assert.match(edit.data.reply_markup.inline_keyboard[0][0].text,/^↻ Retry · EMBEDS · 1\/6$/);
   assert.ok(!edit.data.reply_markup.inline_keyboard[0][0].url);
   assert.match(edit.data.text,/Shared by <a href="https:\/\/instagram.com\/reel\/RetryLayout\/">elSapo<\/a>/);
 });
@@ -568,27 +568,28 @@ test('sender mode none has no attribution and keeps official Instagram controls'
   assert.ok(!sent.data.reply_markup.inline_keyboard[0][0].url);
 });
 
-for(const key of ['kkclip','kk'])test('retired Instagram option falls back and backup restores: '+key,async()=>{
-  const chat=key==='kk'?-5601:-5602;
+for (const [offset, key] of ['kkclip', 'kk', 'ee', 'revived'].entries()) test('retired Instagram option falls back and backup restores: '+key,async()=>{
+  const chat=-5604-offset;
   await db.prepare('INSERT INTO provider_settings VALUES(?,?,?)').bind(chat,'instagram',key).run();
   calls.length=0;await update(message('https://instagram.com/reel/RetiredProvider/',5,chat));
   const sent=calls.find(c=>c.method==='sendMessage');
-  assert.equal(sent.data.link_preview_options.url,'https://eeinstagram.com/reel/RetiredProvider/');
+  assert.equal(sent.data.link_preview_options.url,'https://ig.embeds.now/reel/RetiredProvider/');
   backup={version:1,chat_id:chat,providers:{instagram:key}};
   calls.length=0;await update(message('/import',7,chat,{document:{file_id:'backup',file_size:1000}}));
   assert.match(calls.find(c=>c.method==='sendMessage').data.text,/Settings restored/);
-  assert.equal((await db.prepare('SELECT provider FROM provider_settings WHERE chat_id=? AND platform=?').bind(chat,'instagram').first()).provider,'ee');
+  assert.equal((await db.prepare('SELECT provider FROM provider_settings WHERE chat_id=? AND platform=?').bind(chat,'instagram').first()).provider,'embeds');
 });
-for(const host of ['kkclip.com','kkinstagram.com'])test('retired Instagram host converts to official link and default preview: '+host,async()=>{
+for(const host of ['kkclip.com','kkinstagram.com','eeinstagram.com','vxinstagram.com','fkinstagram.com'])test('retired Instagram host converts to official link and default preview: '+host,async()=>{
   const fixed=await fixLink(`https://${host}/reel/RetiredHost/?xtok=secret`);
   assert.equal(fixed.url,'https://instagram.com/reel/RetiredHost/');
-  assert.equal(fixed.preview,'https://eeinstagram.com/reel/RetiredHost/');
+  assert.equal(fixed.preview,'https://ig.embeds.now/reel/RetiredHost/');
 });
 test('Instagram retry rotation contains no retired providers',async()=>{
   calls.length=0;await update(message('/providers',5,-5603));
   const text=calls.find(c=>c.method==='sendMessage').data.text;
   const instagram=text.split('<b>instagram</b>:')[1].split('\n')[1];
-  assert.ok(!instagram.includes('kk'));assert.match(instagram,/vx, ee, uu, zz/);
+  assert.match(instagram, /embeds, uu, to, zz, vx, ins/);
+  assert.doesNotMatch(instagram, /\b(?:ee|revived|kk|kkclip)\b/);
 });
 
 
@@ -635,7 +636,7 @@ test('YouTube opt-out and platform disabling remain effective with Koutube selec
 });
 
 
-for(const [key,host] of [['to','toinstagram.com'],['embeds','ig.embeds.now'],['revived','fkinstagram.com'],['ins','ins.so']])
+for(const [key,host] of [['to','toinstagram.com'],['embeds','ig.embeds.now'],['vx','fxig.seria.moe'],['ins','ins.so']])
  test('Kyrela Instagram provider preserves official URL and cleaned preview: '+key,async()=>{
   const raw='https://instagram.com/reel/C6bfaFzIqqR/?unknown_share=secret&img_index=2';
   const fixed=await fixLink(raw,{}, {instagram:key});
@@ -643,33 +644,33 @@ for(const [key,host] of [['to','toinstagram.com'],['embeds','ig.embeds.now'],['r
   assert.equal(fixed.preview,`https://${host}/reel/C6bfaFzIqqR/?img_index=2`);
   const reused=await fixLink(`https://${host}/reel/C6bfaFzIqqR/?unknown_share=secret`);
   assert.equal(reused.url,'https://instagram.com/reel/C6bfaFzIqqR/');
-  assert.equal(reused.preview,'https://eeinstagram.com/reel/C6bfaFzIqqR/');
+  assert.equal(reused.preview,'https://ig.embeds.now/reel/C6bfaFzIqqR/');
  });
 for(const path of ['/grimkujow/p/DKMv_h9o_Oj/','/olafurw/reel/C6bfaFzIqqR/','/reels/C6bfaFzIqqR/'])
  test('Instagram post path from comparison table is recognized and sanitized: '+path,async()=>{
-  const fixed=await fixLink('https://instagram.com'+path+'?new_token=secret&img_index=2',{}, {instagram:'revived'});
-  assert.equal(fixed.preview,'https://fkinstagram.com'+path+'?img_index=2');
+  const fixed=await fixLink('https://instagram.com'+path+'?new_token=secret&img_index=2',{}, {instagram:'vx'});
+  assert.equal(fixed.preview,'https://fxig.seria.moe'+path+'?img_index=2');
   assert.equal(fixed.url,'https://instagram.com'+path+'?img_index=2');
   assert.equal(new URL(stripTracking('https://instagram.com'+path+'?new_token=secret&img_index=2')).search,'?img_index=2');
  });
 test('old Instagram7 URLs move to official Instagram and the active preview default',async()=>{
   const fixed=await fixLink('https://instagram7.com/reel/C6bfaFzIqqR/?xtok=secret');
   assert.equal(fixed.url,'https://instagram.com/reel/C6bfaFzIqqR/');
-  assert.equal(fixed.preview,'https://eeinstagram.com/reel/C6bfaFzIqqR/');
+  assert.equal(fixed.preview,'https://ig.embeds.now/reel/C6bfaFzIqqR/');
 });
 test('Kyrela provider can be selected and retried with official linked attribution',async()=>{
-  const chat=-5801;await update(message('/setprovider instagram revived',7,chat));
-  calls.length=0;await update(message('https://instagram.com/reel/RevivedRuntime/?xtok=secret',5,chat));
+  const chat=-5801;await update(message('/setprovider instagram vx',7,chat));
+  calls.length=0;await update(message('https://instagram.com/reel/VxMirrorRuntime/?xtok=secret',5,chat));
   const sent=calls.find(c=>c.method==='sendMessage');
-  assert.equal(sent.data.link_preview_options.url,'https://fkinstagram.com/reel/RevivedRuntime/');
-  assert.match(sent.data.text,/href="https:\/\/instagram.com\/reel\/RevivedRuntime\/"/);
+  assert.equal(sent.data.link_preview_options.url,'https://fxig.seria.moe/reel/VxMirrorRuntime/');
+  assert.match(sent.data.text,/href="https:\/\/instagram.com\/reel\/VxMirrorRuntime\/"/);
   const data=sent.data.reply_markup.inline_keyboard.flat().find(b=>b.callback_data).callback_data;
   await update({update_id:++id,callback_query:{id:'kyrela-retry',from:{id:5},data,
-    message:{message_id:100,chat:{id:chat,type:'supergroup'},text:'Alice',entities:[{type:'text_link',offset:0,length:5,url:'https://instagram.com/reel/RevivedRuntime/'}]}}});
+    message:{message_id:100,chat:{id:chat,type:'supergroup'},text:'Alice',entities:[{type:'text_link',offset:0,length:5,url:'https://instagram.com/reel/VxMirrorRuntime/'}]}}});
   const edit=calls.find(c=>c.method==='editMessageText');
   assert.ok(!/kkclip|kkinstagram/.test(edit.data.link_preview_options.url));
   assert.equal(edit.data.reply_markup.inline_keyboard[0].length,1);
-  assert.match(edit.data.text,/href="https:\/\/instagram.com\/reel\/RevivedRuntime\/"/);
+  assert.match(edit.data.text,/href="https:\/\/instagram.com\/reel\/VxMirrorRuntime\/"/);
 });
 
 
@@ -901,7 +902,7 @@ async function resetHealthAt(platform,provider,stamp) {
 test('three corroborated public-content failures are required before a temporary cooldown',async()=>{
   const stamp=Math.floor(Date.now()/1000)-7200,store=healthStore();await resetHealthAt('instagram','vx',stamp);
   const plan=probePlan(),start=plan.findIndex(p=>p.platform==='instagram'&&p.provider==='vx');
-  const net=async url=>new URL(url).hostname==='vxinstagram.com'?new Response('',{status:404}):publicCard();
+  const net=async url=>new URL(url).hostname==='fxig.seria.moe'?new Response('',{status:404}):publicCard();
   for(let n=0;n<3;n++) {
     if(n)await db.prepare('UPDATE provider_probe_cursor SET cursor=?').bind(start).run();
     await runHealthChecks(store,{net,stamp:stamp+n*3600,batchSize:1});
@@ -939,23 +940,23 @@ test('healthy samples recover a provider and repeated cron delivery is idempoten
 });
 test('health-based selection respects explicit fallback-off and no-account browser preferences',async()=>{
   const stamp=Math.floor(Date.now()/1000),row={cooldown_until:stamp+3600,checked_at:stamp};
-  const health={twitter:{vx:row},instagram:{ee:row}};
+  const health={twitter:{vx:row},instagram:{embeds:row}};
   const fallback=await fixLink('https://instagram.com/reel/HealthFallback/',{}, {},{},fetch,false,health);
-  assert.notEqual(fallback.preview,'https://eeinstagram.com/reel/HealthFallback/');
+  assert.notEqual(fallback.preview,'https://ig.embeds.now/reel/HealthFallback/');
   const forced=await fixLink('https://instagram.com/reel/HealthForced/',{provider_fallback:0},{},{},fetch,false,health);
-  assert.equal(forced.preview,'https://eeinstagram.com/reel/HealthForced/');
+  assert.equal(forced.preview,'https://ig.embeds.now/reel/HealthForced/');
   const browser=await fixLink('https://twitter.com/a/status/1',{}, {twitter:'xcancel'},{},fetch,false,health);
   assert.equal(browser.url,'https://xcancel.com/a/status/1');assert.notEqual(browser.preview,'https://vxtwitter.com/a/status/1');
-  assert.equal(pickHealthy('instagram','ee',{ee:{...row,cooldown_until:stamp-1}},stamp),'ee');
+  assert.equal(pickHealthy('instagram','embeds',{embeds:{...row,cooldown_until:stamp-1}},stamp),'embeds');
 });
 test('runtime avoids quarantined previews and retry skips them without changing saved settings',async()=>{
   const stamp=Math.floor(Date.now()/1000),chat=-6130;
   await db.prepare('DELETE FROM provider_health').run();
-  await db.prepare("INSERT INTO provider_health VALUES('instagram','ee',3,?,?,0,404,'confirmed_sample_failure')").bind(stamp+3600,stamp).run();
+  await db.prepare("INSERT INTO provider_health VALUES('instagram','embeds',3,?,?,0,404,'confirmed_sample_failure')").bind(stamp+3600,stamp).run();
   calls.length=0;await update(message('https://instagram.com/reel/RuntimeHealth/',5,chat));
-  const sent=calls.find(c=>c.method==='sendMessage');assert.ok(sent);assert.ok(!sent.data.link_preview_options.url.includes('eeinstagram.com'));
+  const sent=calls.find(c=>c.method==='sendMessage');assert.ok(sent);assert.ok(!sent.data.link_preview_options.url.includes('ig.embeds.now'));
   calls.length=0;await update({update_id:++id,callback_query:{id:'skip-health',from:{id:5},data:'e:instagram:1',message:{message_id:100,chat:{id:chat,type:'supergroup'},text:'https://instagram.com/reel/RuntimeHealth/'}}});
-  assert.ok(!calls.find(c=>c.method==='editMessageText').data.link_preview_options.url.includes('eeinstagram.com'));
+  assert.ok(!calls.find(c=>c.method==='editMessageText').data.link_preview_options.url.includes('ig.embeds.now'));
   assert.equal(await db.prepare('SELECT * FROM provider_settings WHERE chat_id=?').bind(chat).first(),null);
   await db.prepare('DELETE FROM provider_health').run();
 });
@@ -1031,7 +1032,7 @@ test('multi-link preview selection is sender/admin-only and retains full text an
   calls.length=0;await click(sent,chat,choices[1].callback_data,6);
   assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.find(c=>c.method==='answerCallbackQuery').data.text,/original sender/);
   calls.length=0;await click(sent,chat,choices[1].callback_data,5);
-  const edited=calls.find(c=>c.method==='editMessageText');assert.match(edited.data.link_preview_options.url,/eeinstagram/);assert.match(edited.data.text,/<b>Compare<\/b>/);assert.match(edited.data.text,/x.com/);assert.match(edited.data.text,/Shared by <a href="https:\/\/instagram\.com\/reel\/ChoosePreview\/"/);
+  const edited=calls.find(c=>c.method==='editMessageText');assert.match(edited.data.link_preview_options.url,/ig\.embeds\.now/);assert.match(edited.data.text,/<b>Compare<\/b>/);assert.match(edited.data.text,/x.com/);assert.match(edited.data.text,/Shared by <a href="https:\/\/instagram\.com\/reel\/ChoosePreview\/"/);
   calls.length=0;await click(sent,chat,choices[0].callback_data,7);assert.match(calls.find(c=>c.method==='editMessageText').data.link_preview_options.url,/vxtwitter/);
 });
 test('an outdated multi-link selector cannot change an edited post',async()=>{
@@ -1432,23 +1433,47 @@ test('repair checks alternatives and edits once, preserving the original destina
     await db.prepare('DELETE FROM post_activity WHERE chat_id=?').bind(chat).run();calls.length=0;await update(message('/repair',5,chat,{reply_to_message:{message_id:sent.botId}}));assert.ok(!calls.some(c=>c.method==='editMessageText'));assert.match(calls.at(-1).data.text,/30 seconds/);assert.equal(providerCalls.length,1);
   }finally{providerResponse=null;}
 });
+
+test('repair skips an Instagram error card served with HTTP 200', async () => {
+  const chat = -7420;
+  const sent = await createPost('https://instagram.com/reel/DgKDChjK7IP/', chat);
+  const errorCard = '<meta property="og:title" content="fix instagram embeds">' +
+    '<meta property="og:description" content="Post not found">';
+  const unavailableCard = '<meta property="og:title" content="embeds.now">' +
+    '<meta property="og:description" content="This doesn&#39;t exist anymore, is private, or isn&#39;t available in every region, so it can&#39;t be loaded.">';
+  const errorCards = {'uuinstagram.com': errorCard, 'toinstagram.com': unavailableCard};
+  providerCalls.length = 0;
+  calls.length = 0;
+  providerResponse = url => Object.hasOwn(errorCards, url.hostname)
+    ? new Response(errorCards[url.hostname]) : publicCard();
+  try {
+    await update(message('/repair', 5, chat, {reply_to_message: {message_id: sent.botId}}));
+    assert.deepEqual(providerCalls.map(url => new URL(url).hostname), ['uuinstagram.com', 'toinstagram.com', 'zzinstagram.com']);
+    const edit = calls.find(call => call.method === 'editMessageText');
+    assert.equal(edit.data.link_preview_options.url, 'https://zzinstagram.com/reel/DgKDChjK7IP/');
+    assert.match(edit.data.text, /instagram\.com\/reel\/DgKDChjK7IP\//);
+  } finally {
+    providerResponse = null;
+  }
+});
+
 test('inconclusive repair preserves the preview and continues with the next providers', async () => {
   const chat = -7402;
   const sent = await createPost('https://instagram.com/reel/RepairBlocked/', chat);
   const store = new Store(db);
   const before = JSON.parse((await store.post(chat, sent.botId)).state_json);
   providerCalls.length = 0;
-  providerResponse = url => url.hostname === 'ig.embeds.now'
+  providerResponse = url => url.hostname === 'fxig.seria.moe'
     ? new Response('<meta property="og:title" content="A real post"><meta property="og:image" content="https://cdn.example/photo.jpg">')
     : new Response('', {status: 429});
   const repair = () => update(message('/repair', 5, chat, {reply_to_message: {message_id: sent.botId}}));
   try {
     calls.length = 0;
     await repair();
-    assert.deepEqual(providerCalls.map(url => new URL(url).hostname), ['uuinstagram.com', 'zzinstagram.com', 'toinstagram.com']);
+    assert.deepEqual(providerCalls.map(url => new URL(url).hostname), ['uuinstagram.com', 'toinstagram.com', 'zzinstagram.com']);
     assert.ok(!calls.some(call => call.method === 'editMessageText'));
     const saved = JSON.parse((await store.post(chat, sent.botId)).state_json);
-    assert.equal(saved.links[0].repairAfter, 'to');
+    assert.equal(saved.links[0].repairAfter, 'zz');
     delete saved.links[0].repairAfter;
     assert.deepEqual(saved, before);
     assert.match(calls.at(-1).data.text, /Could not verify/);
@@ -1456,7 +1481,7 @@ test('inconclusive repair preserves the preview and continues with the next prov
     calls.length = 0;
     await repair();
     assert.equal(providerCalls.length, 4);
-    assert.match(calls.find(call => call.method === 'editMessageText').data.link_preview_options.url, /ig\.embeds\.now/);
+    assert.match(calls.find(call => call.method === 'editMessageText').data.link_preview_options.url, /fxig\.seria\.moe/);
   } finally {
     providerResponse = null;
   }
@@ -1492,13 +1517,13 @@ test('private appearance defaults inherit into groups and inline, while group ov
 test('inline alternatives preserve all text and official links and avoid provider fetches',async()=>{
   calls.length=0;providerCalls.length=0;providerResponse=()=>{throw new Error('inline must not probe');};
   try {await update({update_id:++id,inline_query:{id:'provider-choices',from:{id:5},query:'Here https://instagram.com/reel/InlineProviders/?igsh=secret and https://x.com/a/status/InlineProviders?s=20 thanks'}});
-    const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(providerCalls.length,0);assert.ok(results.some(r=>r.title==='instagram · EE'));assert.ok(results.some(r=>r.title==='instagram · VX'));
+    const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(providerCalls.length,0);assert.ok(results.some(r=>r.title==='instagram · EMBEDS'));assert.ok(results.some(r=>r.title==='instagram · VX'));
     assert.ok(results.every(r=>r.input_message_content.message_text==='Here https://instagram.com/reel/InlineProviders/ and https://x.com/a/status/InlineProviders thanks'));assert.ok(new Set(results.map(r=>r.id)).size===results.length);
   }finally{providerResponse=null;}
 });
 test('inline cap keeps a default result for every link',async()=>{
   calls.length=0;await update({update_id:++id,inline_query:{id:'many-choices',from:{id:5},query:Array.from({length:8},(_,n)=>`https://instagram.com/reel/Inline${n}/`).join(' ')}});
-  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(results.length,24);for(let n=0;n<8;n++)assert.equal(results[n].input_message_content.link_preview_options.url,`https://eeinstagram.com/reel/Inline${n}/`);
+  const results=calls.find(c=>c.method==='answerInlineQuery').data.results;assert.equal(results.length,24);for(let n=0;n<8;n++)assert.equal(results[n].input_message_content.link_preview_options.url,`https://ig.embeds.now/reel/Inline${n}/`);
 });
 test('music sharing removes tracking, selects albums and retains Apple song identifiers',()=>{
   const song=musicLink('https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8?si=private&utm_source=private');assert.equal(song,'https://song.link/'+encodeURIComponent('https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8'));
@@ -1560,7 +1585,7 @@ test('Telegram URL entities without a scheme are recognised and cleaned in text 
   const sent = calls.find(c => c.method === 'sendMessage');
   assert.match(sent.data.text, /Watch https:\/\/instagram\.com\/reel\/EntityWithoutScheme\//);
   assert.doesNotMatch(sent.data.text, /igsh/);
-  assert.match(sent.data.link_preview_options.url, /eeinstagram/);
+  assert.match(sent.data.link_preview_options.url, /ig\.embeds\.now/);
   assert.ok(calls.some(c => c.method === 'deleteMessage'));
 
   calls.length = 0;

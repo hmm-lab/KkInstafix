@@ -9,18 +9,21 @@ spec.loader.exec_module(checker)
 
 def test_provider_catalogue_has_current_supported_domains():
     p=providers.PROVIDERS
-    assert p['instagram']['default']=='ee'
+    assert p['instagram']['default']=='embeds'
     assert p['tiktok']['options']['ez']=='tiktokez.com'
     assert p['twitter']['options']['ez']=='xeezz.com'
     assert p['facebook']['options']['bed']=='facebed.seria.moe'
     assert p['threads']['options']['fix']=='fixthreads.seria.moe'
     assert p['pinterest']['options']['ez']=='pinterestez.com'
     assert 'linkedin' not in p
-    assert not {'ez', 'kkclip', 'kk'} & p['instagram']['options'].keys()
+    assert not {'ez', 'kkclip', 'kk', 'ee', 'revived'} & p['instagram']['options'].keys()
 
 def test_error_card_and_login_are_not_healthy_embeds():
     assert not checker.has_usable_embed('<meta property="og:title" content="Log in or sign up"><meta property="og:image" content="logo.png">')
     assert not checker.has_usable_embed('<meta property="og:title" content="Oops, something went wrong"><meta property="og:image" content="error.png">')
+    assert not checker.has_usable_embed('<meta property="og:title" content="fix instagram embeds"><meta property="og:description" content="Post not found">')
+    assert not checker.has_usable_embed('<meta property="og:title" content="embeds.now"><meta property="og:description" content="Sorry, this link couldn’t be loaded.">')
+    assert not checker.has_usable_embed('<meta property="og:title" content="embeds.now"><meta property="og:description" content="This doesn&#39;t exist anymore, is private, or isn&#39;t available in every region.">')
     assert not checker.has_usable_embed('<html>og: error string only</html>')
 
 def test_text_only_posts_and_direct_media_are_valid_embeds():
@@ -33,7 +36,7 @@ def test_instagram_dlrf_share_token_removed_from_original_and_provider_links():
     for host in ("www.instagram.com", "eeinstagram.com"):
         raw = f"https://{host}/reel/example/?dlrf=secret&psln=secret&img_index=2"
         assert clean_url(raw) == f"https://{host}/reel/example/?img_index=2"
-    assert apply_provider("https://instagram.com/reel/example/?dlrf=secret", "instagram", "ee") == "https://eeinstagram.com/reel/example/"
+    assert apply_provider("https://instagram.com/reel/example/?dlrf=secret", "instagram", "embeds") == "https://ig.embeds.now/reel/example/"
 
 
 def test_instagram_dynamic_tokens_removed_but_functional_queries_kept():
@@ -41,7 +44,7 @@ def test_instagram_dynamic_tokens_removed_but_functional_queries_kept():
     for host in ("www.instagram.com", "eeinstagram.com"):
         raw = f"https://{host}/reel/example/?xtok=secret&vrfl=secret&unknown_share_token=secret&img_index=2"
         assert clean_url(raw) == f"https://{host}/reel/example/?img_index=2"
-        assert apply_provider(raw, "instagram", "ee") == "https://eeinstagram.com/reel/example/?img_index=2"
+        assert apply_provider(raw, "instagram", "embeds") == "https://ig.embeds.now/reel/example/?img_index=2"
     assert clean_url("https://example.com/reel/a?xtok=needed") == "https://example.com/reel/a?xtok=needed"
 
 
@@ -51,12 +54,12 @@ def test_gist_review_additions_keep_native_youtube_and_verified_bluesky_options(
     assert p["youtube"]["options"]["koutube"] == "koutube.com"
     assert p["bluesky"]["options"]["boobsky"] == "boobsky.app"
     assert p["bluesky"]["options"]["vx"] == "vxbsky.app"
-    assert p["instagram"]["default"] == "ee"
+    assert p["instagram"]["default"] == "embeds"
 
 
 def test_kyrela_instagram_candidates_and_username_paths():
     from bot import clean_url, apply_provider, INSTAGRAM_CONTENT_RE
-    for key, host in [("to", "toinstagram.com"), ("embeds", "ig.embeds.now"), ("revived", "fkinstagram.com"), ("ins", "ins.so")]:
+    for key, host in [("to", "toinstagram.com"), ("embeds", "ig.embeds.now"), ("vx", "fxig.seria.moe"), ("ins", "ins.so")]:
         assert providers.PROVIDERS["instagram"]["options"][key] == host
         raw = "https://instagram.com/author/reel/abc/?new_token=secret&img_index=2"
         assert clean_url(raw) == "https://instagram.com/author/reel/abc/?img_index=2"
