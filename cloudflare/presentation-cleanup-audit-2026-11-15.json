@@ -1,0 +1,250 @@
+{
+  "reviewed_at": "2026-11-15",
+  "version": "2.0.11",
+  "scope": "Presentation, URL routing and sanitisation; this is not a new network health check of every external service.",
+  "findings": [
+    "Only Instagram used preview-first presentation and bottom attribution.",
+    "Only Instagram and YouTube separated official click-through URLs from proxy previews.",
+    "Supported platforms omitted some generic and host-specific tracking rules.",
+    "Most pasted proxy URLs were not routed back through the official destination logic.",
+    "YouTube short-link canonicalization dropped playlist/index and some playback fields."
+  ],
+  "platforms": {
+    "youtube": {
+      "default": "native",
+      "options": [
+        "native",
+        "koutube"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "instagram": {
+      "default": "ee",
+      "options": [
+        "vx",
+        "ee",
+        "uu",
+        "zz",
+        "to",
+        "embeds",
+        "revived",
+        "ins"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "twitter": {
+      "default": "vx",
+      "options": [
+        "vx",
+        "fx",
+        "fixvx",
+        "fixupx",
+        "ez",
+        "twittpr",
+        "xcancel"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official by default; explicit no-account choices preserved",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "tiktok": {
+      "default": "tnk",
+      "options": [
+        "tnk",
+        "ez",
+        "kk",
+        "fix"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "reddit": {
+      "default": "vx",
+      "options": [
+        "vx",
+        "rx",
+        "rxy",
+        "ez",
+        "redlib"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official by default; explicit no-account choices preserved",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "facebook": {
+      "default": "bed",
+      "options": [
+        "bed"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "threads": {
+      "default": "fix",
+      "options": [
+        "fix",
+        "vx"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "bluesky": {
+      "default": "bskx",
+      "options": [
+        "bskx",
+        "bsyy",
+        "bskye",
+        "xbsky",
+        "fx",
+        "vx",
+        "boobsky"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "piviv": {
+      "default": "ph",
+      "options": [
+        "ph",
+        "pp"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "tumblr": {
+      "default": "tp",
+      "options": [
+        "tp",
+        "txt"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "bilibili": {
+      "default": "vx",
+      "options": [
+        "vx",
+        "fx",
+        "ez"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "snapchat": {
+      "default": "ez",
+      "options": [
+        "ez"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "spotify": {
+      "default": "fx",
+      "options": [
+        "fx"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "twitch": {
+      "default": "fx",
+      "options": [
+        "fx"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "ifunny": {
+      "default": "ez",
+      "options": [
+        "ez"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "furaffinity": {
+      "default": "xfa",
+      "options": [
+        "xfa",
+        "fxr"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "deviantart": {
+      "default": "fix",
+      "options": [
+        "fix",
+        "fx"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "dribbble": {
+      "default": "tv",
+      "options": [
+        "tv"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "kick": {
+      "default": "cl",
+      "options": [
+        "cl"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "weibo": {
+      "default": "ez",
+      "options": [
+        "ez"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "xiaohongshu": {
+      "default": "xky",
+      "options": [
+        "xky"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    },
+    "pinterest": {
+      "default": "ez",
+      "options": [
+        "ez"
+      ],
+      "renderer": "shared preview-first",
+      "click_through": "official",
+      "cleanup": "common tracking + site-specific rules; required query fields preserved"
+    }
+  },
+  "tests": {
+    "worker": 194,
+    "python": 241
+  }
+}

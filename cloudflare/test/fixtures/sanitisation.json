@@ -1,0 +1,164 @@
+[
+  {
+    "name": "youtube content path",
+    "platform": "youtube",
+    "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLdemo&index=2&t=90&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLdemo&index=2&t=90"
+  },
+  {
+    "name": "instagram content path",
+    "platform": "instagram",
+    "input": "https://instagram.com/p/DKMv_h9o_Oj/?img_index=2&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://instagram.com/p/DKMv_h9o_Oj/?img_index=2"
+  },
+  {
+    "name": "twitter content path",
+    "platform": "twitter",
+    "input": "https://twitter.com/jack/status/20?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://twitter.com/jack/status/20"
+  },
+  {
+    "name": "tiktok content path",
+    "platform": "tiktok",
+    "input": "https://tiktok.com/@mxmtoon/video/7354154112285527339?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://tiktok.com/@mxmtoon/video/7354154112285527339"
+  },
+  {
+    "name": "reddit content path",
+    "platform": "reddit",
+    "input": "https://reddit.com/r/pics/comments/92dd8/test/?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://reddit.com/r/pics/comments/92dd8/test/"
+  },
+  {
+    "name": "facebook content path",
+    "platform": "facebook",
+    "input": "https://facebook.com/reel/123456789/?comment_id=123&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://facebook.com/reel/123456789/?comment_id=123"
+  },
+  {
+    "name": "threads content path",
+    "platform": "threads",
+    "input": "https://threads.net/@zuck/post/CuP0PV0g9q-?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://threads.net/@zuck/post/CuP0PV0g9q-"
+  },
+  {
+    "name": "bluesky content path",
+    "platform": "bluesky",
+    "input": "https://bsky.app/profile/bsky.app/post/3n22yg6lg2k2f?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://bsky.app/profile/bsky.app/post/3n22yg6lg2k2f"
+  },
+  {
+    "name": "piviv content path",
+    "platform": "piviv",
+    "input": "https://pixiv.net/en/artworks/12345678?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://pixiv.net/en/artworks/12345678"
+  },
+  {
+    "name": "tumblr content path",
+    "platform": "tumblr",
+    "input": "https://tumblr.com/example/12345678/title?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://tumblr.com/example/12345678/title"
+  },
+  {
+    "name": "bilibili content path",
+    "platform": "bilibili",
+    "input": "https://bilibili.com/video/BV1xx411c7mD/?p=2&t=30&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://bilibili.com/video/BV1xx411c7mD/?p=2&t=30"
+  },
+  {
+    "name": "snapchat content path",
+    "platform": "snapchat",
+    "input": "https://snapchat.com/spotlight/ABCDEFG?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://snapchat.com/spotlight/ABCDEFG"
+  },
+  {
+    "name": "spotify content path",
+    "platform": "spotify",
+    "input": "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
+  },
+  {
+    "name": "twitch content path",
+    "platform": "twitch",
+    "input": "https://twitch.tv/videos/12345678?t=1h2m&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://twitch.tv/videos/12345678?t=1h2m"
+  },
+  {
+    "name": "ifunny content path",
+    "platform": "ifunny",
+    "input": "https://ifunny.co/picture/ABCDEFG?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://ifunny.co/picture/ABCDEFG"
+  },
+  {
+    "name": "furaffinity content path",
+    "platform": "furaffinity",
+    "input": "https://furaffinity.net/view/12345678/?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://furaffinity.net/view/12345678/"
+  },
+  {
+    "name": "deviantart content path",
+    "platform": "deviantart",
+    "input": "https://deviantart.com/artist/art/Example-123456789?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://deviantart.com/artist/art/Example-123456789"
+  },
+  {
+    "name": "dribbble content path",
+    "platform": "dribbble",
+    "input": "https://dribbble.com/shots/12345678-Example?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://dribbble.com/shots/12345678-Example"
+  },
+  {
+    "name": "kick content path",
+    "platform": "kick",
+    "input": "https://kick.com/example?clip=clip_123&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://kick.com/example?clip=clip_123"
+  },
+  {
+    "name": "weibo content path",
+    "platform": "weibo",
+    "input": "https://weibo.com/1234567890/AbCdEf?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://weibo.com/1234567890/AbCdEf"
+  },
+  {
+    "name": "xiaohongshu content path",
+    "platform": "xiaohongshu",
+    "input": "https://xhslink.com/a/Example?xsec_token=needed&xsec_source=pc_share&utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://xhslink.com/a/Example?xsec_token=needed&xsec_source=pc_share"
+  },
+  {
+    "name": "pinterest content path",
+    "platform": "pinterest",
+    "input": "https://pinterest.com/pin/1234567890/?utm_new=secret&gclid=secret&si=secret",
+    "expected": "https://pinterest.com/pin/1234567890/"
+  },
+  {
+    "name": "YouTube Shorts preserves playback and playlist",
+    "platform": "youtube",
+    "input": "https://youtube.com/shorts/abc123?si=secret&t=30&list=PLabc&index=3",
+    "expected": "https://www.youtube.com/watch?v=abc123&t=30&list=PLabc&index=3"
+  },
+  {
+    "name": "YouTube short URL preserves timestamp fragment",
+    "platform": "youtube",
+    "input": "https://youtu.be/abc123?si=secret&t=30#t=45",
+    "expected": "https://www.youtube.com/watch?v=abc123&t=30#t=45"
+  },
+  {
+    "name": "Instagram unknown share token dropped carousel retained",
+    "platform": "instagram",
+    "input": "https://instagram.com/reel/Fixture/?new_share_token=secret&dlrf=secret&psln=secret&img_index=3",
+    "expected": "https://instagram.com/reel/Fixture/?img_index=3"
+  },
+  {
+    "name": "Reddit screenshot share ID with comment navigation",
+    "platform": "reddit",
+    "input": "https://www.reddit.com/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/?share_id=4qxWDRvIIZ4U13bdUE0xf&context=3&sort=new&depth=2#comment",
+    "expected": "https://www.reddit.com/r/IndiaTodayLIVE/comments/1xtbamu/two_men_posing_as_customers_allegedly_stole_a/?context=3&sort=new&depth=2#comment"
+  },
+  {
+    "name": "FurTrack public photo",
+    "platform": "furtrack",
+    "input": "https://www.furtrack.com/p/826598?utm_source=secret&si=secret",
+    "expected": "https://www.furtrack.com/p/826598"
+  }
+]

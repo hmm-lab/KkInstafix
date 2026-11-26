@@ -1,0 +1,10 @@
+{
+  "name": "kkinstafix-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "build": "esbuild src/worker.js --bundle --format=esm --platform=browser --outfile=dist/worker.js"
+  },
+  "devDependencies": {"miniflare": "^4.0.0", "esbuild": "^0.27.0"}
+}

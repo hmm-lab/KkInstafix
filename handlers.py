@@ -34,6 +34,14 @@ PUBLIC_CMDS: Dict[str, Callable] = {}
 ADMIN_CMDS: Dict[str, Callable] = {}
 
 
+def _release_failed_rewrite(chat_id, dedup_before):
+    """Release link reservations when no replacement was delivered."""
+    import bot
+    for key in list(bot._recent_mem):
+        if key[0] == "fix" and key[1] == chat_id and key not in dedup_before:
+            bot._recent_mem.pop(key, None)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming text messages for link rewriting."""
     # Import bot inside function to avoid circular imports
@@ -116,6 +124,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Import bot inside function to avoid circular imports
     import bot
+    dedup_before = {k for k in bot._recent_mem if k[0] == "fix" and k[1] == chat_id}
     new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(text, chat_id, chat_settings)
     if not changed:
         return
@@ -135,7 +144,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         post_text = f"{label}:\n{new_text}" if label else new_text
         post_parse_mode = None
     else:
-        post_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+        post_text = bot.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
         post_parse_mode = "HTML"
 
     # "Try another provider" button — single-link reposts where the platform
@@ -144,124 +153,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if fixed_count == 1 and platform and len(bot.PROVIDERS[platform]["options"]) > 1:
         options = list(bot.PROVIDERS[platform]["options"].keys())
         chosen_idx = options.index(database.get_choice(chat_id, platform))
-        markup = helpers._cycle_keyboard(bot.PROVIDERS, platform, (chosen_idx + 1) % len(options))
+        markup = bot._cycle_keyboard(platform, (chosen_idx + 1) % len(options))
 
     logger.info("Fixed %d link(s) in chat %s for user %s", fixed_count, chat_id, user_id)
 
-    # First, try to delete the original message to see if we have permission
-    deleted = await helpers.safe_delete(context, chat_id, msg.message_id, "link-rewrite-attempt", message=msg)
+    # Send first. A send failure must leave the user's message intact.
+    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"])
+    plain_text = f"{label}:\n{new_text}" if label else new_text
+    sent_msg = await helpers.send_rewrite(
+        context, chat_id, post_text, plain_text, parse_mode=post_parse_mode,
+        preview=preview, markup=markup, reply_to=reply_to,
+        thread_id=getattr(msg, "message_thread_id", None),
+    )
+    if sent_msg:
+        await helpers.safe_delete(context, chat_id, msg.message_id,
+                                  "link-rewrite-delivered", message=msg)
 
-    if deleted:
-        # We can delete the original message, so send the fixed message as a new message
-        sent_msg = None
-
-        # Try multiple fallback strategies for sending the message
-        fallback_attempts = []
-
-        # Attempt 1: full formatted message with link preview options (as reply)
-        fallback_attempts.append((post_text, post_parse_mode, preview, markup, True))  # (text, parse_mode, preview, markup, use_reply_to)
-
-        # Attempt 2: without link preview options (in case of preview issues) (as reply)
-        fallback_attempts.append((post_text, post_parse_mode, None, markup, True))
-
-        # Attempt 3: without parse mode and reply markup (simplest formatting) (as reply)
-        fallback_attempts.append((post_text, None, None, None, True))
-
-        # Attempt 4: just the cleaned URL with label (most essential information) (as reply)
-        cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-        label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-        if label and cleaned_url:
-            fallback_text = f"{label}: {cleaned_url}"
-        elif label:
-            fallback_text = label
-        elif cleaned_url:
-            fallback_text = cleaned_url
-        else:
-            fallback_text = "Link fixed!"  # Last resort fallback
-        fallback_parse_mode = "HTML" if fixed_count == 1 and label else None
-        fallback_attempts.append((fallback_text, fallback_parse_mode, None, None, True))
-
-        # Attempt 5: just the cleaned URL (no label) (as regular message)
-        if cleaned_url:
-            fallback_attempts.append((cleaned_url, None, None, None, False))
-
-        # Attempt 6: simple failure message (as regular message)
-        fallback_attempts.append(("Link fixing failed", None, None, None, False))
-
-        # Attempt 7: single character as absolute last resort (as regular message)
-        fallback_attempts.append((".", None, None, None, False))
-
-        # Try each fallback attempt until one succeeds
-        for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(fallback_attempts):
-            sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, reply_to_message_id=reply_to if use_reply_to else None, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
-            if sent_msg:
-                logger.info("Send succeeded on fallback attempt %d (%s): %s", i+1, "with reply" if use_reply_to else "regular message", fallback_text[:50] if fallback_text else "empty")
-                break
-
-        if not sent_msg:
-            # If all send attempts failed, we have a serious issue (likely no send permission)
-            # Log error but don't try to restore original as that would also fail
-            logger.error("All send attempts failed for chat %s. Bot likely lacks 'Send Messages' permission.", chat_id)
-            # Note: Original message is already deleted, and we can't send anything to inform user
-    else:
-        # We cannot delete the original message, so reply to it in-place with the fixed content
-        sent_msg = None
-
-        # Try multiple fallback strategies for replying
-        reply_fallbacks = []
-
-        # Attempt 1: full formatted message with link preview options (as reply)
-        reply_fallbacks.append((post_text, post_parse_mode, preview, markup, True))  # (text, parse_mode, preview, markup, use_reply_to)
-
-        # Attempt 2: without link preview options (as reply)
-        reply_fallbacks.append((post_text, post_parse_mode, None, markup, True))
-
-        # Attempt 3: without parse mode and reply markup (as reply)
-        reply_fallbacks.append((post_text, None, None, None, True))
-
-        # Attempt 4: just the cleaned URL with label (most essential information) (as reply)
-        cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-        label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-        if label and cleaned_url:
-            reply_text = f"{label}: {cleaned_url}"
-        elif label:
-            reply_text = label
-        elif cleaned_url:
-            reply_text = cleaned_url
-        else:
-            reply_text = "Link fixed!"
-        reply_parse_mode = "HTML" if fixed_count == 1 and label else None
-        reply_fallbacks.append((reply_text, reply_parse_mode, None, None, True))
-
-        # Attempt 5: just the cleaned URL (no label) (as regular message)
-        if cleaned_url:
-            reply_fallbacks.append((cleaned_url, None, None, None, False))
-
-        # Attempt 6: simple failure message (as regular message)
-        reply_fallbacks.append(("Link fixing failed", None, None, None, False))
-
-        # Attempt 7: single character as absolute last resort (as regular message)
-        reply_fallbacks.append((".", None, None, None, False))
-
-        # Try each fallback attempt until one succeeds
-        for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(reply_fallbacks):
-            try:
-                if use_reply_to:
-                    # Attempt to reply to the original message
-                    sent_msg = await msg.reply_text(fallback_text, link_preview_options=fallback_preview, parse_mode=fallback_parse_mode, reply_markup=fallback_markup)
-                else:
-                    # Attempt to send as a normal message (not a reply)
-                    sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
-                if sent_msg:
-                    logger.info("Reply succeeded on fallback attempt %d (%s): %s", i+1, "with reply" if use_reply_to else "regular message", fallback_text[:50] if fallback_text else "empty")
-                    break
-            except Exception as e:
-                logger.warning("Reply fallback attempt %d (%s) failed: %s", i+1, "with reply" if use_reply_to else "regular message", e)
-                continue
-
-        if not sent_msg:
-            # If all reply attempts failed, we have a serious issue
-            logger.error("All reply attempts failed for chat %s. Bot likely lacks permission to send messages.", chat_id)
+    if not sent_msg:
+        _release_failed_rewrite(chat_id, dedup_before)
+        return
 
     if sent_msg:
         for plat in fixed_platforms:
@@ -307,12 +217,13 @@ async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Import bot inside function to avoid circular imports
     import bot
+    dedup_before = {k for k in bot._recent_mem if k[0] == "fix" and k[1] == chat_id}
     new_caption, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(msg.caption, chat_id, chat_settings)
     if not changed:
         return
 
     reply_to = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
-    clean_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+    clean_text = bot.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
     preview = LinkPreviewOptions(
         is_disabled=False,
         url=first_preview_url,
@@ -322,69 +233,17 @@ async def handle_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     logger.info("Fixed caption link in chat %s for user %s", chat_id, user_id)
 
-    # Try multiple fallback strategies for replying
-    sent_msg = None
+    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"])
+    plain_text = f"{label}:\n{new_caption}" if label else new_caption
+    sent_msg = await helpers.send_rewrite(
+        context, chat_id, clean_text, plain_text, parse_mode="HTML",
+        preview=preview, markup=None, reply_to=reply_to,
+        thread_id=getattr(msg, "message_thread_id", None),
+    )
 
-    # Prepare the base content
-    clean_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
-    preview = LinkPreviewOptions(
-        is_disabled=False,
-        url=first_preview_url,
-        prefer_large_media=True,
-        show_above_text=False,
-    ) if first_fixed_url else None
-
-    # Try multiple fallback strategies for replying
-    reply_fallbacks = []
-
-    # Attempt 1: full formatted message with link preview options (as reply)
-    reply_fallbacks.append((clean_text, "HTML", preview, None, True))  # (text, parse_mode, preview, markup, use_reply_to)
-
-    # Attempt 2: without link preview options (as reply)
-    reply_fallbacks.append((clean_text, "HTML", None, None, True))
-
-    # Attempt 3: without parse mode (simplest formatting) (as reply)
-    reply_fallbacks.append((clean_text, None, None, None, True))
-
-    # Attempt 4: just the cleaned URL with label (most essential information) (as reply)
-    cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-    if label and cleaned_url:
-        reply_text = f"{label}: {cleaned_url}"
-    elif label:
-        reply_text = label
-    elif cleaned_url:
-        reply_text = cleaned_url
-    else:
-        reply_text = "Link fixed!"
-    reply_parse_mode = "HTML" if fixed_count == 1 and label else None
-    reply_fallbacks.append((reply_text, reply_parse_mode, None, None, True))
-
-    # Attempt 5: just the cleaned URL (no label) (as regular message)
-    if cleaned_url:
-        reply_fallbacks.append((cleaned_url, None, None, None, False))
-
-    # Attempt 6: simple failure message (as regular message)
-    reply_fallbacks.append(("Link fixing failed", None, None, None, False))
-
-    # Attempt 7: single character as absolute last resort (as regular message)
-    reply_fallbacks.append((".", None, None, None, False))
-
-    # Try each fallback attempt until one succeeds
-    for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(reply_fallbacks):
-        try:
-            if use_reply_to:
-                # Attempt to reply to the original message
-                sent_msg = await msg.reply_text(fallback_text, link_preview_options=fallback_preview, parse_mode=fallback_parse_mode, reply_markup=None)
-            else:
-                # Attempt to send as a normal message (not a reply)
-                sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=None)
-            if sent_msg:
-                logger.info("Reply succeeded on fallback attempt %d (%s): %s", i+1, "with reply" if use_reply_to else "regular message", fallback_text[:50] if fallback_text else "empty")
-                break
-        except Exception as e:
-            logger.warning("Reply fallback attempt %d (%s) failed: %s", i+1, "with reply" if use_reply_to else "regular message", e)
-            continue
+    if not sent_msg:
+        _release_failed_rewrite(chat_id, dedup_before)
+        return
 
     if sent_msg:
         for plat in fixed_platforms:
@@ -427,6 +286,7 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Import bot inside function to avoid circular orbits
     import bot
+    dedup_before = {k for k in bot._recent_mem if k[0] == "fix" and k[1] == chat_id}
     new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
@@ -446,7 +306,7 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         post_text = f"{label}:\n{new_text}" if label else new_text
         post_parse_mode = None
     else:
-        post_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
+        post_text = bot.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
         post_parse_mode = "HTML"
 
     # "Try another provider" button — single-link reposts where the platform
@@ -455,72 +315,21 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if fixed_count == 1 and platform and len(bot.PROVIDERS[platform]["options"]) > 1:
         options = list(bot.PROVIDERS[platform]["options"].keys())
         chosen_idx = options.index(database.get_choice(chat_id, platform))
-        markup = helpers._cycle_keyboard(bot.PROVIDERS, platform, (chosen_idx + 1) % len(options))
+        markup = bot._cycle_keyboard(platform, (chosen_idx + 1) % len(options))
 
     logger.info("Fixed edited message link in chat %s for user %s", chat_id, user_id)
 
-    # Try multiple fallback strategies for replying
-    sent_msg = None
+    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"])
+    plain_text = f"{label}:\n{new_text}" if label else new_text
+    sent_msg = await helpers.send_rewrite(
+        context, chat_id, post_text, plain_text, parse_mode=post_parse_mode,
+        preview=preview, markup=markup, reply_to=reply_to,
+        thread_id=getattr(msg, "message_thread_id", None),
+    )
 
-    # Prepare the base content
-    preview = LinkPreviewOptions(
-        is_disabled=False,
-        url=first_preview_url,
-        prefer_large_media=True,
-        show_above_text=False,
-    ) if first_fixed_url else None
-
-    # Try multiple fallback strategies for replying
-    reply_fallbacks = []
-
-    # Attempt 1: full formatted message with link preview options (as reply)
-    reply_fallbacks.append((post_text, post_parse_mode, preview, markup, True))  # (text, parse_mode, preview, markup, use_reply_to)
-
-    # Attempt 2: without link preview options (as reply)
-    reply_fallbacks.append((post_text, post_parse_mode, None, markup, True))
-
-    # Attempt 3: without parse mode and reply markup (as reply)
-    reply_fallbacks.append((post_text, None, None, None, True))
-
-    # Attempt 4: just the cleaned URL with label (most essential information) (as reply)
-    cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-    if label and cleaned_url:
-        reply_text = f"{label}: {cleaned_url}"
-    elif label:
-        reply_text = label
-    elif cleaned_url:
-        reply_text = cleaned_url
-    else:
-        reply_text = "Link fixed!"
-    reply_parse_mode = "HTML" if fixed_count == 1 and label else None
-    reply_fallbacks.append((reply_text, reply_parse_mode, None, None, True))
-
-    # Attempt 5: just the cleaned URL (no label) (as regular message)
-    if cleaned_url:
-        reply_fallbacks.append((cleaned_url, None, None, None, False))
-
-    # Attempt 6: simple failure message (as regular message)
-    reply_fallbacks.append(("Link fixing failed", None, None, None, False))
-
-    # Attempt 7: single character as absolute last resort (as regular message)
-    reply_fallbacks.append((".", None, None, None, False))
-
-    # Try each fallback attempt until one succeeds
-    for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(reply_fallbacks):
-        try:
-            if use_reply_to:
-                # Attempt to reply to the original message
-                sent_msg = await msg.reply_text(fallback_text, link_preview_options=fallback_preview, parse_mode=fallback_parse_mode, reply_markup=fallback_markup)
-            else:
-                # Attempt to send as a normal message (not a reply)
-                sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=fallback_markup)
-            if sent_msg:
-                logger.info("Reply succeeded on fallback attempt %d (%s): %s", i+1, "with reply" if use_reply_to else "regular message", fallback_text[:50] if fallback_text else "empty")
-                break
-        except Exception as e:
-            logger.warning("Reply fallback attempt %d (%s) failed: %s", i+1, "with reply" if use_reply_to else "regular message", e)
-            continue
+    if not sent_msg:
+        _release_failed_rewrite(chat_id, dedup_before)
+        return
 
     if sent_msg:
         for plat in fixed_platforms:
@@ -830,6 +639,7 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Import bot inside function to avoid circular imports
     import bot
+    dedup_before = {k for k in bot._recent_mem if k[0] == "fix" and k[1] == chat_id}
     new_text, changed, first_fixed_url, platform, first_preview_url, fixed_count, fixed_platforms, first_raw_url = await bot.process_text(msg.text, chat_id, chat_settings)
     if not changed:
         return
@@ -843,63 +653,23 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         show_above_text=False,
     ) if first_fixed_url else None
 
+    base_text = bot.format_repost_text(
+        msg.from_user, chat_settings["sender_mode"], platform=platform,
+        url=first_fixed_url,
+    )
     logger.info("Fixed channel post link in chat %s for user %s", chat_id, user_id)
 
-    # Try multiple fallback strategies for sending the message
-    sent_msg = None
+    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"])
+    plain_text = f"{label}:\n{new_text}" if label else new_text
+    sent_msg = await helpers.send_rewrite(
+        context, chat_id, base_text, plain_text, parse_mode="HTML",
+        preview=preview, markup=None, reply_to=None,
+        thread_id=getattr(msg, "message_thread_id", None),
+    )
 
-    # Prepare the base content
-    base_text = helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url)
-    preview = helpers.LinkPreviewOptions(
-        is_disabled=False,
-        url=first_preview_url,
-        prefer_large_media=True,
-        show_above_text=False,
-    ) if first_fixed_url else None
-
-    # Try multiple fallback strategies for sending the message
-    fallback_attempts = []
-
-    # Attempt 1: full formatted message with link preview options
-    fallback_attempts.append((base_text, "HTML", preview, None, False))  # (text, parse_mode, preview, markup, use_reply_to) - markup not used in channel posts
-
-    # Attempt 2: without link preview options (in case of preview issues)
-    fallback_attempts.append((base_text, "HTML", None, None, False))
-
-    # Attempt 3: without parse mode (simplest formatting)
-    fallback_attempts.append((base_text, None, None, None, False))
-
-    # Attempt 4: just the cleaned URL with label (most essential information)
-    cleaned_url = helpers.strip_tracking(first_raw_url) if first_raw_url else ""
-    label = helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or ""
-    if label and cleaned_url:
-        fallback_text = f"{label}: {cleaned_url}"
-    elif label:
-        fallback_text = label
-    elif cleaned_url:
-        fallback_text = cleaned_url
-    else:
-        fallback_text = "Link fixed!"  # Last resort fallback
-    fallback_parse_mode = "HTML" if fixed_count == 1 and label else None
-    fallback_attempts.append((fallback_text, fallback_parse_mode, None, None, False))
-
-    # Attempt 5: just the cleaned URL (no label)
-    if cleaned_url:
-        fallback_attempts.append((cleaned_url, None, None, None, False))
-
-    # Attempt 6: simple failure message
-    fallback_attempts.append(("Link fixing failed", None, None, None, False))
-
-    # Attempt 7: single character as absolute last resort
-    fallback_attempts.append((".", None, None, None, False))
-
-    # Try each fallback attempt until one succeeds
-    for i, (fallback_text, fallback_parse_mode, fallback_preview, fallback_markup, use_reply_to) in enumerate(fallback_attempts):
-        # Note: For channel posts, we don't use reply_to (use_reply_to is ignored)
-        sent_msg = await helpers.safe_send_text(context, chat_id, fallback_text, parse_mode=fallback_parse_mode, link_preview_options=fallback_preview, reply_markup=None)
-        if sent_msg:
-            logger.info("Send succeeded on fallback attempt %d: %s", i+1, fallback_text[:50] if fallback_text else "empty")
-            break
+    if not sent_msg:
+        _release_failed_rewrite(chat_id, dedup_before)
+        return
 
     if sent_msg:
         for plat in fixed_platforms:
@@ -909,7 +679,7 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                               helpers.sender_label(msg.from_user, chat_settings["sender_mode"]) or "")
         if sent_msg and first_preview_url and fixed_count == 1:
             asyncio.create_task(
-                helpers._warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, helpers.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url))
+                helpers._warn_if_restricted(context, chat_id, sent_msg.message_id, first_preview_url, bot.format_repost_text(msg.from_user, chat_settings["sender_mode"], platform=platform, url=first_fixed_url))
             )
 
 

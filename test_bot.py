@@ -58,7 +58,7 @@ def test_get_platform_subdomains():
 
 
 def test_get_platform_skips_fixer_hosts():
-    assert bot.get_platform("kkclip.com", "/p/abc") is None
+    assert bot.get_platform("ig.embeds.now", "/p/abc") is None
     assert bot.get_platform("vxtwitter.com", "/x/status/1") is None
     assert bot.get_platform("xcancel.com", "/user/status/1") is None
     assert bot.get_platform("redlib.org", "/r/test") is None
@@ -72,14 +72,14 @@ def test_get_platform_unknown():
 # ── apply_provider ────────────────────────────────────────────────────────────
 
 def test_apply_provider_replaces_host():
-    out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "kkclip")
-    assert "kkclip.com" in out
-    assert "instagram.com" not in out
+    out = bot.apply_provider("https://instagram.com/p/abc", "instagram", "embeds")
+    assert "ig.embeds.now" in out
+    assert "https://instagram.com" not in out
     assert "/p/abc" in out
 
 
 def test_apply_provider_strips_tracking():
-    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "kkclip")
+    out = bot.apply_provider("https://instagram.com/p/abc?igshid=1&utm_source=ig", "instagram", "embeds")
     assert "igshid" not in out
     assert "utm_source" not in out
 
@@ -753,8 +753,8 @@ def test_get_platform_youtube_live_and_mobile():
     assert bot.get_platform("youtube.com", "/live/abcDEF") == "youtube_watch"
     assert bot.get_platform("m.youtube.com", "/shorts/abc") == "youtube_watch"
     assert bot.get_platform("m.youtube.com", "/live/abc") == "youtube_watch"
-    # plain watch / profile paths are not rewritten (Telegram previews them fine)
-    assert bot.get_platform("youtube.com", "/watch") is None
+    # Watch URLs now support the optional YouTube provider; native remains default.
+    assert bot.get_platform("youtube.com", "/watch") == "youtube"
     assert bot.get_platform("youtube.com", "/@channel") is None
 
 
@@ -1226,7 +1226,7 @@ def test_migrate_chat_settings_adds_missing_columns():
     # Pre-existing row gets the new columns at their declared defaults.
     row = conn.execute("SELECT * FROM chat_settings WHERE chat_id = -1").fetchone()
     assert row["caption_style"] == "reply"
-    assert row["text_spam"] == 1
+    assert row["text_spam"] == 0
 
 
 def test_migrate_chat_settings_is_idempotent():

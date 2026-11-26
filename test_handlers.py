@@ -139,8 +139,15 @@ class FakeUpdate:
 
 
 @pytest.fixture(autouse=True)
-def _isolate(monkeypatch):
+def _isolate(monkeypatch, tmp_path):
     """Fresh DB caches and no background restriction task per test."""
+    import database
+    monkeypatch.setattr(database, "DB_FILE", str(tmp_path / "test.sqlite3"))
+    monkeypatch.setattr(database, "_conn", None)
+    for name in ("_settings_cache", "_providers_cache", "_muted_cache",
+                 "_platform_override_cache", "_optout_cache", "_known_chats",
+                 "_user_settings_cache"):
+        getattr(database, name).clear()
     bot.init_db()
     # Clear platform overrides table to ensure clean state for platform enabling/disabling
     conn = bot.db_connect()
@@ -165,7 +172,11 @@ def _isolate(monkeypatch):
     # The link-rewrite path spawns a restriction-check task; stub it out so tests
     # don't touch the network or leave pending tasks.
     monkeypatch.setattr(bot, "_warn_if_restricted", _noop)
+    async def _alive(url):
+        return True
+    monkeypatch.setattr(bot, "provider_alive", _alive)
     yield
+    database._conn.close()
 
 
 def run(coro):
@@ -229,6 +240,7 @@ def test_handle_message_admin_command_allowed_for_admin():
 
 def test_handle_message_dedupes_repeated_text():
     cid = -1107
+    bot.update_chat_setting(cid, "text_spam", 1)
     fb = FakeBot()
 
     def mk(mid):
@@ -383,8 +395,8 @@ def test_handle_caption_fixes_link():
     msg = FakeMessage(caption="my pic https://twitter.com/u/status/1",
                       user=FakeUser(5, "Bob"), chat=FakeChat(-1301), bot=fb, message_id=1)
     run(bot.handle_caption(FakeUpdate(message=msg, update_id=301), FakeContext(fb)))
-    assert msg.replies, "caption handler should reply with the fixed link"
-    assert "vxtwitter.com" in msg.replies[0].text
+    assert fb.sent, "caption handler should send the fixed link as a reply"
+    assert "vxtwitter.com" in fb.sent[0].text
 
 
 def test_handle_edit_fixes_link():
@@ -392,8 +404,8 @@ def test_handle_edit_fixes_link():
     edited = FakeMessage(text="edited https://twitter.com/u/status/1",
                          user=FakeUser(5, "Bob"), chat=FakeChat(-1302), bot=fb, message_id=1)
     run(bot.handle_edit(FakeUpdate(edited_message=edited, update_id=302), FakeContext(fb)))
-    assert edited.replies
-    assert "vxtwitter.com" in edited.replies[0].text
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
 
 
 def test_handle_channel_post_fixes_link():
@@ -410,11 +422,11 @@ def test_handle_message_replies_when_delete_not_permitted():
     msg = FakeMessage(text="https://twitter.com/u/status/1", user=FakeUser(5, "Bob"),
                       chat=FakeChat(-1304), bot=fb, message_id=1, delete_fails=True)
     run(bot.handle_message(FakeUpdate(msg, update_id=304), FakeContext(fb)))
-    # Could not delete → must fall back to replying in-place, not send a new post.
+    # Delivery succeeds before deletion is attempted. Without delete permission,
+    # both the original and the successfully delivered rewrite remain visible.
     assert not msg.deleted
-    assert msg.replies
-    assert "vxtwitter.com" in msg.replies[0].text
-    assert not fb.sent
+    assert fb.sent
+    assert "vxtwitter.com" in fb.sent[0].text
 
 
 # ── /clean command handler ────────────────────────────────────────────────────
@@ -640,8 +652,8 @@ def test_handle_caption_stores_rewrite_for_undo():
     msg = FakeMessage(caption=f"my photo {raw_url}", user=FakeUser(5, "Bob"),
                       chat=FakeChat(cid), bot=fb, message_id=1)
     run(bot.handle_caption(FakeUpdate(message=msg, update_id=402), FakeContext(fb)))
-    assert msg.replies, "caption handler should reply with the fixed link"
-    sent_id = msg.replies[0].message_id
+    assert fb.sent, "caption handler should send the fixed link as a reply"
+    sent_id = fb.sent[0].message_id
     original, sender = bot.lookup_rewrite(cid, sent_id)
     assert original == raw_url
     assert "Bob" in sender
@@ -699,8 +711,8 @@ def test_handle_message_channel_post():
     run(bot.handle_message(FakeUpdate(msg, update_id=104), FakeContext(fb)))
     # Channel posts should be rewritten and sent
     assert not msg.deleted  # Original not deleted for channels
-    assert msg.replies  # But a reply should be sent
-    assert "vxtwitter.com" in msg.replies[0].text
+    assert fb.sent  # The delivered rewrite remains alongside the original.
+    assert "vxtwitter.com" in fb.sent[0].text
 
 
 def test_handle_message_edited_message():

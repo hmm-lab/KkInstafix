@@ -4,6 +4,11 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  workflow_call:
+    inputs:
+      base_sha:
+        required: true
+        type: string
 
 jobs:
   pytest:
@@ -32,3 +37,38 @@ jobs:
 
       - name: Provider checker smoke test (build URLs, no network)
         run: python -c "import tools.check_providers as c; assert len(list(c.build_check_urls())) > 0; print('check_providers OK')"
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release documentation and generated configuration
+        env:
+          REVIEW_BASE: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ -z "$REVIEW_BASE" || "$REVIEW_BASE" =~ ^0+$ ]]; then
+            REVIEW_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH")
+          fi
+          python tools/check_release.py --base "$REVIEW_BASE"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+      - run: npm ci --prefix cloudflare
+      - run: npm run build --prefix cloudflare
+      - run: npm test --prefix cloudflare
+      - run: python tools/release_cloudflare.py --dry-run
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: worker-${{ github.sha }}
+          path: cloudflare/dist/worker.js
+          if-no-files-found: error
+          retention-days: 7

@@ -48,7 +48,7 @@ DEFAULT_CHAT_SETTINGS = {
     "ignore_forwards": 1,
     "provider_fallback": 1,
     "caption_style": "reply",
-    "text_spam": 1,
+    "text_spam": 0,
 }
 
 _SETTING_INT_BOOL = frozenset({"enabled", "ignore_forwards", "provider_fallback", "text_spam"})
@@ -141,7 +141,7 @@ def init_db() -> None:
             ignore_forwards INTEGER NOT NULL DEFAULT 1,
             provider_fallback INTEGER NOT NULL DEFAULT 1,
             caption_style TEXT NOT NULL DEFAULT 'reply',
-            text_spam INTEGER NOT NULL DEFAULT 1
+            text_spam INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS provider_settings (
@@ -230,7 +230,7 @@ _CHAT_SETTINGS_COLUMNS = [
     ("ignore_forwards", "INTEGER NOT NULL DEFAULT 1"),
     ("provider_fallback", "INTEGER NOT NULL DEFAULT 1"),
     ("caption_style", "TEXT NOT NULL DEFAULT 'reply'"),
-    ("text_spam", "INTEGER NOT NULL DEFAULT 1"),
+    ("text_spam", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

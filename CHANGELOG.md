@@ -6,6 +6,293 @@ All notable changes to KkInstafix are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Use Embeds.now as the default Instagram preview. Switch `vx` to its working mirror, retire the Eeinstagram and InstaFix Revived preview options, and recognise the old domains on pasted links.
+- Skip Instagram provider error cards during `/repair` and scheduled checks even when the provider returns HTTP 200.
+
+### Documentation
+
+- Backfilled the Cloudflare release history from 2.0.0 through 2.0.11.
+- Added release guidance requiring the changelog, behaviour documentation and relevant provider audit notes to stay aligned.
+
+## [2.4.1] - 2026-11-18
+
+### Fixed
+
+- Recognise supported pasted URLs in Telegram text and caption entities when the scheme is omitted.
+- Explain the eight-link limit in `/clean` and `/preview` without echoing the original tracking URLs.
+- Restore complete chat backups in one database transaction. Partial imports merge with existing settings. Limit restores by file size and available database writes.
+- Link the sender's name to the currently selected post when preview selection changes.
+- Continue the next `/repair` attempt from the last provider checked, with up to three providers per attempt.
+- Deduplicate cleaned destinations while preserving functional parameters such as carousel and playback positions.
+- Authenticate webhook and administrative POST requests before reading the D1 quota ledger.
+
+- Record a restore receipt with the configuration change and reserve D1 writes atomically before a bulk restore. Add an index for chat-scoped user settings.
+- Separate setup and admin credentials and keep public liveness checks independent of D1.
+- Use the same provider eligibility checks for fallback, legacy Retry, and repair. Recheck quarantined providers sooner.
+- Verify migrations, cron, the exact Worker build, and live Telegram delivery in staging and production. Rollback checks the deployment and version IDs returned by Cloudflare.
+
+## [2.4.0] - 2026-11-15
+
+### Added
+
+- On-demand `/repair` checks up to three configured providers, respects spoilers and a per-user/chat cooldown, and safely edits the existing post using the recovery journal. Inconclusive results keep the post unchanged. The current backend is never misreported as an alternative; sole-provider posts suggest `/refresh`.
+- Inline provider choices preserve surrounding text and all clean links, with at most 24 results and no inline health probes.
+- Optional `/music` and inline Songlink/Albumlink sharing with locally generated redirects; ordinary Spotify previews retain their default provider.
+- Sender-specific attribution and compact preview settings through `/appearance`, with private defaults, group overrides and layout retained across retries.
+- In-Telegram remaining bot allowances and UTC reset time in `/status`, including bounded authenticated inspection during a normal pause.
+- FurTrack photo previews after two public metadata checks; cleaned official destinations remain clickable. Imgur investigated and left disabled because samples returned generic download pages.
+
+### Changed
+
+- Reject missing FurTrack/error metadata during probes. Extend sanitisation fixtures and runtime regression coverage to the new behaviour.
+- Keep existing Free plan, safety thresholds, hourly probe schedule and single Retry control. No paid service or schema migration required.
+
+## [2.3.1] - 2026-11-15
+
+### Added
+
+- A D1-backed UTC usage ledger and conservative bot-specific daily safety thresholds, with paused processing before normal D1 allowances are exhausted and reserved maintenance headroom.
+- Per-invocation guards for D1 statement slots, outgoing fetches and optional Cache API calls; protected diagnostics expose configured limits and ledger usage.
+- Kept Cloudflare’s built-in 10 ms Free CPU limit, rejected paid-only custom CPU configuration and legacy usage models in release metadata, and sampled logs at 10% with zero trace sampling.
+
+### Changed
+
+- Removed duplicate HTML rendering and limited short-link expansion concurrency to four.
+- Production health checks rotate two providers hourly and read at most 8 KiB per HTML probe. Truncated metadata is inconclusive, not a provider failure.
+- Bounded expired-row deletion to 250 per table/run, indexed recovery expiry by original post timestamp, and limited imports to 32 SQL statements.
+- Documented account-wide limits, pause/drop behaviour, billing-access limitations and the distinction between application guardrails and Cloudflare's plan/billing enforcement.
+
+### Deployment
+
+- Added additive migration `cloudflare/migrations/0005-free-budget.sql` before the Worker upload. No paid services or plan upgrades enabled.
+
+### Validation
+
+- Passed 311 Worker tests and 253 Python tests (564 total), including budget enforcement, daily pause/reset, bounded cleanup, expansion concurrency, probe truncation and release metadata.
+
+## [2.3.0] - 2026-11-15
+
+### Fixed
+
+- Report preview success only after confirmed edits and saved state, explain rejected edits, and block muted users from all callbacks.
+- Journal desired post edits and atomically commit control/undo metadata with an operation receipt. Redelivery safely reconciles partial failures and ambiguous edit timeouts without advancing providers twice or sending duplicate reposts.
+- Preserve valid preview controls during formatting fallback, retaining spoiler suppression in every attempt.
+- Explain oversized source edits without exposing their URLs or silently leaving a stale repost.
+
+### Added
+
+- One-second per-post tap coalescing, current provider/position on the existing Retry button, and `/refresh` for a same-provider preview refresh while keeping official destinations clean.
+- Paginated six-platform menus with friendly names, provider keys and hostnames.
+- Regional, expiring Cache API entries for provider health (30 seconds) and successful short-link expansion (5 minutes, 8 KiB per entry), with no cached mute/user preferences.
+
+### Changed
+
+- Reduced settings loading from seven SQL queries to four and removed unnecessary health/preference loads from plain messages and preview retries.
+- Bounded message-wide short-link network expansion to sixteen requests while retaining a four-request per-URL limit.
+- Made plain-text spam deletion opt-in for new chats in both runtimes, preserving existing saved choices.
+- Kept completed recovery receipts minimal and expired recovery/activity records with their post.
+
+### Deployment
+
+- Added additive D1 migration `cloudflare/migrations/0004-edit-recovery.sql`, required before the Worker upload.
+
+### Validation
+
+- Passed 302 Worker tests and 251 Python tests (553 total), including injected post-edit storage failures, atomic undo recovery, repeated callbacks, ambiguous timeouts, mute protection, caching, rapid taps, refresh and menu pagination.
+
+## [2.2.2] - 2026-11-15
+
+### Changed
+
+- Retry preview continues cycling after the last provider instead of stopping, including previously exhausted posts. Each completed round resets that post's retry history.
+- Continue skipping temporarily quarantined backends, with a temporary-unavailability message only when none can be selected.
+- Skip browser aliases during retry selection, retaining official click-through destinations and explicitly chosen browser frontends across cycle boundaries.
+
+### Validation
+
+- Passed 283 Worker tests and 251 Python tests (534 total), including multiple complete cycles, reopening exhausted Reddit posts with tracking cleanup, and recovery after quarantine.
+
+## [2.2.1] - 2026-11-15
+
+### Fixed
+
+- Removed Reddit `share_id` from official click-through links and proxy previews, including uppercase/repeated keys, while retaining comment navigation and fragments.
+- Applied the shared rule to `/clean`, inline output, captions and the legacy Python runtime without stripping other sites' `share_id` parameters.
+- Re-cleaned persisted post targets when retrying, accepting old URL fingerprints and preserving tried-provider history and original undo data, even when alternatives are exhausted.
+
+### Validation
+
+- Passed 282 Worker tests and 251 Python tests (533 total), including the reported Reddit path across provider options, commands, inline output and pre-fix stored posts.
+
+## [2.2.0] - 2026-11-15
+
+### Added
+
+- Durable per-post retry history, skipping already tried or quarantined preview backends and explaining exhaustion without cycling back.
+- Sender/admin preview selection for multi-link reposts, including unchanged ordinary URLs; inline mode offers each preview choice while retaining the full message.
+- Edit synchronisation for surviving text originals, captions and channel posts, refreshing the existing repost and undo snapshot without duplicate messages, rewrite counts or posting reservations.
+- Permission-aware `/status` with specific guidance for group visibility, send rights, previews and deleting originals.
+- Offline sanitisation fixtures for all 22 platforms, exercised across every configured provider option, including pasted proxy URLs, functional parameters and idempotent cleanup.
+- Manual GitHub release workflow with tests, documentation/version checks, additive migrations, deployment verification, rollback artifacts and guarded restoration on failed verification. Unattended deployment requires configured GitHub environment secrets and the workflow on the default branch.
+
+### Fixed
+
+- Preserved YouTube timestamp fragments while normalising short links and Shorts.
+- Kept explicit browser frontend destinations during repeated preview retries.
+- Rejected stale preview selections and older source edits, serialized concurrent post controls, and retained spoiler suppression through edits.
+
+### Deployment
+
+- Added additive D1 migration `cloudflare/migrations/0003-post-controls.sql`; existing Worker secret bindings and free hosting remain unchanged.
+- Centralised the Worker version in `cloudflare/src/version.js`.
+
+### Validation
+
+- Passed 277 Worker tests and 250 Python tests (527 total), including mocked release success, migration failures, rollback verification and concurrent-deployment protection. External provider availability is not established by offline tests.
+
+## [2.1.0] - 2026-11-15
+
+### Added
+
+- Preserved Telegram text/caption formatting and native entity delivery fallbacks, with spoiler-safe preview suppression.
+- Kept full surrounding text and multiple URLs in inline results, with explicit size/link-limit explanations.
+- Added `/diagnose` for cleaned destinations, preview providers, removed parameter names, cached health and skip reasons, masking query values without consuming posting quotas.
+- Added bounded hourly provider checks on fixed public samples, corroborated failure detection and temporary six-hour fallback after three confirmed failures. Access blocks, timeouts and profile-only probes cannot quarantine providers.
+- Added full original-message snapshots for seven-day `/undo`, including original entities and supported single attachments/captions; historical entries retain explicit URL-only fallback.
+
+### Fixed
+
+- Saved the original snapshot before deleting a successfully replaced text message; storage failures preserve the original.
+- Preserved saved provider preferences while automatic fallback and manual retries skip temporarily quarantined preview backends.
+
+### Deployment
+
+- Added idempotent D1 migration `cloudflare/migrations/0002-improvements.sql`, required before uploading the new Worker; clean-install schema includes it.
+
+### Validation
+
+- Passed 227 Worker tests with local D1 and mocked Telegram, plus 241 Python tests (468 total), including formatting, spoilers, inline messages, diagnostics, undo, failure safety and bounded health monitoring. External provider availability is not established by these tests.
+
+## [2.0.11] - 2026-11-15
+
+### Changed
+
+- Applied one preview-first renderer and bottom linked “Shared by” attribution to all 22 supported platforms, including YouTube, captions and multi-link posts.
+- Used cleaned official-site destinations for normal provider choices, with proxies supplying previews. Explicit XCancel and Redlib browser choices retain their purpose.
+- Applied common campaign cleanup, including any `utm_` parameter, alongside platform and original-site rules on both official and proxy URLs.
+
+### Fixed
+
+- Recognised pasted proxy links across platforms, including Koutube short links.
+- Preserved YouTube video IDs, playlists, indexes and playback positions during short-link and Shorts normalisation.
+- Removed additional YouTube analytics fields while retaining functional Facebook comment IDs and Xiaohongshu access tokens.
+- Upgraded recorded legacy compact headers when their preview retry button is used.
+
+### Validation
+
+- Passed 194 Worker tests and 241 Python tests, including shared rendering and cleanup checks for all 56 configured provider options. These checks do not establish live availability of every external service.
+
+## [2.0.10] - 2026-11-15
+
+### Added
+
+- Added Instagram options `to` (`toinstagram.com`), `embeds` (`ig.embeds.now`), `revived` (`fkinstagram.com`) and `ins` (`ins.so`) after public-post checks.
+- Recognised username-prefixed Instagram post/reel paths and old Instagram7 URLs, with consistent tracking cleanup.
+- Recorded the Kyrela FIXERS.md review and probe evidence. Kept `ee` as the default and retained the single retry button.
+
+## [2.0.9] - 2026-11-15
+
+### Added
+
+- Added optional Koutube previews for YouTube, retaining native previews by default and official click-through URLs.
+- Added `boobsky.app` and restored `vxbsky.app` after fresh image/video metadata checks.
+- Documented the Lexedia gist review, rejected candidates and Koutube's public cache listing.
+
+## [2.0.8] - 2026-11-15
+
+### Removed
+
+- Removed Instagram `kkclip` and `kk` from provider menus and retry rotation following failed preview reports and checks.
+
+### Fixed
+
+- Fell back to `ee` for stale saved selections and migrated backups containing the retired options.
+- Retained the old domains as input aliases so existing proxy URLs can still be converted.
+
+## [2.0.7] - 2026-11-15
+
+### Removed
+
+- Removed the duplicate Instagram button because the linked attribution already opens the official post. Kept only “Retry preview”.
+
+## [2.0.6] - 2026-11-15
+
+### Changed
+
+- Placed single-post Instagram previews above the message and moved sender attribution underneath.
+- Preserved captions, surrounding text and the sender-mode setting.
+- Initially placed Instagram and retry buttons together; the redundant Instagram button was removed in 2.0.7.
+
+## [2.0.5] - 2026-11-15
+
+### Fixed
+
+- Removed changing Instagram share tokens such as `xtok` and `vrfl` by retaining only functional `img_index` queries on supported content paths.
+- Applied the cleanup to clickable targets, previews, inline results, `/clean` and provider switching, including older buttons.
+
+## [2.0.4] - 2026-11-15
+
+### Changed
+
+- Made Instagram click-through URLs open official Instagram, with the selected proxy used only for preview generation.
+- Kept official destinations during provider switching, inline replies and plain-text fallbacks.
+- Listed preview URLs in `/testall` so provider choices remain distinguishable.
+
+## [2.0.3] - 2026-11-15
+
+### Fixed
+
+- Processed Telegram text-link entities in messages and captions while preserving clickable labels and other hyperlinks.
+- Targeted retry actions to the intended post instead of the first unrelated URL in the message.
+- Handled near-limit URLs with compact linked labels while retaining the original; returned an explanation if Telegram rejects the URL.
+
+## [2.0.2] - 2026-11-15
+
+### Fixed
+
+- Preserved surrounding text in single-link rewrites and provider switching.
+- Ignored commands addressed to another bot and prevented muted users from invoking commands.
+- Kept originals when expanded messages require a companion reply to fit Telegram's limits.
+- Restored older backups containing known retired providers without discarding unrelated settings or opt-outs.
+- Removed Instagram `dlrf` share tokens from official and provider URLs.
+
+## [2.0.1] - 2026-11-15
+
+### Changed
+
+- Refreshed the shared provider catalogue using maintainer sources and public-content metadata checks.
+- Added Instagram `uu` and `zz`, corrected several provider hosts, and removed obsolete aliases and unverified LinkedIn rewriting.
+- Applied Instagram `psln` cleanup and safe fallback from retired selections.
+- Distinguished successful HTTP responses from evidence of usable embeds in provider checks.
+
+## [2.0.0] - 2026-11-15
+
+### Added
+
+- Migrated the running bot from Railway to Cloudflare Workers and D1, retaining the Python implementation for rollback.
+- Added private one-time activation, encrypted token storage, authenticated webhooks, readiness checks and protected diagnostics.
+- Persisted chat settings, opt-outs, provider choices, moderation state, rewrite records and delivery tracking in D1, with scheduled cleanup.
+
+### Fixed
+
+- Sent confirmed replacements before deleting originals and retained media captions as replies.
+- Added bounded delivery fallbacks, duplicate-update protection and rate-limit handling.
+- Stopped speculative provider probes from prematurely failing normal link rewrites.
+
 ## [1.54.0] - 2026-09-19
 
 ### Changed
